@@ -117,7 +117,42 @@ parallel work later.
 - Model choice matters less than retrieval/data quality — any competent
   instruction-following model works fine as the generation layer.
 
-### Phase 4 — Feature Expansion (post-MVP, only with traction signal)
+### Phase 4 — Auth, Tiers & Billing
+
+- **Auth**: Google sign-in via Supabase Auth — same Supabase project already
+  running Postgres/pgvector, no new vendor. Google-only is sufficient for v1;
+  don't build email/password until there's a reason to.
+- **Multi-tenancy, added not retrofitted**: `geo_entities` / `feature_store` /
+  `scores` (Phase 0) are shared reference data, not user-owned — they need no
+  account scoping. New tables only: `accounts` (maps to Supabase
+  `auth.users`, holds `tier`, `stripe_customer_id`), `api_keys` (Business tier
+  programmatic access — hashed key storage, account-scoped), `usage_counters`
+  (per-account, per-period request counts for quota enforcement + billing
+  metering).
+- **Row-level security**: enable Postgres RLS on the new account-scoped
+  tables from day one. Cheap to add now with near-zero rows; expensive to
+  retrofit once there's real user data.
+- **Three tiers** — Free, Pro, Business:
+  | Tier | Access | Initial limits (tune as usage data comes in) | Billing |
+  | --- | --- | --- | --- |
+  | Free | Web UI only | 50 score lookups/day, 10 triangulations/day, no NL/RAG queries | none |
+  | Pro | Web UI only | ~2,000 score lookups/day, 200 triangulations/day, 100 NL/RAG queries/day, saved anchors | self-serve, Stripe Checkout |
+  | Business | API key, programmatic | Custom/negotiated volume + usage-based overage | sales-assisted initially (manual invoicing) — this is the API-first licensing product from the Business Model section below, not a new idea |
+- **Rate limiting**: enforce tier limits in FastAPI middleware against
+  `usage_counters` before touching the feature store — a cheap Postgres
+  counter check is fine at low volume; only move to Redis/Upstash if request
+  volume makes the extra DB round-trip the actual bottleneck. Over-limit
+  requests get `429` + `Retry-After` and an upgrade prompt, not a silent
+  drop.
+- **API contract addition (non-breaking)**: Phase 0's `openapi.yaml` gets an
+  auth header/security scheme and a `429` response added here — this is an
+  addition to the existing contract, not a redesign of it.
+- **Business tier stays sales-assisted at first**: don't build self-serve
+  Business billing/onboarding before there's demand for it — with "a few
+  users," manual invoicing is cheaper than building infrastructure for a
+  motion that doesn't exist yet.
+
+### Phase 5 — Feature Expansion (post-MVP, only with traction signal)
 
 - Commute-aware scoring (actual workplace → commute time via GTFS + routing
   engine, not generic "near transit")
@@ -145,6 +180,10 @@ parallel work later.
   subagent — this is where the product's judgment and defensibility live.
 - **API integration + RAG layer**: sequential, after scoring + isochrone
   services exist.
+- **Auth/billing (Phase 4)**: starts after Phases 1–3 work end-to-end — sign-
+  in and tiering only matter once there's a product worth gating. Sign-in UI
+  can be scaffolded early against a mocked account, same as frontend
+  scaffolding against a mocked API response.
 
 ---
 
@@ -158,6 +197,39 @@ Redfin/Zillow listings). The consumer-facing app is more valuable right now
 as a demo/portfolio piece than as a standalone product — build it as the
 front door that gets B2B conversations started, not as the end goal.
 
+The three-tier model (Phase 4) is how this plays out concretely: **Free/Pro
+are the consumer front door** described above, generating usage data and
+portfolio credibility. **Business tier — API-key programmatic access — is
+this section's actual revenue path**, sold to the platforms/brokerages/
+marketers this section names, not a separate idea layered on top.
+
+---
+
+## Access Model & Scaling Path
+
+Designed for **1 to a few users today, without a rebuild when it grows**:
+
+- **Auth**: Google sign-in via Supabase Auth (Phase 4) — reuses the existing
+  Supabase project, no new vendor to operate at low volume.
+- **Multi-tenancy without retrofitting the data layer**: the Phase 0/1
+  schema (`geo_entities`, `feature_store`, `scores`) is shared reference
+  data with no user ownership, so it needs no changes for auth to land.
+  Account-scoped tables (`accounts`, `api_keys`, `usage_counters`) are added
+  fresh in Phase 4, with row-level security enabled from their first row —
+  cheap now, expensive to bolt on after there's real user data.
+- **Free-tier request limits exist to protect the cost budget below**, not
+  just to segment pricing: without a cap, one bot or one enthusiastic script
+  could drive the "$0/month" infra into a paid tier before there's any
+  revenue to justify it.
+- **Rate limiting starts as a Postgres counter check** in API middleware —
+  adequate at low request volume. Swap to Redis/Upstash only when request
+  volume itself (not user count) makes that extra DB round-trip the
+  bottleneck; don't provision it ahead of that signal.
+- **Business tier stays sales-assisted/manually invoiced until there's
+  demand for self-serve** — building automated onboarding for a motion with
+  zero customers is pure waste; Free/Pro get Stripe self-serve because that
+  volume can actually show up on day one.
+
 ---
 
 ## Cost Constraints
@@ -168,3 +240,8 @@ free, self-hosted Valhalla/OSRM in a Docker container. The only realistic
 early cost is LLM API calls in Phase 3 — keep these capped and per-request
 cheap; don't add paid data sources (e.g. Google Places) until free sources
 prove insufficient with real usage data to justify the spend.
+
+Phase 4 (auth/billing) also stays near-$0 at low volume: Supabase Auth's
+free tier covers a generous monthly-active-user count, and Stripe has no
+monthly fee — only a per-transaction cut on actual revenue, so it's
+self-funding rather than a new fixed cost.

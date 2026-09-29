@@ -162,12 +162,77 @@ store).
 
 ---
 
-## Phase 4 — Feature Expansion (post-MVP)
+## Phase 4 — Auth, Tiers & Billing
+
+**Goal:** Move from open/single-tenant access to Google sign-in with three
+priced tiers (Free, Pro, Business), enforced request limits, and self-serve
+billing — while staying near-$0/month until paid conversions justify the
+spend. See `PROJECT.md` → Access Model & Scaling Path for full rationale.
+
+**Dependencies:** Phases 1–3 working end-to-end (there must be a product
+worth gating before gating it).
+
+**No retrofit of Phase 0/1 schema.** `geo_entities`, `feature_store`, and
+`scores` are shared reference data with no user ownership — they need no
+changes here. All new tables in this phase are additive.
+
+### Tasks
+
+- [ ] **Auth** — Google sign-in via Supabase Auth (same Supabase project
+      already running Postgres/pgvector; no new vendor)
+- [ ] **Schema additions** (additive, not a migration of Phase 0/1 tables):
+  - [ ] `accounts` — maps to Supabase `auth.users`, holds `tier`,
+        `stripe_customer_id`
+  - [ ] `api_keys` — Business-tier programmatic access, hashed key storage,
+        account-scoped
+  - [ ] `usage_counters` — per-account, per-period request counts, for both
+        quota enforcement and billing metering
+  - [ ] Enable row-level security on all account-scoped tables from their
+        first row
+- [ ] **Define tier limits** (initial values, tune as usage data comes in):
+  - [ ] Free — 50 score lookups/day, 10 triangulations/day, no NL/RAG query
+        access, web UI only
+  - [ ] Pro — ~2,000 score lookups/day, 200 triangulations/day, 100 NL/RAG
+        queries/day, saved anchors, web UI only
+  - [ ] Business — API key/programmatic access, custom/negotiated volume +
+        usage-based overage
+- [ ] **Rate limiting** — FastAPI middleware checks `usage_counters` against
+      tier limits before touching the feature store; `429` + `Retry-After` +
+      upgrade prompt on over-limit (start with a Postgres counter check, not
+      Redis — only move to Redis/Upstash if request volume itself makes the
+      DB round-trip the bottleneck)
+- [x] **API contract addition (non-breaking)** — add auth header/security
+      scheme and `429` response schema to Phase 0's `contracts/openapi.yaml`
+      (`bearerAuth`/`apiKeyAuth` security schemes, `401`/`429` responses,
+      `X-RateLimit-*` headers on success responses, all three endpoints)
+- [ ] **Billing** — Stripe Checkout + Customer Portal for self-serve
+      Free→Pro upgrade; Business tier stays sales-assisted/manually invoiced
+      until there's demand for self-serve
+- [ ] **Frontend** — sign-in flow (Supabase Auth JS client), account/billing
+      settings page, usage dashboard so users can see their own quota usage
+
+### Deliverables
+
+- Google sign-in working end-to-end
+- `accounts` / `api_keys` / `usage_counters` schema with RLS policies
+- Tier limits enforced in API middleware
+- Stripe self-serve Free→Pro upgrade
+- Usage dashboard in frontend
+
+### Exit criteria
+
+A new user can sign in with Google, land on Free tier, hit their daily
+quota and get a clear `429` + upgrade prompt, self-serve upgrade to Pro via
+Stripe Checkout, and see higher limits apply immediately.
+
+---
+
+## Phase 5 — Feature Expansion (post-MVP)
 
 **Goal:** Extend the product only once there's traction signal justifying
 the added complexity/cost.
 
-**Dependencies:** Phases 1–3 complete and in production with real usage.
+**Dependencies:** Phases 1–4 complete and in production with real usage.
 
 ### Tasks
 
@@ -190,7 +255,7 @@ the added complexity/cost.
 ### Exit criteria
 
 N/A until traction signal exists — this phase is intentionally not
-scheduled until Phases 1–3 are live and generating real usage data.
+scheduled until Phases 1–4 are live and generating real usage data.
 
 ---
 
@@ -208,3 +273,9 @@ scheduled until Phases 1–3 are live and generating real usage data.
   where product judgment and defensibility live.
 - API integration + RAG layer (Phase 3) is sequential, after scoring and
   isochrone services exist.
+- Auth/billing (Phase 4) starts after Phases 1–3 work end-to-end — sign-in
+  and tiering only matter once there's a product worth gating. Sign-in UI
+  can be scaffolded early against a mocked account, same as frontend
+  scaffolding against a mocked API response. It adds new account-scoped
+  tables only — no retrofit of the Phase 0/1 schema, since that data has no
+  user ownership to begin with.

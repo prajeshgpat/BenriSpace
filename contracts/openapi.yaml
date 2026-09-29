@@ -1,16 +1,27 @@
 openapi: 3.0.3
 info:
   title: BenriSpace API
-  version: "0.1.0"
+  version: "0.2.0"
   description: >
-    Phase 0 contract. Three endpoints: score lookup, score explanation
-    (generation lands in Phase 3, contract fixed now), and anchor-point
-    triangulation (implementation lands in Phase 2, contract fixed now).
-    All score data is read from precomputed storage — no live third-party
-    API calls on the request path.
+    Phase 0 contract, plus the Phase 4 auth/rate-limit addition (non-breaking:
+    new security requirement + new 401/429 responses, no existing fields
+    changed). Three endpoints: score lookup, score explanation (generation
+    lands in Phase 3, contract fixed now), and anchor-point triangulation
+    (implementation lands in Phase 2, contract fixed now). All score data is
+    read from precomputed storage — no live third-party API calls on the
+    request path.
+
+    Every request is attributed to an account (web session or Business-tier
+    API key) so tier limits in `usage_counters` can be enforced — see Phase 4
+    in `PROJECT.md`/`PHASES.md`. Free tier requires sign-in too; there is no
+    fully anonymous path.
 
 servers:
   - url: /v1
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []
 
 paths:
   /score:
@@ -36,6 +47,13 @@ paths:
       responses:
         "200":
           description: Score found.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
           content:
             application/json:
               schema:
@@ -46,12 +64,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           description: No geo entity within ingestion coverage for this location.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /score/{geoEntityId}/explanation:
     get:
@@ -67,16 +89,27 @@ paths:
       responses:
         "200":
           description: Explanation generated from the stored factor breakdown.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExplanationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "404":
           description: No score on file for this geo entity.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /triangulate:
     post:
@@ -93,6 +126,13 @@ paths:
       responses:
         "200":
           description: Ranked addresses within the intersected/unioned anchor isochrones.
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
           content:
             application/json:
               schema:
@@ -103,8 +143,68 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Supabase Auth session JWT (Google sign-in). Used by the web app for
+        Free and Pro tier requests — Free tier still requires sign-in so
+        usage can be attributed to an account.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >
+        Business-tier programmatic access. Key is account-scoped and hashed
+        at rest (see `api_keys` table, Phase 4).
+
+  headers:
+    RateLimitLimit:
+      description: Requests allowed in the current window for this account's tier.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Requests remaining in the current window.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Unix timestamp (seconds) when the current window resets.
+      schema:
+        type: integer
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid session token / API key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Account has exceeded its tier's rate limit for this window.
+      headers:
+        Retry-After:
+          description: Seconds until the rate-limit window resets.
+          schema:
+            type: integer
+        X-RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        X-RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        X-RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
   schemas:
     Error:
       type: object
@@ -114,6 +214,11 @@ components:
           type: string
         message:
           type: string
+        upgradeUrl:
+          type: string
+          description: >
+            Present on rate-limit errors for Free-tier accounts — link to
+            the Pro upgrade flow (Stripe Checkout). Omitted otherwise.
 
     SubScores:
       type: object
