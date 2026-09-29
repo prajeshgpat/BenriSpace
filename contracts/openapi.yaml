@@ -1,0 +1,246 @@
+openapi: 3.0.3
+info:
+  title: BenriSpace API
+  version: "0.1.0"
+  description: >
+    Phase 0 contract. Three endpoints: score lookup, score explanation
+    (generation lands in Phase 3, contract fixed now), and anchor-point
+    triangulation (implementation lands in Phase 2, contract fixed now).
+    All score data is read from precomputed storage — no live third-party
+    API calls on the request path.
+
+servers:
+  - url: /v1
+
+paths:
+  /score:
+    get:
+      summary: Get the precomputed composite score and sub-scores for an address.
+      operationId: getScore
+      parameters:
+        - name: address
+          in: query
+          description: Free-text address. Mutually exclusive with lat/lon.
+          schema:
+            type: string
+        - name: lat
+          in: query
+          schema:
+            type: number
+            format: double
+        - name: lon
+          in: query
+          schema:
+            type: number
+            format: double
+      responses:
+        "200":
+          description: Score found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreResponse"
+        "400":
+          description: Missing/invalid address or lat/lon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No geo entity within ingestion coverage for this location.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /score/{geoEntityId}/explanation:
+    get:
+      summary: Generate a human-readable explanation of a stored score.
+      operationId: getScoreExplanation
+      parameters:
+        - name: geoEntityId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Explanation generated from the stored factor breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplanationResponse"
+        "404":
+          description: No score on file for this geo entity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /triangulate:
+    post:
+      summary: >
+        Rank precomputed addresses by proximity to a set of user-provided
+        anchor points (job, school, landmark, etc).
+      operationId: triangulate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriangulateRequest"
+      responses:
+        "200":
+          description: Ranked addresses within the intersected/unioned anchor isochrones.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriangulateResponse"
+        "400":
+          description: Invalid anchor list (e.g. fewer than 1 anchor, unresolvable address).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    SubScores:
+      type: object
+      description: >
+        Normalized 0-100 sub-scores. Direction is already applied — higher
+        is always better, even for factors that are a negative raw signal
+        (e.g. gas station density).
+      properties:
+        grocery: { type: number }
+        gym: { type: number }
+        cafe: { type: number }
+        gasStation: { type: number }
+        convenienceStore: { type: number }
+        transit: { type: number }
+        school: { type: number }
+        road: { type: number }
+        emergencyCorridor: { type: number }
+        airport: { type: number }
+
+    ScoreResponse:
+      type: object
+      required: [geoEntityId, address, latitude, longitude, compositeScore, subScores, weightsVersion, computedAt]
+      properties:
+        geoEntityId:
+          type: string
+          format: uuid
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        compositeScore:
+          type: number
+        subScores:
+          $ref: "#/components/schemas/SubScores"
+        weightsVersion:
+          type: string
+        computedAt:
+          type: string
+          format: date-time
+
+    ExplanationResponse:
+      type: object
+      required: [geoEntityId, explanation, computedAt]
+      properties:
+        geoEntityId:
+          type: string
+          format: uuid
+        explanation:
+          type: string
+          description: >
+            Generated strictly from the retrieved factor breakdown for this
+            geo entity — must not reference amenities or data not present in
+            feature_store/scores.
+        computedAt:
+          type: string
+          format: date-time
+
+    AnchorPoint:
+      type: object
+      description: A single user-provided anchor (job, school, landmark, etc).
+      required: [label]
+      properties:
+        label:
+          type: string
+          description: User-facing name for this anchor, e.g. "Work".
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        maxTravelMinutes:
+          type: integer
+          description: Isochrone time budget from this anchor. Defaults to a server-side default if omitted.
+        mode:
+          type: string
+          enum: [drive, transit, walk]
+          default: drive
+
+    TriangulateRequest:
+      type: object
+      required: [anchors]
+      properties:
+        anchors:
+          type: array
+          minItems: 1
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/AnchorPoint"
+        combineMode:
+          type: string
+          enum: [intersect, union]
+          default: intersect
+          description: Whether candidate addresses must fall within all anchor isochrones (intersect) or any (union).
+        limit:
+          type: integer
+          default: 50
+
+    RankedAddress:
+      type: object
+      required: [geoEntityId, address, latitude, longitude, compositeScore]
+      properties:
+        geoEntityId:
+          type: string
+          format: uuid
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        compositeScore:
+          type: number
+
+    TriangulateResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RankedAddress"
