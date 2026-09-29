@@ -1,0 +1,82 @@
+# Weekly/monthly ingestion pipeline (PROJECT.md Phase 1: GitHub Actions is
+# sufficient at this refresh cadence, no Airflow needed yet).
+#
+# Order matters: grid generation must run first (every other job writes
+# feature_store rows keyed by geo_entity_id, which only exist after the
+# grid is populated), the five ingestion sources are independent of each
+# other and run in parallel, and scoring must run last (it reads
+# feature_store, which only has data once ingestion finishes).
+#
+# Inert until DATABASE_URL is set as a repo secret — see PHASES.md
+# "Blocking Phase 1 today". NJ_TRANSIT_API_KEY/USERNAME and
+# STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN are optional; gtfs_transit.py and
+# trails.py both degrade gracefully (log that one source as failed/skipped,
+# continue with the rest) when their credentials are absent.
+#
+# ingestion.trails' Strava enhancement is rate-limit-bound (~900 calls at
+# 90/15min) and can take up to ~150 minutes on its own when Strava creds
+# are set — timeout-minutes below is a safety ceiling, not the expected
+# case. On a private repo this also eats real GitHub Actions minutes
+# against the free-tier monthly budget (~600 min/month at weekly cadence)
+# — worth knowing given this project's $0/month target (see PROJECT.md
+# Cost Constraints).
+
+name: Ingestion Pipeline
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — weekly refresh
+  workflow_dispatch: {} # manual trigger for ad-hoc runs
+
+env:
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  NJ_TRANSIT_API_KEY: ${{ secrets.NJ_TRANSIT_API_KEY }}
+  NJ_TRANSIT_API_USERNAME: ${{ secrets.NJ_TRANSIT_API_USERNAME }}
+  VALHALLA_URL: ${{ secrets.VALHALLA_URL }}
+  STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+  STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+  STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+
+jobs:
+  grid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - run: python -m ingestion.grid
+
+  ingest:
+    needs: grid
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # trails.py's Strava enhancement can run ~150min; this is a safety ceiling
+    strategy:
+      fail-fast: false # one source failing (e.g. NJ Transit, no key yet) shouldn't cancel the others
+      matrix:
+        module:
+          - ingestion.osm_poi
+          - ingestion.gtfs_transit
+          - ingestion.schools
+          - ingestion.roads
+          - ingestion.airports
+          - ingestion.trails
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - run: python -m ${{ matrix.module }}
+
+  score:
+    needs: ingest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - run: python -m scoring.run

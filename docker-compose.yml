@@ -1,0 +1,19 @@
+# Local dev database only. Production is Supabase (Phase 1 requirement,
+# not yet provisioned — see PHASES.md "Blocking Phase 1 today"). This lets
+# ingestion/API/scoring code be built and tested against a real Postgres +
+# pgvector instance before the Supabase project exists.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: benrispace
+      POSTGRES_PASSWORD: benrispace
+      POSTGRES_DB: benrispace
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./contracts/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - benrispace_pgdata:/var/lib/postgresql/data
+
+volumes:
+  benrispace_pgdata:

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: BenriSpace API
-  version: "0.2.0"
+  version: "0.3.0"
   description: >
     Phase 0 contract, plus the Phase 4 auth/rate-limit addition (non-breaking:
     new security requirement + new 401/429 responses, no existing fields
@@ -237,6 +237,7 @@ components:
         road: { type: number }
         emergencyCorridor: { type: number }
         airport: { type: number }
+        trailPopularity: { type: number }
 
     ScoreResponse:
       type: object

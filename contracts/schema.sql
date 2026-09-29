@@ -63,6 +63,15 @@ create table feature_store (
     nearest_tier1_airport_code text,        -- e.g. 'JFK'
     airport_drive_time_min    numeric,
 
+    -- Running/walking trails (OSM trail tags; Strava Segments popularity is
+    -- optional and additive — see ingestion/trails.py). Proxy for
+    -- popularity/desirability/safety: an actively-used trail network
+    -- correlates with a neighborhood people want to be outside in.
+    running_trail_count_800m   integer,
+    running_trail_nearest_m    numeric,
+    strava_segment_count_800m  integer,     -- null when Strava isn't configured, not 0 — see normalization.md
+    strava_segment_popularity_raw numeric,  -- aggregate athlete/effort-count signal, null when unavailable
+
     updated_at                  timestamptz not null default now()
 );
 
@@ -86,6 +95,7 @@ create table scores (
     road_score               numeric,
     emergency_corridor_score numeric,
     airport_score            numeric,
+    trail_popularity_score   numeric,
 
     composite_score     numeric not null,
 
@@ -105,7 +115,7 @@ create index scores_weights_version_idx on scores (weights_version);
 -- per-category timestamps into feature_store.
 create table ingestion_runs (
     id              uuid primary key default gen_random_uuid(),
-    source          text not null,       -- e.g. 'osm_poi', 'gtfs_mta', 'gtfs_lirr', 'gtfs_metro_north', 'gtfs_nj_transit', 'schools_nyc_open_data', 'osm_roads', 'airports'
+    source          text not null,       -- e.g. 'grid_generation', 'osm_poi', 'gtfs_transit' (+ per-agency: 'gtfs_mta', 'gtfs_lirr', 'gtfs_metro_north', 'gtfs_nj_transit'), 'schools', 'osm_roads', 'airports', 'scoring'
     status          text not null,       -- 'running' | 'success' | 'failed'
     rows_affected   integer,
     started_at      timestamptz not null default now(),

@@ -37,12 +37,23 @@ value flowing into `scores` already means "higher is better":
 | grocery/gym/cafe count, closeness   | Positive  | normalize as-is                    |
 | transit stop count/closeness        | Positive  | normalize as-is                    |
 | school count/rating/closeness       | Positive  | normalize as-is                    |
+| running trail count/closeness, Strava segment popularity | Positive | normalize as-is; see note below on Strava's optional data |
 | airport drive time                  | Positive  | invert (lower drive time = better) |
 | gas station/convenience store count | Negative  | invert before normalizing          |
 | congestion proxy                    | Negative  | invert before normalizing          |
 | emergency corridor proxy            | Negative  | invert before normalizing, then reduced by `street_orientation` (side_street dampens the penalty; facing_corridor does not) |
 
 This matches the Scoring Factors table in `PROJECT.md`.
+
+**Strava segment popularity is optional data, not optional-with-a-zero-
+penalty.** `strava_segment_popularity_raw` is `null` (not `0`) whenever
+Strava credentials aren't configured or no segments exist nearby — trail
+popularity for a cohort with no Strava data at all still normalizes
+correctly off the OSM trail count/distance signal alone (see
+`scoring/engine.py`'s blend for `trail_popularity_score`), it just can't
+distinguish "trail exists" from "trail is actually popular" until Strava
+data lands. Never backfill a missing Strava value with `0` — that would
+read as "definitely unpopular," which isn't what "not measured yet" means.
 
 ## Composite score
 

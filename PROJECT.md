@@ -40,6 +40,17 @@ convenient.
 | Road/traffic conditions (e.g. single-lane roads causing congestion) | Negative                                                                         | OSM road classification tags                                           |
 | Emergency vehicle route noise                                       | Negative (mitigated by street orientation — side street vs. facing the corridor) | OSM road classification (proxy only — phase 2 refinement, not precise) |
 | Proximity to tier-1 airports (JFK, Dulles, SFO-class)               | Positive                                                                         | Hardcoded list + drive time via routing engine                         |
+| Popular running/walking trails (proxy for popularity, desirable neighborhood, safety) | Positive | OSM trail/path tags (free, required) + Strava Segments API popularity (optional enhancement, requires app registration) |
+
+OSM alone only tells us a trail *exists*, not that it's *popular* — Strava's
+segment data (athlete/effort counts) is the actual popularity signal named
+above; OSM trail presence is the fallback baseline when Strava isn't
+configured. **Garmin was considered and dropped**: unlike Strava, Garmin has
+no public API exposing aggregate trail/route popularity data (its developer
+program is oriented around an individual athlete's own device/health data,
+not public usage aggregates) — noted here so it isn't silently forgotten as
+"still pending," it's a deliberate scope call, flag if you know of an
+access path we're missing.
 
 Scores are a **weighted composite of normalized sub-scores**, hand-tuned
 initially (no training data to fit against yet). Document weight rationale —
@@ -49,11 +60,10 @@ it's the defensibility story for both users and future ML refinement.
 
 ## Hosting & Domain
 
-Production domain: **benrispace.com** (not registered yet as of 2026-09-28 —
-registering it is a Phase 1 prerequisite, not a later nice-to-have, since
-Google OAuth's consent screen and Stripe's account setup in Phase 4 both
-want a stable domain/support-email identity, and it's cheaper to point DNS
-at the right place once than to migrate later).
+Production domain: **benrispace.com** (registered 2026-09-28). DNS is
+still unconfigured — records get added once Firebase Hosting and Cloud
+Run's domain mapping exist, each of which issues its own records/
+verification steps.
 
 - `benrispace.com` / `www.benrispace.com` → frontend (existing Firebase
   Hosting setup)
@@ -92,6 +102,10 @@ parallel work later.
   for congestion and emergency-corridor proxies
 - **Airports**: hardcoded lat/longs (JFK, Dulles, SFO-class), drive time via
   self-hosted routing engine
+- **Trails**: OSM-tagged running/walking paths (free, no key, required
+  baseline) + Strava Segments API popularity data (optional enhancement,
+  requires a Strava API app — see Phase 1 Requirements in `PHASES.md`).
+  Garmin has no suitable public API for this and isn't pursued.
 - **Ingestion orchestration**: GitHub Actions scheduled workflow — sufficient
   for weekly/monthly refresh cadence. Do not reach for Airflow yet; it's
   unnecessary operational overhead at this scale.
