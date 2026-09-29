@@ -12,7 +12,7 @@ from scoring.engine import score_metro_cohort
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job(conn, "scoring") as ctx:
+    with get_connection() as conn, ingestion_job("scoring") as ctx:
         with conn.cursor() as cur:
             cur.execute("select distinct metro_area from geo_entities")
             metro_areas = [r["metro_area"] for r in cur]

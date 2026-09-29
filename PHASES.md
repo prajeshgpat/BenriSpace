@@ -23,10 +23,28 @@ below is genuinely blocking the next step for each:
       deploying the (already-built) API to Cloud Run
 - [ ] Confirm access to the existing Firebase Hosting project — blocks
       wiring up the frontend
-- [ ] Supabase project (Project URL, anon key, service role key, Postgres
-      connection string) — blocks running any of the built ingestion jobs,
-      the scoring engine, or the ingestion GitHub Actions workflow against
-      real data; also blocks the API actually returning results
+- [x] **Supabase — fully unblocked 2026-09-29.** Project created, schema
+      applied, and the full pipeline verified live: grid generation
+      (64,320 cells), airport ingestion, scoring, and `GET /score` all ran
+      against real Supabase data and produced correct results — this
+      project's first real (non-mocked, non-unit-test) end-to-end proof.
+      Caught and fixed a real bug in the process: every ingestion script
+      was doing ~64k unbatched network round-trips per run (>3 minutes and
+      still hadn't written a single row); `common/db.py`'s `get_connection`
+      now wraps every connection in psycopg3 pipeline mode, which dropped
+      airport ingestion to 5.9 seconds for all 64,320 rows. This benefits
+      every ingestion script, not just airports, automatically (no changes
+      needed to any of them). Note: used the **Session pooler** connection
+      string, not the direct-connection host — that one is IPv6-only by
+      default and failed to resolve from this sandbox (no outbound IPv6),
+      which would also fail on GitHub Actions runners (IPv4-only), so the
+      pooler is the right production choice too, not just a workaround.
+      Only `airports.py` and `scoring/run.py` have been run against real
+      data so far — the OSM/GTFS/NYC-Open-Data/Strava-backed jobs
+      (`osm_poi`, `gtfs_transit`, `schools`, `roads`, `trails`) haven't
+      been run live yet; they make real external API calls, some
+      (`trails.py`'s Strava path) with real rate-limit-bound runtimes, so
+      that's worth a deliberate go-ahead rather than doing it silently.
 - [ ] NJ Transit developer API key — blocks that one agency only; MTA/LIRR/
       Metro-North transit ingestion is otherwise code-complete
 
@@ -92,23 +110,32 @@ precomputed scores served through an API.
       found while building: every ingestion job below writes into
       `feature_store` keyed by `geo_entity_id`, so those rows have to exist
       first) — `ingestion/grid.py`, geohash6 grid over the v1 metro bounding
-      boxes, ~64,300 cells. Logic verified directly (no DB needed); DB write
-      path untested (no live Postgres in this sandbox).
+      boxes. **Live-verified 2026-09-29**: 64,320 cells generated against
+      real Supabase in ~3s.
 - [x] **POI ingestion (OSM Overpass)** — `ingestion/osm_poi.py`. Code
-      complete + unit tested (24 tests); not yet run against a live DB.
-- [~] **Transit ingestion (GTFS static)** — `ingestion/gtfs_transit.py`,
-      shared parser + per-agency config, degrades gracefully per-agency:
-  - [x] MTA — code complete, feed URLs verified live
-  - [x] LIRR — code complete, feed URLs verified live
-  - [x] Metro-North — code complete, feed URLs verified live
+      complete + unit tested (24 tests). **Live-verified 2026-09-29**:
+      64,320 rows written against real Supabase (hit and recovered from a
+      real Overpass 429 mid-run via the shared rate-limit backoff). Also
+      received the same bucket-search fix as trails.py below (ring
+      expansion instead of a brute-force fallback) — same latent bug, just
+      hadn't been unlucky enough to hit it yet.
+- [x] **Transit ingestion (GTFS static)** — `ingestion/gtfs_transit.py`,
+      shared parser + per-agency config, degrades gracefully per-agency.
+      **Live-verified 2026-09-29**: MTA (15,920 stops), LIRR (127), and
+      Metro-North (114) all ingested successfully against real Supabase;
+      NJ Transit correctly skipped (no key). Also fixed a real bug found
+      in this run: `common/db.py` wasn't JSON-adapting the `transit_agencies`
+      jsonb column, and a failure on that connection could silently corrupt
+      the `ingestion_runs` bookkeeping too (both now fixed — see `common/db.py`
+      and `common/ingestion_log.py`).
   - [ ] NJ Transit — cleanly stubbed (raises with a message pointing here);
         blocked on the developer API key below, and its username/password
         auth flow (not a static zip like the others) still needs
         implementing once that key exists
 - [~] **School data ingestion** — `ingestion/schools.py`, pluggable
-      `SchoolDataSource` interface:
-  - [x] NYC Open Data — code complete, **verified live** (1,899 schools
-        fetched, real query results sanity-checked)
+      `SchoolDataSource` interface. **Live-verified 2026-09-29**: NYC Open
+      Data ingested successfully against real Supabase (64,320 rows, 1,635
+      cells with a school within 1600m, avg rating 9.06/10).
   - [ ] Nassau/Suffolk, Westchester — stubbed behind the same interface
         (`NotImplementedError`, `# TODO: verify current dataset URL`), not
         wired up
@@ -116,11 +143,17 @@ precomputed scores served through an API.
 - [x] **Road classification ingestion** — `ingestion/roads.py`. Code
       complete + unit tested (18 tests) for `road_classification`,
       `congestion_proxy_raw`, `emergency_corridor_proxy_raw`,
-      `street_orientation`.
+      `street_orientation`. **Live-verified 2026-09-29**: 64,320 cells
+      classified against real Supabase, sensible distribution (15,168
+      cells with no road within 1000m, matching "unknown" orientation
+      count exactly).
 - [x] **Airport proximity** — `ingestion/airports.py`. JFK/LGA/EWR
       hardcoded; drive time via a pluggable router — straight-line fallback
       active today (Valhalla unset), real Valhalla call wired and ready for
       the moment Phase 2 lands (one-place swap via `VALHALLA_URL`).
+      **Live-verified 2026-09-29**: 64,320 rows in 5.9s against real
+      Supabase — this run is what surfaced the pipeline-mode fix below (it
+      took >3 minutes and wrote zero rows before that fix).
 - [x] **Trail popularity ingestion** — user-requested addition (2026-09-28):
       Strava/Garmin/popular running trails as a proxy for popularity,
       desirable neighborhood, and safety. `ingestion/trails.py`: OSM
@@ -134,35 +167,75 @@ precomputed scores served through an API.
       two-stage explore-then-detail-call pipeline is required — tiled at
       227 explore calls + up to ~673 detail calls across the metro, ~150
       minutes worst-case, fine for the weekly cron, not something a live
-      request ever waits on. Code complete + unit tested (45 tests,
+      request ever waits on. Code complete + unit tested (50 tests,
       pure/mocked, no live Strava/DB calls); the CI workflow's 180-minute
       timeout accounts for Strava's worst case. Contracts, `scoring/
       engine.py` (`trail_popularity_score`, weight 1.25), and this
-      ingestion script are all done — 156 tests passing project-wide.
+      ingestion script are all done — 161 tests passing project-wide.
+
+      **Three real bugs found and fixed live (2026-09-29), running this
+      against actual Supabase/Overpass data, not just unit tests:**
+      (1) the per-cell bucket-index lookup fell back to a full brute-force
+      scan of every segment whenever a cell's own bucket was empty — fine
+      for roads (ubiquitous), pathological for trails (sparse): 4,029
+      cells took 921s against real data. Fixed by expanding the search
+      ring instead (same fix applied to `ingestion/osm_poi.py`, which had
+      the identical latent bug, just hadn't been unlucky enough to hit it
+      yet). (2) added the same Overpass-timeout quadrant-splitting
+      resilience `ingestion/roads.py` already had, after a live 504 killed
+      the job with no fallback. (3) the bigger one: the OSM tag selection
+      was too broad — `highway=footway` with no exclusion for
+      `footway=sidewalk`/`footway=crossing` was capturing ordinary
+      sidewalks (present on nearly every block), not genuine trails. That
+      was both *why* NYC alone returned 1,173,871 "trail" segments
+      (overwhelmingly sidewalks) and a data-quality bug in its own right —
+      a signal present everywhere doesn't discriminate between
+      neighborhoods, defeating the point of the factor. Excluding those
+      subtags (server-side in the Overpass query, not just client-side)
+      dropped NYC to 326,522 segments, confirmed live.
+
+      **Current data state**: NYC's 4,029 cells successfully landed
+      (confirmed in `feature_store`) via a prior per-metro commit — proof
+      the incremental-commit-per-metro design correctly preserves partial
+      progress across a failed run, not just a design intent. The
+      remaining 5 metros haven't landed yet: Overpass's public instance
+      has been returning 504s on this query even for small split
+      sub-quadrants for the last several minutes (confirmed NOT a general
+      outage — trivial queries against the same server succeed instantly;
+      this specific multi-clause `out geom` query is just expensive, and
+      server load right now is worse than it was minutes ago when the
+      identical query succeeded for all of NYC). This reads as transient
+      server-side load, not a bug — retriable later (the weekly CI cron
+      once secrets are wired up, or a manual re-run), not worth continuing
+      to hammer a free shared public server against right now.
 - [x] **Ingestion orchestration** — `.github/workflows/ingestion.yml`:
       grid → ingestion jobs in parallel (`fail-fast: false`, so a missing
       NJ Transit key or unconfigured Strava doesn't block the others) →
-      scoring, weekly cron + manual dispatch. **Inert until `DATABASE_URL`
-      is a repo secret** (see Requirements below) — written and
-      YAML-validated, not yet run. Needs `ingestion.trails` added to the
-      matrix once that script lands.
-- [ ] **Storage** — Supabase free tier (Postgres + pgvector). Not started —
-      blocked on you creating the project (see Requirements below). A local
-      Postgres+pgvector (`docker-compose.yml`) stands in for dev, but
-      nothing has run against *any* live Postgres yet — this sandbox has no
-      Docker either.
+      scoring, weekly cron + manual dispatch (`ingestion.trails` already in
+      the matrix). **Inert until `DATABASE_URL`/etc. are repo secrets** —
+      YAML-validated and the underlying `common/db.py` connection path is
+      now live-verified (see Storage below), but the workflow itself
+      hasn't run in CI yet.
+- [x] **Storage** — Supabase project live 2026-09-29 (see the Requirements
+      note above for the full story: pipeline-mode fix, pooler vs. direct
+      connection). Schema applied, grid populated, confirmed working
+      end-to-end.
 - [x] **Scoring engine** — `scoring/engine.py` + `scoring/run.py`. Weighted
       composite of normalized sub-scores, hand-tuned weights with
-      documented rationale, 8 unit tests. Kept as direct (non-delegated)
-      work per this phase's own sequencing guidance.
+      documented rationale, 8 unit tests, **and now live-verified**: ran
+      against real Supabase data, produced correct composite scores.
+      Kept as direct (non-delegated) work per this phase's own sequencing
+      guidance.
 - [~] **API** — `api/` implements all three `contracts/openapi.yaml`
       endpoints (unauthenticated — Phase 4 adds auth on top), 92 unit
-      tests. `GET /score` is fully real; `/explanation` and `/triangulate`
-      are clearly-labeled Phase 1 placeholders (template-based explanation,
+      tests. `GET /score` is fully real, **and now live-verified** against
+      real Supabase data via an in-process test client (not yet run as a
+      deployed server). `/explanation` and `/triangulate` are
+      clearly-labeled Phase 1 placeholders (template-based explanation,
       straight-line-circle isochrone) standing in for Phase 3/2. Uses OSM
       Nominatim for address geocoding — a new design call, not previously
       specified, flagged for your review. **Not yet deployed** — blocked on
-      Cloud Run/GCP access below.
+      Cloud Run/GCP access above.
 - [ ] **Frontend** — point existing Firebase Hosting setup at the new API.
       Not started — this repo has no Firebase config, so the existing
       frontend lives elsewhere; blocked on you confirming that project
@@ -199,9 +272,14 @@ decision, it's just accounts/credentials only you can create:
 - **Firebase**: confirm the project ID/console access for the "existing
   Firebase Hosting setup" `PROJECT.md` refers to, so the custom domain and
   new API can be wired into it.
-- **Supabase**: create a free-tier project, then give me the Project URL,
-  anon public key, service role key (server/CI secret only — never ships to
-  the frontend), and Postgres connection string.
+- **Supabase**: project created 2026-09-28 — Project URL, anon key, and
+  service role key received (saved to local `.env`, gitignored). **Still
+  needed: the Postgres connection string** (Project Settings → Database →
+  Connection string → Session pooler URI, includes the DB password) — the
+  anon/service-role keys are for Supabase's REST/Auth API, not direct
+  Postgres access, which is what `common/db.py` actually uses via
+  `psycopg`. This is the one still blocking every ingestion job, the
+  scoring engine, and the CI workflow from running against real data.
 - **GitHub Actions secrets**: repo is confirmed at
   `github.com/prajeshgpat/BenriSpace` — add `SUPABASE_SERVICE_ROLE_KEY` and
   the GCP deploy credentials above as repo secrets once created.

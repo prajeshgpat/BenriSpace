@@ -60,6 +60,27 @@ def test_is_trail_way_rejects_unrelated_tags():
     assert is_trail_way({}) is False
 
 
+def test_is_trail_way_rejects_ordinary_sidewalks_and_crossings():
+    # Real bug, hit live 2026-09-29: an ordinary sidewalk (present on
+    # nearly every block of a dense city) is tagged highway=footway +
+    # footway=sidewalk in OSM -- indistinguishable from a genuine trail
+    # under the old highway-only check. That's both a data-quality bug (a
+    # signal present everywhere doesn't discriminate between
+    # neighborhoods) and what made NYC alone return 1,173,871 "trail"
+    # segments, most of them sidewalks, which is what actually caused the
+    # 921s-for-4029-cells performance collapse (a separate ring-expansion
+    # fix alone wasn't the real problem).
+    assert is_trail_way({"highway": "footway", "footway": "sidewalk"}) is False
+    assert is_trail_way({"highway": "footway", "footway": "crossing"}) is False
+
+
+def test_is_trail_way_accepts_footway_without_sidewalk_subtag():
+    # A standalone footway (no footway= subtag, or one that isn't
+    # sidewalk/crossing) is still a genuine candidate trail surface.
+    assert is_trail_way({"highway": "footway"}) is True
+    assert is_trail_way({"highway": "footway", "footway": "path"}) is True
+
+
 # --------------------------------------------------------------------------
 # Overpass query / response parsing
 # --------------------------------------------------------------------------
@@ -67,11 +88,21 @@ def test_is_trail_way_rejects_unrelated_tags():
 
 def test_build_overpass_trail_query_contains_expected_filters():
     query = build_overpass_trail_query(40.0, 41.0, -74.0, -73.0)
-    assert "path|footway|track" in query
+    assert "path|track" in query
+    assert 'highway"="footway"' in query
     assert 'foot"!="no"' in query
     assert 'leisure"="track"' in query
     assert "out geom;" in query
     assert "40.0,-74.0,41.0,-73.0" in query
+
+
+def test_build_overpass_trail_query_excludes_sidewalks_and_crossings_server_side():
+    # Filtered in the query itself, not just client-side after download --
+    # the whole point is to never pull the excluded data over the network
+    # in the first place (see is_trail_way's docstring/test for why).
+    query = build_overpass_trail_query(40.0, 41.0, -74.0, -73.0)
+    assert 'footway"!="sidewalk"' in query
+    assert 'footway"!="crossing"' in query
 
 
 def test_parse_trail_elements_segments_a_multi_node_way():
@@ -154,6 +185,49 @@ def test_indexed_matches_brute_force():
         brute = nearest_and_count(qlat, qlon, points)
         indexed = nearest_and_count_indexed(qlat, qlon, points, index)
         assert indexed == brute
+
+
+def test_indexed_expands_ring_instead_of_brute_forcing_when_ring1_empty():
+    # Real bug, hit live 2026-09-29: a query point with nothing in its own
+    # 3x3 bucket block (sparse-feature case, common for trails) used to
+    # fall back to a brute-force scan of every point in the dataset. That
+    # stalled for 30+ minutes against 700k+ real segments and the DB
+    # connection was killed as idle before a row was written. This test
+    # asserts the fix -- ring expansion finds the far candidate WITHOUT
+    # ever calling the brute-force nearest_and_count over the full point
+    # list, by making the full-list brute force force-fail if invoked.
+    # ~13 buckets away at BUCKET_DEG=0.015 -- outside ring=1..8, found only
+    # once expansion reaches ring=16 (verified via the bucket math, not a
+    # guess), well short of the ring=32 last-resort/brute-force boundary.
+    # ~22km away, so outside the 800m count radius (count=0 is correct);
+    # what this test actually checks is that `nearest` is still the true
+    # distance, found via ring expansion rather than a fabricated/skipped
+    # value.
+    near_far_point = {"lat": CELL_LAT + 0.2, "lon": CELL_LON + 0.2, "tag": "path"}
+    points = [near_far_point]
+    index = build_bucket_index(points)
+
+    poisoned_points = _PoisonedList(points)  # raises if ever iterated/scanned directly
+    count, nearest = nearest_and_count_indexed(CELL_LAT, CELL_LON, poisoned_points, index)
+    assert count == 0
+    assert nearest == pytest.approx(haversine_m(CELL_LAT, CELL_LON, near_far_point["lat"], near_far_point["lon"]))
+
+
+def test_indexed_falls_back_to_brute_force_only_when_every_ring_is_empty():
+    # Genuinely empty index -- every ring search comes back empty, so the
+    # true last-resort brute-force fallback path is exercised (and is
+    # correct, just slow -- acceptable since it should never happen for a
+    # populated metro).
+    index: dict = {}
+    assert nearest_and_count_indexed(CELL_LAT, CELL_LON, [], index) == (0, None)
+
+
+class _PoisonedList(list):
+    """A list that raises if ever actually iterated over -- used to prove
+    a code path never falls back to scanning the full point list."""
+
+    def __iter__(self):
+        raise AssertionError("brute-force fallback was invoked when ring expansion should have sufficed")
 
 
 def test_candidates_near_finds_neighboring_bucket():

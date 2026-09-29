@@ -88,9 +88,9 @@ import httpx
 from common.db import get_connection, iter_geo_entities, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
+from common.overpass import make_client, post_overpass_query
 from ingestion.grid import BOUNDING_BOXES
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OVERPASS_TIMEOUT_S = 180
 MAX_SPLIT_DEPTH = 3  # 4^3 = up to 64 sub-tiles per metro in the worst case
 
@@ -266,9 +266,11 @@ def _build_query(min_lat: float, min_lon: float, max_lat: float, max_lon: float)
 
 def _fetch_bbox(client: httpx.Client, min_lat: float, min_lon: float, max_lat: float, max_lon: float) -> list[dict]:
     query = _build_query(min_lat, min_lon, max_lat, max_lon)
-    resp = client.post(OVERPASS_URL, data={"data": query}, timeout=OVERPASS_TIMEOUT_S + 30)
-    resp.raise_for_status()
-    data = resp.json()
+    # post_overpass_query already retries 429s with backoff internally, so
+    # by the time an exception reaches fetch_segments_for_bbox's quadrant-
+    # split fallback below, it's a genuine timeout/size problem, never a
+    # rate limit misread as "query too big, split and fire 4 more."
+    data = post_overpass_query(query, timeout=OVERPASS_TIMEOUT_S + 30, client=client)
 
     segments: list[dict] = []
     for element in data.get("elements", []):
@@ -352,8 +354,8 @@ def classify_cell(lat: float, lon: float, index: dict[tuple[int, int], list[dict
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job(conn, "osm_roads") as ctx:
-        with httpx.Client() as client:
+    with get_connection() as conn, ingestion_job("osm_roads") as ctx:
+        with make_client() as client:
             for metro_area, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES:
                 print(f"Fetching road segments for {metro_area}...", file=sys.stderr)
                 segments = fetch_segments_for_bbox(client, min_lat, max_lat, min_lon, max_lon)

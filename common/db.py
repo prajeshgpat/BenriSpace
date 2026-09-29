@@ -8,8 +8,17 @@ from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from common.config import DATABASE_URL
+
+# feature_store columns typed `jsonb` in schema.sql -- values for these
+# must be wrapped with Jsonb() before binding, or psycopg's default list/
+# dict adapter produces Postgres array/composite literal syntax instead of
+# JSON (hit live 2026-09-29: a Python list for transit_agencies came out
+# as `{mta}`, which Postgres's jsonb parser correctly rejected as invalid
+# JSON -- `{` starts an object, not an array).
+FEATURE_STORE_JSON_COLUMNS = {"transit_agencies"}
 
 # feature_store columns an ingestion job is allowed to write. Used to
 # validate upsert_feature_store() calls so a typo'd column name fails at
@@ -46,9 +55,19 @@ FEATURE_STORE_COLUMNS = {
 
 @contextmanager
 def get_connection() -> Iterator[psycopg.Connection]:
+    """Every ingestion script loops over ~64k geo_entities doing one
+    upsert_feature_store() call per row -- against a remote DB (Supabase's
+    pooler, not localhost) that's ~64k synchronous round-trips if each
+    statement waits for its own acknowledgment, discovered when the first
+    live run against real Supabase took over 3 minutes without writing a
+    single row. Pipeline mode batches those round-trips transparently --
+    every caller (iter_geo_entities' one read, upsert_feature_store's many
+    writes) keeps working exactly as written, psycopg just stops waiting
+    for each statement's ack before sending the next one."""
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     try:
-        yield conn
+        with conn.pipeline():
+            yield conn
     finally:
         conn.close()
 
@@ -80,7 +99,10 @@ def upsert_feature_store(conn: psycopg.Connection, geo_entity_id: str, fields: d
         return
 
     columns = list(fields)
-    values = [fields[c] for c in columns]
+    values = [
+        Jsonb(fields[c]) if c in FEATURE_STORE_JSON_COLUMNS and fields[c] is not None else fields[c]
+        for c in columns
+    ]
     set_clause = ", ".join(f"{c} = %s" for c in columns)
     insert_placeholders = ", ".join(["%s"] * (len(columns) + 1))
 
@@ -95,7 +117,6 @@ def upsert_feature_store(conn: psycopg.Connection, geo_entity_id: str, fields: d
 
 
 def log_ingestion_run(
-    conn: psycopg.Connection,
     source: str,
     status: str,
     rows_affected: int | None = None,
@@ -105,30 +126,46 @@ def log_ingestion_run(
     """Insert (run_id=None) or update (run_id given) an ingestion_runs row.
     Call once with status='running' at job start, then again with
     status='success'/'failed' at job end, per PROJECT.md's per-source
-    ingestion job pattern."""
-    with conn.cursor() as cur:
-        if run_id is None:
+    ingestion job pattern.
+
+    Deliberately opens its own short-lived, non-pipelined connection
+    rather than taking one as a parameter: this is the one write that must
+    always land reliably, including especially when something on the
+    caller's main (pipelined) connection just failed. Discovered live
+    2026-09-29 that pipeline mode defers errors to the next sync point
+    (not the failing execute() call itself) and leaves the pipeline in an
+    aborted state until then -- a failure-logging call sharing that
+    connection could itself fail (PipelineAborted) or silently never run,
+    masking the real error and leaving the row stuck at 'running' forever.
+    A handful of calls per job run (start/success/failure) is cheap enough
+    that a fresh connection each time isn't worth optimizing away."""
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    try:
+        with conn.cursor() as cur:
+            if run_id is None:
+                cur.execute(
+                    """
+                    insert into ingestion_runs (source, status, rows_affected, error_message)
+                    values (%s, %s, %s, %s)
+                    returning id
+                    """,
+                    (source, status, rows_affected, error_message),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return str(row["id"])
             cur.execute(
                 """
-                insert into ingestion_runs (source, status, rows_affected, error_message)
-                values (%s, %s, %s, %s)
-                returning id
+                update ingestion_runs
+                set status = %s, rows_affected = %s, error_message = %s, finished_at = now()
+                where id = %s
                 """,
-                (source, status, rows_affected, error_message),
+                (status, rows_affected, error_message, run_id),
             )
-            row = cur.fetchone()
             conn.commit()
-            return str(row["id"])
-        cur.execute(
-            """
-            update ingestion_runs
-            set status = %s, rows_affected = %s, error_message = %s, finished_at = now()
-            where id = %s
-            """,
-            (status, rows_affected, error_message, run_id),
-        )
-        conn.commit()
-        return run_id
+            return run_id
+    finally:
+        conn.close()
 
 
 # --- Read-oriented additions for api/ (GET /score, /score/{id}/explanation,

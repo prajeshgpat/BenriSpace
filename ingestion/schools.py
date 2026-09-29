@@ -377,7 +377,7 @@ def run() -> None:
     all_schools = fetch_all_schools()
     index = build_spatial_index(all_schools)
 
-    with get_connection() as conn, ingestion_job(conn, "schools") as ctx:
+    with get_connection() as conn, ingestion_job("schools") as ctx:
         rows_updated = 0
         for entity in iter_geo_entities(conn):
             aggregate = compute_cell_aggregate(

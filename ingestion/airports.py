@@ -191,7 +191,7 @@ def nearest_airport(
 
 def run() -> None:
     router = get_router()
-    with get_connection() as conn, ingestion_job(conn, "airports") as ctx:
+    with get_connection() as conn, ingestion_job("airports") as ctx:
         count = 0
         for entity in iter_geo_entities(conn):
             airport, minutes = nearest_airport(entity["latitude"], entity["longitude"], router)

@@ -146,16 +146,31 @@ from common import config
 from common.db import get_connection, iter_geo_entities, log_ingestion_run, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
+from common.overpass import post_overpass_query
 from ingestion.grid import BOUNDING_BOXES
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OVERPASS_TIMEOUT_S = 180
 HTTP_TIMEOUT_S = OVERPASS_TIMEOUT_S + 30
+MAX_SPLIT_DEPTH = 3  # 4^3 = up to 64 sub-tiles per metro in the worst case, matches ingestion/roads.py
 
 TRAIL_RADIUS_M = 800.0  # fixed by the running_trail_count_800m column name
 
 # See module docstring for the tag-selection rationale.
 TRAIL_HIGHWAY_TAGS = ("path", "footway", "track")
+# OSM tags an ordinary sidewalk as highway=footway + footway=sidewalk (and
+# a pedestrian crossing as footway=crossing) -- neither is a "trail" in
+# any sense relevant to "popular running/walking trails, proxy for
+# desirable/safe neighborhood." Excluding them matters for two reasons,
+# discovered together live 2026-09-29: (1) a signal present on nearly
+# every block of a dense city doesn't discriminate between neighborhoods
+# at all, defeating the point of the factor: (2) it was *why* NYC alone
+# returned 1,173,871 "trail" segments -- overwhelmingly ordinary sidewalks,
+# not the sparse dedicated-trail dataset the per-cell bucket search was
+# designed around, which made even the fast/indexed path do a linear scan
+# over ~1,300 points per bucket on real data (benchmarked: 4029 cells took
+# 921s / ~15min for this reason alone, unrelated to the separate ring-
+# expansion fix above).
+EXCLUDED_FOOTWAY_SUBTAGS = ("sidewalk", "crossing")
 
 # ~1.67km (lat) x ~1.26km (lon at ~41N) per bucket -- see module docstring
 # for the margin-vs-TRAIL_RADIUS_M argument. Shared by the OSM trail index
@@ -187,12 +202,17 @@ STRAVA_MAX_DETAIL_CALLS = 700
 
 def build_overpass_trail_query(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> str:
     """One Overpass QL query for every trail/path/track way in the bbox,
-    excluding foot=no. Overpass bbox order is (south, west, north, east)."""
+    excluding foot=no and ordinary sidewalks/crossings (see
+    EXCLUDED_FOOTWAY_SUBTAGS) -- filtered server-side so the excluded data
+    (the overwhelming majority of highway=footway ways in a dense city)
+    never has to be downloaded and parsed at all, not just discarded
+    client-side. Overpass bbox order is (south, west, north, east)."""
     bbox = f"{min_lat},{min_lon},{max_lat},{max_lon}"
-    highway_filter = "|".join(TRAIL_HIGHWAY_TAGS)
+    footway_exclusions = "".join(f'["footway"!="{tag}"]' for tag in EXCLUDED_FOOTWAY_SUBTAGS)
     return f"""[out:json][timeout:{OVERPASS_TIMEOUT_S}];
 (
-  way["highway"~"^({highway_filter})$"]["foot"!="no"]({bbox});
+  way["highway"~"^(path|track)$"]["foot"!="no"]({bbox});
+  way["highway"="footway"]{footway_exclusions}["foot"!="no"]({bbox});
   way["leisure"="track"]({bbox});
 );
 out geom;"""
@@ -200,11 +220,17 @@ out geom;"""
 
 def is_trail_way(tags: dict) -> bool:
     """True if this way's tags qualify it as a running/walking trail
-    surface per TRAIL_HIGHWAY_TAGS / leisure=track, and it isn't explicitly
-    closed to pedestrians (foot=no)."""
+    surface per TRAIL_HIGHWAY_TAGS / leisure=track, isn't explicitly
+    closed to pedestrians (foot=no), and isn't an ordinary sidewalk or
+    crossing (see EXCLUDED_FOOTWAY_SUBTAGS) -- defense in depth alongside
+    the server-side Overpass query filter, and what this function's own
+    unit tests exercise directly."""
     if tags.get("foot") == "no":
         return False
-    if tags.get("highway") in TRAIL_HIGHWAY_TAGS:
+    highway = tags.get("highway")
+    if highway == "footway" and tags.get("footway") in EXCLUDED_FOOTWAY_SUBTAGS:
+        return False
+    if highway in TRAIL_HIGHWAY_TAGS:
         return True
     return tags.get("leisure") == "track"
 
@@ -292,16 +318,29 @@ def nearest_and_count_indexed(
     radius_m: float = TRAIL_RADIUS_M,
 ) -> tuple[int, float | None]:
     """Same (count, nearest) contract as nearest_and_count(), but scans the
-    bucket index's nearby candidates first -- exact whenever the nearest
-    candidate found that way is within radius_m (guaranteed complete per
-    the bucket-margin argument in the module docstring); otherwise falls
-    back to a full scan of all_points so the true (possibly >radius_m)
-    nearest distance is never approximated. Mirrors
-    ingestion/osm_poi.py's nearest_and_count_indexed."""
-    candidates = candidates_near(index, cell_lat, cell_lon, bucket_deg, ring=1)
-    count, nearest = nearest_and_count(cell_lat, cell_lon, candidates, radius_m)
-    if nearest is not None and nearest <= radius_m:
-        return count, nearest
+    bucket index's nearby candidates first -- exact whenever ring=1 (the
+    cell's own bucket + 8 neighbors) finds ANY candidate, since that
+    block's margin already exceeds radius_m (see module docstring), so a
+    found candidate is guaranteed to include anything within radius_m and
+    is the true nearest for anything reasonably close.
+
+    ring=1 finding NOTHING is the real question, and for a sparse feature
+    like trails (unlike roads, which are ubiquitous) that's the COMMON
+    case, not rare -- confirmed live 2026-09-29: the original version
+    fell back to a full brute-force scan of every segment in the metro
+    whenever that happened, which for ~20k long_island cells against
+    700k+ segments stalled for 30+ minutes and the DB connection was
+    killed as idle by Supabase's pooler before a single row was written.
+    Expanding the search ring is nearly as cheap as ring=1 and stays
+    correct for the same reason ring=1 is: once ANY candidate is found,
+    it's within that ring's guaranteed-covered area, so nothing closer
+    was missed. Only escalates to a true full scan if even a ~50km+ box
+    (ring=32) is empty -- should essentially never happen for a populated
+    metro area."""
+    for ring in (1, 2, 4, 8, 16, 32):
+        candidates = candidates_near(index, cell_lat, cell_lon, bucket_deg, ring=ring)
+        if candidates:
+            return nearest_and_count(cell_lat, cell_lon, candidates, radius_m)
     return nearest_and_count(cell_lat, cell_lon, all_points, radius_m)
 
 
@@ -328,11 +367,50 @@ def compute_cell_osm_trail_features(
 # ==========================================================================
 
 
-def fetch_trail_segments_for_bbox(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> list[dict]:
+def _fetch_trail_segments_single(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> list[dict]:
     query = build_overpass_trail_query(min_lat, max_lat, min_lon, max_lon)
-    resp = httpx.post(OVERPASS_URL, data={"data": query}, timeout=HTTP_TIMEOUT_S)
-    resp.raise_for_status()
-    return parse_trail_elements(resp.json().get("elements", []))
+    data = post_overpass_query(query, timeout=HTTP_TIMEOUT_S)
+    return parse_trail_elements(data.get("elements", []))
+
+
+def fetch_trail_segments_for_bbox(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float, depth: int = 0
+) -> list[dict]:
+    """Fetch trail segments for a bbox, adaptively splitting into 4
+    quadrants and retrying on a server-side timeout/error rather than
+    failing the whole run -- mirrors ingestion/roads.py's
+    fetch_segments_for_bbox (same MAX_SPLIT_DEPTH constant). Added after a
+    live 504 Gateway Timeout from Overpass on the nyc query (2026-09-29,
+    transient server load, not a bug in the query itself) killed the
+    entire job with no fallback -- roads.py already had this resilience
+    for the identical failure mode, trails.py hadn't needed it until now.
+    post_overpass_query already retries 429s internally, so what reaches
+    this except block is a genuine timeout/size/server problem."""
+    try:
+        return _fetch_trail_segments_single(min_lat, max_lat, min_lon, max_lon)
+    except (httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException) as exc:
+        if depth >= MAX_SPLIT_DEPTH:
+            raise
+        print(
+            f"[trails] Overpass query failed for bbox "
+            f"({min_lat},{min_lon},{max_lat},{max_lon}) at depth {depth} ({exc}); "
+            f"splitting into quadrants and retrying",
+            file=sys.stderr,
+        )
+        mid_lat = (min_lat + max_lat) / 2.0
+        mid_lon = (min_lon + max_lon) / 2.0
+        segments: list[dict] = []
+        for sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon in (
+            (min_lat, mid_lat, min_lon, mid_lon),
+            (min_lat, mid_lat, mid_lon, max_lon),
+            (mid_lat, max_lat, min_lon, mid_lon),
+            (mid_lat, max_lat, mid_lon, max_lon),
+        ):
+            time.sleep(1)  # be polite to the free shared Overpass instance
+            segments.extend(
+                fetch_trail_segments_for_bbox(sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon, depth + 1)
+            )
+        return segments
 
 
 def _run_osm_trails(conn) -> int:
@@ -656,15 +734,15 @@ def _run_strava_enhancement(conn) -> int:
         )
         return 0
 
-    run_id = log_ingestion_run(conn, "trails_strava", status="running")
+    run_id = log_ingestion_run("trails_strava", status="running")
     try:
         rows = _fetch_and_apply_strava(conn)
     except Exception as exc:  # noqa: BLE001 -- isolate Strava's failure from the OSM baseline
-        log_ingestion_run(conn, "trails_strava", status="failed", error_message=str(exc), run_id=run_id)
+        log_ingestion_run("trails_strava", status="failed", error_message=str(exc), run_id=run_id)
         print(f"[trails] Strava enhancement failed, degrading to OSM-only: {exc}", file=sys.stderr)
         return 0
 
-    log_ingestion_run(conn, "trails_strava", status="success", rows_affected=rows, run_id=run_id)
+    log_ingestion_run("trails_strava", status="success", rows_affected=rows, run_id=run_id)
     return rows
 
 
@@ -674,7 +752,7 @@ def _run_strava_enhancement(conn) -> int:
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job(conn, "trails") as ctx:
+    with get_connection() as conn, ingestion_job("trails") as ctx:
         rows_updated = _run_osm_trails(conn)
         ctx.rows_affected = rows_updated
         strava_rows = _run_strava_enhancement(conn)

@@ -5,8 +5,6 @@ each one reimplementing it."""
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-import psycopg
-
 from common.db import log_ingestion_run
 
 
@@ -16,19 +14,23 @@ class IngestionRunContext:
 
 
 @contextmanager
-def ingestion_job(conn: psycopg.Connection, source: str) -> Iterator[IngestionRunContext]:
+def ingestion_job(source: str) -> Iterator[IngestionRunContext]:
+    """Takes only `source`, not a connection -- log_ingestion_run() opens
+    its own independent connection for the bookkeeping writes (see its
+    docstring), deliberately decoupled from whatever connection the
+    wrapped block uses for its actual data writes."""
     ctx = IngestionRunContext()
-    run_id = log_ingestion_run(conn, source, status="running")
+    run_id = log_ingestion_run(source, status="running")
     try:
         yield ctx
     except Exception as exc:
         log_ingestion_run(
-            conn, source, status="failed", rows_affected=ctx.rows_affected,
+            source, status="failed", rows_affected=ctx.rows_affected,
             error_message=str(exc), run_id=run_id,
         )
         raise
     else:
         log_ingestion_run(
-            conn, source, status="success", rows_affected=ctx.rows_affected,
+            source, status="success", rows_affected=ctx.rows_affected,
             run_id=run_id,
         )

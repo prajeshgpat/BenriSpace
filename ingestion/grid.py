@@ -72,7 +72,7 @@ def run() -> None:
         for geohash, (metro_area, lat, lon) in cells.items()
     ]
 
-    with get_connection() as conn, ingestion_job(conn, "grid_generation") as ctx:
+    with get_connection() as conn, ingestion_job("grid_generation") as ctx:
         with conn.cursor() as cur:
             cur.executemany(
                 """

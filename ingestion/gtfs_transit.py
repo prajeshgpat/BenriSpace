@@ -23,7 +23,7 @@ Design calls made here (flag if wrong, easy to change):
   in `run()`. A failure (e.g. NJ Transit with no API key configured yet)
   is caught, logged as that agency's own 'failed' row, and the loop moves
   on — it does not abort MTA/LIRR/Metro-North. The overall script is also
-  wrapped in `ingestion_job(conn, "gtfs_transit")` per the shared
+  wrapped in `ingestion_job("gtfs_transit")` per the shared
   convention every ingestion script uses (see ingestion/grid.py), so
   there's both a per-agency audit trail and a single job-level row; the
   job-level row only fails if *every* agency failed (nothing to write).
@@ -267,17 +267,16 @@ def fetch_agency_stops(agency: AgencyFeed, client: httpx.Client | None = None) -
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job(conn, "gtfs_transit") as ctx:
+    with get_connection() as conn, ingestion_job("gtfs_transit") as ctx:
         agency_stops: dict[str, list[tuple[float, float]]] = {}
 
         with httpx.Client(timeout=HTTP_TIMEOUT_S, follow_redirects=True) as client:
             for agency in AGENCIES:
-                run_id = log_ingestion_run(conn, agency.ingestion_source, status="running")
+                run_id = log_ingestion_run(agency.ingestion_source, status="running")
                 try:
                     stops = fetch_agency_stops(agency, client=client)
                 except Exception as exc:  # noqa: BLE001 -- isolate one agency's failure
                     log_ingestion_run(
-                        conn,
                         agency.ingestion_source,
                         status="failed",
                         error_message=str(exc),
@@ -288,7 +287,6 @@ def run() -> None:
 
                 agency_stops[agency.name] = stops
                 log_ingestion_run(
-                    conn,
                     agency.ingestion_source,
                     status="success",
                     rows_affected=len(stops),

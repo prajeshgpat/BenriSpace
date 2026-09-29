@@ -44,14 +44,12 @@ is a pure function, unit tested in tests/test_osm_poi.py without a live DB.
 import math
 import sys
 
-import httpx
-
 from common.db import get_connection, iter_geo_entities, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
+from common.overpass import post_overpass_query
 from ingestion.grid import BOUNDING_BOXES
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OVERPASS_TIMEOUT_S = 180  # server-side [timeout:] in the query itself
 HTTP_TIMEOUT_S = OVERPASS_TIMEOUT_S + 30  # client-side margin for transfer
 
@@ -223,17 +221,25 @@ def nearest_and_count_indexed(
     radius_m: float = COUNT_RADIUS_M,
 ) -> tuple[int, float | None]:
     """Same (count, nearest) contract as nearest_and_count(), but scans the
-    bucket index's nearby candidates first. If the nearest candidate found
-    that way is within radius_m, both count and nearest are exact (see
-    candidates_near's margin argument — anything within radius_m is
-    guaranteed present in that candidate set). Otherwise (no POI of this
-    category within 500m via the fast path) falls back to a full scan of
-    poi_coords so `nearest_m` is never an approximation, only slower for
-    that minority of (sparse-category, cell) pairs."""
-    candidates = candidates_near(index, cell_lat, cell_lon, bucket_deg, ring=1)
-    count, nearest = nearest_and_count(cell_lat, cell_lon, candidates, radius_m)
-    if nearest is not None and nearest <= radius_m:
-        return count, nearest
+    bucket index's nearby candidates first, expanding the search ring
+    until it finds ANY candidate rather than falling back to a full scan
+    of poi_coords. ring=1 finding something is already guaranteed correct
+    per candidates_near's margin argument (anything within radius_m is
+    captured); once found, further-out candidates can't be closer, so
+    returning immediately is safe at every ring, not just ring=1.
+
+    Previously fell back to a full brute-force scan whenever ring=1's
+    nearest exceeded radius_m at all -- including the common case of a
+    sparse category (few groceries in a rural cell) where ring=1 still
+    found a real candidate, just past 500m. Fixed live 2026-09-29 after
+    the identical pattern in ingestion/trails.py stalled 30+ minutes
+    against a sparser dataset (trails vs. groceries) and got the DB
+    connection killed as idle before a row was written -- this file has
+    the same latent risk, just hadn't been unlucky enough to hit it yet."""
+    for ring in (1, 2, 4, 8, 16, 32):
+        candidates = candidates_near(index, cell_lat, cell_lon, bucket_deg, ring=ring)
+        if candidates:
+            return nearest_and_count(cell_lat, cell_lon, candidates, radius_m)
     return nearest_and_count(cell_lat, cell_lon, poi_coords, radius_m)
 
 
@@ -277,13 +283,12 @@ def fetch_pois_for_bbox(
     min_lat: float, max_lat: float, min_lon: float, max_lon: float
 ) -> list[tuple[float, float, dict]]:
     query = build_overpass_query(min_lat, max_lat, min_lon, max_lon)
-    resp = httpx.post(OVERPASS_URL, data={"data": query}, timeout=HTTP_TIMEOUT_S)
-    resp.raise_for_status()
-    return parse_overpass_response(resp.json())
+    data = post_overpass_query(query, timeout=HTTP_TIMEOUT_S)
+    return parse_overpass_response(data)
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job(conn, "osm_poi") as ctx:
+    with get_connection() as conn, ingestion_job("osm_poi") as ctx:
         cells_by_metro: dict[str, list[dict]] = {}
         for cell in iter_geo_entities(conn):
             cells_by_metro.setdefault(cell["metro_area"], []).append(cell)
