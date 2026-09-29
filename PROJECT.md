@@ -47,6 +47,26 @@ it's the defensibility story for both users and future ML refinement.
 
 ---
 
+## Hosting & Domain
+
+Production domain: **benrispace.com** (not registered yet as of 2026-09-28 —
+registering it is a Phase 1 prerequisite, not a later nice-to-have, since
+Google OAuth's consent screen and Stripe's account setup in Phase 4 both
+want a stable domain/support-email identity, and it's cheaper to point DNS
+at the right place once than to migrate later).
+
+- `benrispace.com` / `www.benrispace.com` → frontend (existing Firebase
+  Hosting setup)
+- `api.benrispace.com` → backend API (Cloud Run)
+- **Cloud vendor: GCP.** Cloud Run is the chosen backend host (decided over
+  Render — see Phase 1) specifically so Valhalla (Phase 2) has the option to
+  co-locate in the same GCP project/billing account rather than adding a
+  second vendor.
+- See `PHASES.md` for the concrete accounts/keys/DNS records needed to wire
+  this up, phase by phase.
+
+---
+
 ## Architecture — Build in Phases
 
 ### Phase 0 — Contracts (do first, do not parallelize)
@@ -81,9 +101,10 @@ parallel work later.
 - **Scoring**: precomputed and stored, never calculated live per request.
   This is the key scalability lever — it keeps live user traffic from ever
   touching rate-limited third-party APIs.
-- **API**: FastAPI, deployed on Cloud Run or Render free tier (scales to
-  zero when idle)
-- **Frontend**: existing Firebase Hosting setup, pointed at the new API
+- **API**: FastAPI, deployed on Cloud Run free tier (scales to zero when
+  idle), served at `api.benrispace.com`
+- **Frontend**: existing Firebase Hosting setup, pointed at the new API and
+  served at `benrispace.com`/`www.benrispace.com`
 
 ### Phase 2 — Triangulation / Isochrones
 
@@ -234,12 +255,21 @@ Designed for **1 to a few users today, without a rebuild when it grows**:
 
 ## Cost Constraints
 
-Phase 1 should run close to **$0/month**: Supabase free tier, Cloud
-Run/Render free tier, GitHub Actions free minutes, OSM/GTFS/NYC Open Data all
-free, self-hosted Valhalla/OSRM in a Docker container. The only realistic
-early cost is LLM API calls in Phase 3 — keep these capped and per-request
-cheap; don't add paid data sources (e.g. Google Places) until free sources
-prove insufficient with real usage data to justify the spend.
+Phase 1 should run close to **$0/month**: Supabase free tier, Cloud Run free
+tier, GitHub Actions free minutes, OSM/GTFS/NYC Open Data all free,
+self-hosted Valhalla/OSRM in a Docker container. Two real, non-$0 line items
+to plan for regardless:
+
+- **Domain registration** for benrispace.com (~$12–20/yr depending on
+  registrar) — one-time-ish cost, not recurring infra spend.
+- **GCP requires a billing account on file to use Cloud Run at all**, even
+  within the free tier — this is a card-on-file requirement, not an expected
+  charge, but don't be surprised by it when setting up the GCP project.
+
+The only realistic *variable* early cost is LLM API calls in Phase 3 — keep
+these capped and per-request cheap; don't add paid data sources (e.g. Google
+Places) until free sources prove insufficient with real usage data to
+justify the spend.
 
 Phase 4 (auth/billing) also stays near-$0 at low volume: Supabase Auth's
 free tier covers a generous monthly-active-user count, and Stripe has no

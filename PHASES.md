@@ -4,6 +4,23 @@ Detailed breakdown of each build phase from `PROJECT.md`. This file expands
 each phase into concrete tasks, deliverables, and exit criteria. See
 `PROJECT.md` for overall architecture, scoring factors, and business context.
 
+Each phase below has a **Requirements from you** subsection — accounts,
+API keys, or decisions that only you can provide, not something to design
+around. Full list, but here's what's actually blocking right now:
+
+## Blocking Phase 1 today
+
+- [ ] Register `benrispace.com` (confirmed not registered as of 2026-09-28)
+- [ ] GCP account with billing enabled + a project for this app
+- [ ] Confirm access to the existing Firebase Hosting project
+- [ ] Supabase project (Project URL, anon key, service role key, Postgres
+      connection string)
+- [ ] NJ Transit developer API key
+
+Everything else (Valhalla hosting in Phase 2, LLM provider in Phase 3,
+Google OAuth + Stripe in Phase 4) is deferred and detailed in its own
+phase's Requirements section below.
+
 ---
 
 ## Phase 0 — Contracts
@@ -52,6 +69,9 @@ precomputed scores served through an API.
 
 ### Tasks
 
+- [ ] **Register benrispace.com** and point DNS — `benrispace.com`/
+      `www.benrispace.com` → Firebase Hosting, `api.benrispace.com` → Cloud
+      Run
 - [ ] **POI ingestion (OSM Overpass)** — grocery, gyms, cafes, gas
       stations/convenience stores
 - [ ] **Transit ingestion (GTFS static)** — one ingestion job per agency:
@@ -71,7 +91,8 @@ precomputed scores served through an API.
 - [ ] **Storage** — Supabase free tier (Postgres + pgvector)
 - [ ] **Scoring engine** — weighted composite of normalized sub-scores,
       hand-tuned weights, precomputed and stored (never live per-request)
-- [ ] **API** — FastAPI, deployed to Cloud Run or Render free tier
+- [ ] **API** — FastAPI, deployed to Cloud Run free tier, served at
+      `api.benrispace.com`
 - [ ] **Frontend** — point existing Firebase Hosting setup at the new API
 
 ### Deliverables
@@ -86,6 +107,34 @@ precomputed scores served through an API.
 A user can search an address in the NYC metro radius and get back a
 composite score with sub-factor breakdown, sourced entirely from
 precomputed data (no live third-party API calls on the request path).
+
+### Requirements from you
+
+Nothing in this phase can start until these exist — none of it is a design
+decision, it's just accounts/credentials only you can create:
+
+- **Domain**: register `benrispace.com` (any registrar). Confirmed
+  2026-09-28: not registered yet. Once registered, either hand me registrar
+  login/DNS access or add the DNS records I specify (A/CNAME for Firebase
+  Hosting, CNAME for `api.benrispace.com` → Cloud Run) yourself.
+- **GCP**: an account with billing enabled (required by Cloud Run even on
+  the free tier — card on file, not an expected charge), a project for this
+  app, and either a service-account key or Workload Identity Federation
+  setup with Cloud Run deploy permissions for GitHub Actions.
+- **Firebase**: confirm the project ID/console access for the "existing
+  Firebase Hosting setup" `PROJECT.md` refers to, so the custom domain and
+  new API can be wired into it.
+- **Supabase**: create a free-tier project, then give me the Project URL,
+  anon public key, service role key (server/CI secret only — never ships to
+  the frontend), and Postgres connection string.
+- **GitHub Actions secrets**: repo is confirmed at
+  `github.com/prajeshgpat/BenriSpace` — add `SUPABASE_SERVICE_ROLE_KEY` and
+  the GCP deploy credentials above as repo secrets once created.
+- **NJ Transit developer account + API key** — their GTFS static feed
+  requires registration, unlike MTA/LIRR/Metro-North which are open
+  downloads with no key.
+- *(Optional, not blocking)* a NYC Open Data / Socrata app token, only if
+  anonymous rate limits become a problem.
 
 ---
 
@@ -118,6 +167,18 @@ precomputed data (no live third-party API calls on the request path).
 A user can input 2–4 anchor points and get back a ranked list of addresses
 that fall within the intersected/unioned isochrone area, ordered by
 precomputed score.
+
+### Requirements from you
+
+- **Where Valhalla runs — deferred by you to this phase.** Two live
+  options, revisit when we get here:
+  - Free GCP e2-micro VM in the same project as Cloud Run (keeps the stack
+    on one vendor at $0/month, but e2-micro's RAM may be tight for the
+    NYC-metro OSM extract — needs a real test, not an assumption)
+  - A small paid VM (DigitalOcean/Linode/Fly.io, ~$5–6/mo) with more
+    headroom
+  Whichever you pick, I'll need that provider's account + API key or SSH
+  access to provision it.
 
 ---
 
@@ -159,6 +220,13 @@ A user can type a free-text query and get back addresses that match their
 intent, each with a generated explanation grounded entirely in retrieved
 data (no unsupported claims about amenities that aren't in the feature
 store).
+
+### Requirements from you
+
+- **LLM provider — deferred by you to this phase.** Revisit when we get
+  here: Anthropic or OpenAI, and I'll need an API key from that provider's
+  console plus a spending cap/budget alert configured on the account
+  (per Cost Constraints in `PROJECT.md`).
 
 ---
 
@@ -224,6 +292,28 @@ changes here. All new tables in this phase are additive.
 A new user can sign in with Google, land on Free tier, hit their daily
 quota and get a clear `429` + upgrade prompt, self-serve upgrade to Pro via
 Stripe Checkout, and see higher limits apply immediately.
+
+### Requirements from you
+
+- **Domain email for benrispace.com** — needed for both items below. If you
+  don't already have email hosting on the domain (Google Workspace,
+  Cloudflare Email Routing, or similar forwarding), set that up before this
+  phase starts; a `support@benrispace.com`-style address is what goes on
+  the OAuth consent screen and the Stripe account.
+- **Google Cloud Console OAuth client** (separate from the GCP project
+  hosting Cloud Run, or the same one — your call): configure the OAuth
+  consent screen (app name "BenriSpace", the support email above), then
+  create an OAuth 2.0 Client ID + Secret with:
+  - Authorized JavaScript origin: `https://benrispace.com`
+  - Authorized redirect URI: your Supabase project's
+    `https://<project>.supabase.co/auth/v1/callback`
+  Hand me the Client ID + Secret to enter into Supabase Auth's Google
+  provider config.
+- **Stripe account**: publishable key + secret key (test mode is enough to
+  build against), a Product/Price created for the Pro tier (monthly), and a
+  webhook signing secret. Before accepting real payments (not needed to
+  build the integration), Stripe also requires legal business name/ID and a
+  bank account for payouts to activate live mode.
 
 ---
 
