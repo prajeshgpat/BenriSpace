@@ -16,11 +16,15 @@ scaffold — see Phase 1's Tasks below for the detailed state of each). What's
 below is genuinely blocking the next step for each:
 
 - [x] Register `benrispace.com` — done 2026-09-28. DNS records themselves
-      come later (Firebase/Cloud Run each issue their own once set up —
-      see the domain note under Requirements below); nothing to configure
-      on the domain yet.
-- [ ] GCP account with billing enabled + a project for this app — blocks
-      deploying the (already-built) API to Cloud Run
+      come later (Firebase/the AWS API endpoint each issue their own once
+      set up — see the domain note under Requirements below); nothing to
+      configure on the domain yet.
+- [ ] AWS account with billing enabled — blocks deploying the
+      (already-built) API to Lambda. **Switched from GCP 2026-09-29** —
+      see `PROJECT.md` → Hosting & Domain for rationale (resume breadth,
+      not cost; Valhalla never actually required GCP specifically).
+      Nothing GCP-specific was ever built (no Dockerfile/deploy workflow
+      existed yet), so this is a clean swap, not a migration.
 - [ ] Confirm access to the existing Firebase Hosting project — blocks
       wiring up the frontend
 - [x] **Supabase — fully unblocked 2026-09-29.** Project created, schema
@@ -102,10 +106,11 @@ precomputed scores served through an API.
 
 - [~] **Register benrispace.com** and point DNS — domain registered
       2026-09-28. DNS records (`benrispace.com`/`www.benrispace.com` →
-      Firebase Hosting, `api.benrispace.com` → Cloud Run) come from those
-      two services once each is set up (Firebase's custom-domain flow and
-      Cloud Run's domain-mapping flow both generate their own records to
-      add) — not something to configure yet, tracked as still-open below.
+      Firebase Hosting, `api.benrispace.com` → the Lambda Function URL)
+      come from those two services once each is set up (Firebase's
+      custom-domain flow and the Function URL/API Gateway custom-domain
+      flow both generate their own records to add) — not something to
+      configure yet, tracked as still-open below.
 - [x] **Grid generation** (not originally listed as its own task — a gap
       found while building: every ingestion job below writes into
       `feature_store` keyed by `geo_entity_id`, so those rows have to exist
@@ -235,7 +240,10 @@ precomputed scores served through an API.
       straight-line-circle isochrone) standing in for Phase 3/2. Uses OSM
       Nominatim for address geocoding — a new design call, not previously
       specified, flagged for your review. **Not yet deployed** — blocked on
-      Cloud Run/GCP access above.
+      AWS access above. Needs a thin Lambda handler (Mangum wrapping the
+      existing FastAPI app, no other code changes) once that account
+      exists — not built yet, deliberately deferred until there's
+      somewhere to actually deploy it.
 - [ ] **Frontend** — point existing Firebase Hosting setup at the new API.
       Not started — this repo has no Firebase config, so the existing
       frontend lives elsewhere; blocked on you confirming that project
@@ -260,29 +268,34 @@ Nothing in this phase can start until these exist — none of it is a design
 decision, it's just accounts/credentials only you can create:
 
 - **Domain**: registered 2026-09-28. Nothing else needed on this yet —
-  DNS records get added once Firebase Hosting and Cloud Run domain
-  mappings exist (each generates its own records/verification steps; I
-  can't specify them ahead of those services existing). When that step
-  comes, either hand me registrar/DNS login or add the records I give you
+  DNS records get added once Firebase Hosting and the AWS API endpoint
+  exist (each generates its own records/verification steps; I can't
+  specify them ahead of those services existing). When that step comes,
+  either hand me registrar/DNS login or add the records I give you
   yourself — your call.
-- **GCP**: an account with billing enabled (required by Cloud Run even on
-  the free tier — card on file, not an expected charge), a project for this
-  app, and either a service-account key or Workload Identity Federation
-  setup with Cloud Run deploy permissions for GitHub Actions.
+- **AWS** (switched from GCP 2026-09-29): an account with billing enabled
+  (card on file required to create an AWS account at all, not an expected
+  charge), and IAM credentials for GitHub Actions to deploy the Lambda —
+  prefer setting up **OIDC-based role assumption** (`aws-actions/
+  configure-aws-credentials` with a GitHub OIDC identity provider) over a
+  long-lived access key, since it avoids a static credential sitting in
+  repo secrets. I'll give you the exact IAM policy/trust-relationship JSON
+  once the account exists.
 - **Firebase**: confirm the project ID/console access for the "existing
   Firebase Hosting setup" `PROJECT.md` refers to, so the custom domain and
   new API can be wired into it.
-- **Supabase**: project created 2026-09-28 — Project URL, anon key, and
-  service role key received (saved to local `.env`, gitignored). **Still
-  needed: the Postgres connection string** (Project Settings → Database →
-  Connection string → Session pooler URI, includes the DB password) — the
-  anon/service-role keys are for Supabase's REST/Auth API, not direct
-  Postgres access, which is what `common/db.py` actually uses via
-  `psycopg`. This is the one still blocking every ingestion job, the
-  scoring engine, and the CI workflow from running against real data.
+- **Supabase — done.** Project created 2026-09-28, live and verified
+  working (see "Blocking Phase 1 today" above for the full story — Session
+  pooler connection string, pipeline-mode fix, everything tested against
+  real data 2026-09-29).
 - **GitHub Actions secrets**: repo is confirmed at
-  `github.com/prajeshgpat/BenriSpace` — add `SUPABASE_SERVICE_ROLE_KEY` and
-  the GCP deploy credentials above as repo secrets once created.
+  `github.com/prajeshgpat/BenriSpace` — `.github/workflows/ingestion.yml`
+  reads `DATABASE_URL` (the Session pooler connection string, same one in
+  your local `.env`) plus `NJ_TRANSIT_API_KEY`/`NJ_TRANSIT_API_USERNAME`
+  and the optional Strava vars. None of these are set as repo secrets yet
+  — that's why the workflow is still inert despite the pipeline itself
+  being live and working. Add `DATABASE_URL` plus the AWS deploy
+  credentials above as repo secrets once the AWS account exists.
 - **NJ Transit developer account + API key** — their GTFS static feed
   requires registration, unlike MTA/LIRR/Metro-North which are open
   downloads with no key.
@@ -335,13 +348,16 @@ precomputed score.
 
 ### Requirements from you
 
-- **Where Valhalla runs — deferred by you to this phase.** Two live
-  options, revisit when we get here:
-  - Free GCP e2-micro VM in the same project as Cloud Run (keeps the stack
-    on one vendor at $0/month, but e2-micro's RAM may be tight for the
-    NYC-metro OSM extract — needs a real test, not an assumption)
+- **Where Valhalla runs — deferred by you to this phase.** Live options,
+  revisit when we get here (updated 2026-09-29 for the AWS switch):
+  - Free-tier-eligible AWS EC2 instance (t2.micro/t3.micro) in the same
+    account as the Lambda API (keeps the stack on one vendor, but two
+    caveats worth knowing now: RAM may be tight for the NYC-metro OSM
+    extract — needs a real test, not an assumption — and unlike GCP's
+    e2-micro, AWS's EC2 free tier is a 12-month trial for new accounts,
+    not indefinite, so this isn't actually free forever)
   - A small paid VM (DigitalOcean/Linode/Fly.io, ~$5–6/mo) with more
-    headroom
+    headroom and no 12-month cutoff to plan around
   Whichever you pick, I'll need that provider's account + API key or SSH
   access to provision it.
 
@@ -465,10 +481,12 @@ Stripe Checkout, and see higher limits apply immediately.
   Cloudflare Email Routing, or similar forwarding), set that up before this
   phase starts; a `support@benrispace.com`-style address is what goes on
   the OAuth consent screen and the Stripe account.
-- **Google Cloud Console OAuth client** (separate from the GCP project
-  hosting Cloud Run, or the same one — your call): configure the OAuth
-  consent screen (app name "BenriSpace", the support email above), then
-  create an OAuth 2.0 Client ID + Secret with:
+- **Google Cloud Console OAuth client** — this is unrelated to AWS/hosting,
+  it's specifically for "Sign in with Google" as a login provider, needed
+  regardless of which cloud hosts the API. Any Google Cloud project works
+  (a new one is fine, doesn't need to relate to anything else in this
+  project): configure the OAuth consent screen (app name "BenriSpace", the
+  support email above), then create an OAuth 2.0 Client ID + Secret with:
   - Authorized JavaScript origin: `https://benrispace.com`
   - Authorized redirect URI: your Supabase project's
     `https://<project>.supabase.co/auth/v1/callback`

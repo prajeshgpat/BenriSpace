@@ -61,17 +61,31 @@ it's the defensibility story for both users and future ML refinement.
 ## Hosting & Domain
 
 Production domain: **benrispace.com** (registered 2026-09-28). DNS is
-still unconfigured — records get added once Firebase Hosting and Cloud
-Run's domain mapping exist, each of which issues its own records/
-verification steps.
+still unconfigured — records get added once Firebase Hosting and the AWS
+API endpoint exist, each of which issues its own records/verification
+steps.
 
 - `benrispace.com` / `www.benrispace.com` → frontend (existing Firebase
   Hosting setup)
-- `api.benrispace.com` → backend API (Cloud Run)
-- **Cloud vendor: GCP.** Cloud Run is the chosen backend host (decided over
-  Render — see Phase 1) specifically so Valhalla (Phase 2) has the option to
-  co-locate in the same GCP project/billing account rather than adding a
-  second vendor.
+- `api.benrispace.com` → backend API (AWS Lambda + Function URL)
+- **Cloud vendor: AWS** (switched from GCP 2026-09-29 — see rationale
+  below). Valhalla is just a self-hosted Docker container, so it isn't
+  tied to any particular cloud; co-locating it with the API under one
+  account/billing setup works identically on AWS (a small EC2 instance
+  next to the Lambda-hosted API) as it would have on GCP.
+- **API compute: AWS Lambda** (via the Mangum ASGI adapter, no FastAPI
+  code changes needed) **+ a Lambda Function URL**, not App Runner or
+  Fargate — Lambda's free tier is perpetual (1M requests + 400,000 GB-s
+  compute/month, not a 12-month trial) and it genuinely scales to zero,
+  matching this project's $0/month Phase 1 target. App Runner has no free
+  tier at all; Fargate doesn't scale to zero without extra tooling.
+- **Why AWS over GCP**: not a cost decision (both clouds' free tiers are
+  comparable at this scale) — AWS has broader generic market/resume
+  recognition across job postings than GCP, which matters given this
+  project doubles as a portfolio piece (see Overview). GCP was an equally
+  legitimate technical choice; this was a deliberate trade against
+  resume breadth once the Valhalla co-location constraint (the original
+  reason for picking GCP) turned out not to actually require GCP.
 - See `PHASES.md` for the concrete accounts/keys/DNS records needed to wire
   this up, phase by phase.
 
@@ -115,8 +129,9 @@ parallel work later.
 - **Scoring**: precomputed and stored, never calculated live per request.
   This is the key scalability lever — it keeps live user traffic from ever
   touching rate-limited third-party APIs.
-- **API**: FastAPI, deployed on Cloud Run free tier (scales to zero when
-  idle), served at `api.benrispace.com`
+- **API**: FastAPI, deployed on AWS Lambda (Mangum ASGI adapter) + a
+  Lambda Function URL — perpetual free tier, scales to zero when idle —
+  served at `api.benrispace.com`
 - **Frontend**: existing Firebase Hosting setup, pointed at the new API and
   served at `benrispace.com`/`www.benrispace.com`
 
@@ -269,16 +284,21 @@ Designed for **1 to a few users today, without a rebuild when it grows**:
 
 ## Cost Constraints
 
-Phase 1 should run close to **$0/month**: Supabase free tier, Cloud Run free
-tier, GitHub Actions free minutes, OSM/GTFS/NYC Open Data all free,
-self-hosted Valhalla/OSRM in a Docker container. Two real, non-$0 line items
-to plan for regardless:
+Phase 1 should run close to **$0/month**: Supabase free tier, AWS Lambda's
+perpetual free tier (1M requests + 400,000 GB-s compute/month), GitHub
+Actions free minutes, OSM/GTFS/NYC Open Data all free, self-hosted
+Valhalla/OSRM in a Docker container. Two real, non-$0 line items to plan
+for regardless:
 
 - **Domain registration** for benrispace.com (~$12–20/yr depending on
   registrar) — one-time-ish cost, not recurring infra spend.
-- **GCP requires a billing account on file to use Cloud Run at all**, even
-  within the free tier — this is a card-on-file requirement, not an expected
-  charge, but don't be surprised by it when setting up the GCP project.
+- **AWS requires a card on file to create an account at all**, even to
+  stay within free-tier usage — not an expected charge, but don't be
+  surprised by it when setting up the AWS account. Unlike Lambda's
+  perpetual free tier, **EC2's free tier (relevant if Valhalla lands on
+  a small EC2 instance in Phase 2) is a 12-month trial for new accounts,
+  not indefinite** — a real cost to plan for a year out, worth flagging
+  now even though Phase 2 is still deferred.
 
 The only realistic *variable* early cost is LLM API calls in Phase 3 — keep
 these capped and per-request cheap; don't add paid data sources (e.g. Google
