@@ -1,0 +1,74 @@
+.form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input {
+  flex: none;
+  min-width: 0;
+  height: 3rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  /* 16px minimum stops iOS Safari zooming the page on focus. */
+  font-size: 1rem;
+}
+
+.input::placeholder {
+  color: var(--text-subtle);
+  opacity: 1;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.button {
+  height: 3rem;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.button:hover {
+  background: var(--accent-hover);
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+@media (min-width: 30rem) {
+  .row {
+    flex-direction: row;
+  }
+
+  .input {
+    flex: 1;
+  }
+}

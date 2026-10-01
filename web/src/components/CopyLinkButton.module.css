@@ -1,0 +1,14 @@
+.button {
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--surface-sunken);
+}

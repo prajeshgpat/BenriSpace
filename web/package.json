@@ -1,0 +1,43 @@
+{
+  "name": "benrispace-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "generate:api": "openapi-typescript ../contracts/openapi.yaml -o src/lib/api/schema.d.ts",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "next": "15.5.26",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^24.19.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.26",
+    "jsdom": "^30.1.1",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5",
+    "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "postcss": "^8.5.28"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

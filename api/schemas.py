@@ -46,6 +46,7 @@ class SubScores(CamelModel):
     road: float | None = None
     emergency_corridor: float | None = None
     airport: float | None = None
+    trail_popularity: float | None = None
 
 
 class ScoreResponse(CamelModel):

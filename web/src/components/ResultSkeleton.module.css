@@ -1,0 +1,64 @@
+.card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.block {
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.heading {
+  width: min(22rem, 80%);
+  height: 1.75rem;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.5rem 0;
+}
+
+.ring {
+  flex: none;
+  width: 7.5rem;
+  height: 7.5rem;
+  border-radius: 50%;
+}
+
+.lines {
+  display: grid;
+  flex: 1;
+  gap: 0.625rem;
+}
+
+.line {
+  height: 1rem;
+}
+
+.lineShort {
+  width: 60%;
+  height: 1rem;
+}
+
+.row {
+  height: 2.75rem;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (min-width: 40rem) {
+  .card {
+    padding: 1.5rem;
+  }
+}

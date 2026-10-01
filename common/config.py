@@ -34,4 +34,13 @@ VALHALLA_URL = os.environ.get("VALHALLA_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", "v1-handtuned")
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,https://benrispace.com,https://www.benrispace.com",
+    ).split(",")
+    if origin.strip()
+]
+
+SCORING_WEIGHTS_VERSION =os.environ.get("SCORING_WEIGHTS_VERSION", "v1-handtuned")

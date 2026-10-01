@@ -22,7 +22,9 @@ the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
 
 from uuid import UUID
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.explain import build_explanation
@@ -43,6 +45,7 @@ from api.schemas import (
     TriangulateResponse,
 )
 from api.triangulate import anchor_to_circle, rank_candidates
+from common.config import CORS_ALLOWED_ORIGINS
 from common.db import (
     get_connection,
     get_geo_entities_in_bbox,
@@ -52,14 +55,34 @@ from common.db import (
 )
 from common.geo import encode as geohash_encode
 
-app = FastAPI(title="BenriSpace API", version="0.2.0")
+app = FastAPI(title="BenriSpace API", version="0.3.1")
+
+# The frontend is a separate origin (benrispace.com / localhost:3000) from
+# the API (api.benrispace.com / localhost:8000), so browsers need CORS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+    expose_headers=["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+)
 
 
 def _error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content=Error(code=code, message=message).model_dump(by_alias=True),
+        content=Error(code=code, message=message).model_dump(by_alias=True, exclude_none=True),
     )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's default 422 `{detail: [...]}` body isn't in the contract --
+    every error there is `{code, message}`, and bad input is a 400."""
+    first = exc.errors()[0] if exc.errors() else {}
+    location = ".".join(str(part) for part in first.get("loc", ()))
+    detail = first.get("msg", "Invalid request")
+    return _error(400, "invalid_request", f"{location}: {detail}" if location else detail)
 
 
 def _resolve_anchor_latlon(anchor: AnchorPoint) -> tuple[float, float] | None:

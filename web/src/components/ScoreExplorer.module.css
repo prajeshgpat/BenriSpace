@@ -1,0 +1,78 @@
+.search {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.examplesLabel {
+  color: var(--text-secondary);
+}
+
+.example {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.125rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 120ms ease;
+}
+
+.example:hover {
+  border-color: var(--border-strong);
+}
+
+.idle {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.idleHeading {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.idleList {
+  display: grid;
+  gap: 1rem;
+}
+
+.idleList li {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+}
+
+.idleList strong {
+  font-weight: 600;
+}
+
+.idleList span {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+}
+
+@media (min-width: 40rem) {
+  .idle {
+    padding: 1.5rem;
+  }
+
+  .idleList {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+}

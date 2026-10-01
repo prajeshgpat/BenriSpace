@@ -60,25 +60,44 @@ it's the defensibility story for both users and future ML refinement.
 
 ## Hosting & Domain
 
-Production domain: **benrispace.com** (registered 2026-09-28). DNS is
-still unconfigured — records get added once Firebase Hosting and the AWS
-API endpoint exist, each of which issues its own records/verification
-steps.
+Production domain: **benrispace.com** (registered 2026-09-28). DNS
+stays at **Cloudflare** (the domain is registered at Cloudflare Registrar,
+which requires Cloudflare nameservers) and Terraform manages every record
+through the Cloudflare provider — Amplify, the API custom domain and ACM
+certificate validation — as DNS-only records so AWS certificates validate
+end to end.
 
-- `benrispace.com` / `www.benrispace.com` → frontend (existing Firebase
-  Hosting setup)
-- `api.benrispace.com` → backend API (AWS Lambda + Function URL)
-- **Cloud vendor: AWS** (switched from GCP 2026-09-29 — see rationale
-  below). Valhalla is just a self-hosted Docker container, so it isn't
-  tied to any particular cloud; co-locating it with the API under one
-  account/billing setup works identically on AWS (a small EC2 instance
-  next to the Lambda-hosted API) as it would have on GCP.
+- `benrispace.com` / `www.benrispace.com` → frontend (**Next.js +
+  TypeScript on AWS Amplify Hosting**)
+- `api.benrispace.com` → backend API (**AWS Lambda behind API Gateway HTTP
+  API**)
+- **Cloud vendor: AWS, everything** (backend switched from GCP 2026-09-29;
+  frontend moved off Firebase Hosting the same day for a single-cloud
+  stack — see rationale below). Valhalla is just a self-hosted Docker
+  container, so it isn't tied to any particular cloud; it co-locates on a
+  small EC2 instance in the same account.
+- **Infrastructure-as-code: Terraform** for every AWS resource (Lambda, API
+  Gateway, IAM + GitHub OIDC deploy role, Amplify app, Cloudflare DNS records, ACM
+  certs, later EC2 for Valhalla), under `infra/`. State lives in an S3
+  backend. Nothing is click-configured in the console — the whole stack is
+  reproducible from the repo, which is the production-readiness story
+  and a major resume signal (IaC is among the most-requested skills in
+  both SWE and data-engineering postings).
+- **CI/CD: GitHub Actions**, unchanged — ingestion cron plus deploy
+  workflows. Airflow/Dagster stay deferred per Phase 5.
 - **API compute: AWS Lambda** (via the Mangum ASGI adapter, no FastAPI
-  code changes needed) **+ a Lambda Function URL**, not App Runner or
-  Fargate — Lambda's free tier is perpetual (1M requests + 400,000 GB-s
-  compute/month, not a 12-month trial) and it genuinely scales to zero,
-  matching this project's $0/month Phase 1 target. App Runner has no free
-  tier at all; Fargate doesn't scale to zero without extra tooling.
+  code changes needed) fronted by **API Gateway HTTP API**, not App Runner
+  or Fargate — Lambda genuinely scales to zero and its free allowance (1M
+  requests + 400,000 GB-s/month) is one of AWS's always-free offers. A
+  bare Lambda Function URL was the earlier plan, but Function URLs don't
+  support custom domains, so `api.benrispace.com` needs API Gateway (or
+  CloudFront) in front; API Gateway HTTP API is the more standard,
+  recognizable choice and costs ~$1 per million requests past any free
+  allowance — effectively $0 at this traffic.
+- **Frontend: Next.js + TypeScript on Amplify Hosting** — React/TypeScript
+  is the most in-demand frontend skill set, and Amplify gives Firebase-like
+  git-push deploys and per-branch preview URLs while keeping the stack
+  single-cloud. Lives in `web/` in this repo.
 - **Why AWS over GCP**: not a cost decision (both clouds' free tiers are
   comparable at this scale) — AWS has broader generic market/resume
   recognition across job postings than GCP, which matters given this
@@ -129,11 +148,14 @@ parallel work later.
 - **Scoring**: precomputed and stored, never calculated live per request.
   This is the key scalability lever — it keeps live user traffic from ever
   touching rate-limited third-party APIs.
-- **API**: FastAPI, deployed on AWS Lambda (Mangum ASGI adapter) + a
-  Lambda Function URL — perpetual free tier, scales to zero when idle —
-  served at `api.benrispace.com`
-- **Frontend**: existing Firebase Hosting setup, pointed at the new API and
-  served at `benrispace.com`/`www.benrispace.com`
+- **API**: FastAPI on AWS Lambda (Mangum ASGI adapter) behind API Gateway
+  HTTP API — scales to zero when idle — served at `api.benrispace.com`
+- **Frontend**: Next.js + TypeScript on AWS Amplify Hosting, served at
+  `benrispace.com`/`www.benrispace.com` (replaces the earlier Firebase
+  Hosting plan)
+- **Infrastructure**: Terraform (`infra/`) provisions all AWS resources;
+  GitHub Actions deploys via an OIDC-assumed IAM role (no long-lived AWS
+  keys in repo secrets)
 
 ### Phase 2 — Triangulation / Isochrones
 
@@ -284,21 +306,34 @@ Designed for **1 to a few users today, without a rebuild when it grows**:
 
 ## Cost Constraints
 
-Phase 1 should run close to **$0/month**: Supabase free tier, AWS Lambda's
-perpetual free tier (1M requests + 400,000 GB-s compute/month), GitHub
-Actions free minutes, OSM/GTFS/NYC Open Data all free, self-hosted
-Valhalla/OSRM in a Docker container. Two real, non-$0 line items to plan
-for regardless:
+Phase 1 should run close to **$0/month**, with a few small, known line
+items: Supabase free tier, Lambda's always-free allowance (1M requests +
+400,000 GB-s/month), GitHub Actions free minutes, OSM/GTFS/NYC Open Data
+all free. Real, non-$0 items to plan for:
 
 - **Domain registration** for benrispace.com (~$12–20/yr depending on
-  registrar) — one-time-ish cost, not recurring infra spend.
-- **AWS requires a card on file to create an account at all**, even to
-  stay within free-tier usage — not an expected charge, but don't be
-  surprised by it when setting up the AWS account. Unlike Lambda's
-  perpetual free tier, **EC2's free tier (relevant if Valhalla lands on
-  a small EC2 instance in Phase 2) is a 12-month trial for new accounts,
-  not indefinite** — a real cost to plan for a year out, worth flagging
-  now even though Phase 2 is still deferred.
+  registrar).
+- **DNS**: free — Cloudflare hosts it, so no Route 53 zone.
+- **Terraform state**: an S3 bucket holding a few KB — effectively $0.
+- **API Gateway HTTP API**: ~$1 per million requests — pennies at this
+  traffic.
+- **Amplify Hosting**: charged per build-minute and GB served; small for a
+  low-traffic site, but not an always-free service.
+- **AWS free tier caveat — verify at signup.** AWS restructured its free
+  tier for *new* accounts in mid-2025: instead of the old 12-months-free
+  model for services like EC2 and Amplify, new accounts get a starting
+  credit balance on a time-limited free plan, while a set of
+  "always free" offers (Lambda's allowance among them) continue
+  indefinitely. The exact credit amounts and terms change — check the
+  current AWS Free Tier page when creating the account rather than
+  trusting this doc. Practical upshot: Lambda stays free long-term; EC2
+  (Valhalla, Phase 2) and Amplify draw down credits and then bill
+  normally, so budget a few dollars a month for them after credits run
+  out.
+- **AWS requires a card on file to create an account at all** — not an
+  expected charge, just a signup requirement. Set up an **AWS Budgets
+  alert** (e.g. $10/month) on day one so an unexpected bill can't sneak
+  up; that's in the Terraform scope too.
 
 The only realistic *variable* early cost is LLM API calls in Phase 3 — keep
 these capped and per-request cheap; don't add paid data sources (e.g. Google

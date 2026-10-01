@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: BenriSpace API
-  version: "0.3.0"
+  version: "0.3.1"
   description: >
     Phase 0 contract, plus the Phase 4 auth/rate-limit addition (non-breaking:
     new security requirement + new 401/429 responses, no existing fields
@@ -225,19 +225,20 @@ components:
       description: >
         Normalized 0-100 sub-scores. Direction is already applied — higher
         is always better, even for factors that are a negative raw signal
-        (e.g. gas station density).
+        (e.g. gas station density). A factor is null when there is no data
+        for it at this location yet — that means "not measured", never 0.
       properties:
-        grocery: { type: number }
-        gym: { type: number }
-        cafe: { type: number }
-        gasStation: { type: number }
-        convenienceStore: { type: number }
-        transit: { type: number }
-        school: { type: number }
-        road: { type: number }
-        emergencyCorridor: { type: number }
-        airport: { type: number }
-        trailPopularity: { type: number }
+        grocery: { type: number, nullable: true }
+        gym: { type: number, nullable: true }
+        cafe: { type: number, nullable: true }
+        gasStation: { type: number, nullable: true }
+        convenienceStore: { type: number, nullable: true }
+        transit: { type: number, nullable: true }
+        school: { type: number, nullable: true }
+        road: { type: number, nullable: true }
+        emergencyCorridor: { type: number, nullable: true }
+        airport: { type: number, nullable: true }
+        trailPopularity: { type: number, nullable: true }
 
     ScoreResponse:
       type: object

@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+#
+# Not set here: the Cloudflare API token. Export it in your shell instead, so
+# it never lands in a file:  export CLOUDFLARE_API_TOKEN=...
+# Create it in the Cloudflare dashboard (My Profile -> API Tokens) from the
+# "Edit zone DNS" template, scoped to the benrispace.com zone only.
+
+# Required. Receives AWS Budgets alerts.
+budget_alert_email = "you@example.com"
+
+# Required for the FIRST apply only. GitHub personal access token (classic)
+# with the single scope `admin:repo_hook`, created by an admin of the repo,
+# after installing the Amplify GitHub App on the repo:
+#   https://github.com/apps/aws-amplify-us-east-1/installations/new
+# Amplify uses it once to register its webhook and does not keep it. After the
+# first successful apply, delete this line and revoke the token.
+# Alternatively leave it out of this file and export TF_VAR_github_access_token.
+github_access_token = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Optional overrides (defaults shown).
+# aws_region               = "us-east-1"
+# monthly_budget_usd       = 10
+# lambda_zip_path          = "../build/lambda.zip"
+# lambda_memory_mb         = 512
+# lambda_timeout_seconds   = 20
+# log_retention_days       = 14
+# api_throttle_rate_limit  = 10
+# api_throttle_burst_limit = 20
+# disable_execute_api_endpoint = false # set true once api.<domain> is live

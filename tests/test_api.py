@@ -217,3 +217,49 @@ def test_rank_candidates_respects_limit():
     ranked = rank_candidates(candidates, [circle], combine_mode="intersect", limit=3)
     assert len(ranked) == 3
     assert [c["composite_score"] for c in ranked] == [9, 8, 7]
+
+
+# --- Contract conformance (bugs found when the frontend first consumed the API)
+
+
+def test_sub_scores_model_has_a_field_for_every_scored_category():
+    # trail_popularity_score was computed and stored but silently dropped
+    # from responses because SubScores had no field for it.
+    from api.schemas import SubScores
+    from scoring.engine import CATEGORY_SPECS
+
+    expected = {spec.score_column.removesuffix("_score") for spec in CATEGORY_SPECS}
+    assert set(SubScores.model_fields) == expected
+
+
+def test_sub_scores_from_score_row_includes_trail_popularity():
+    from api.lookup import sub_scores_from_score_row
+
+    sub_scores = sub_scores_from_score_row({"trail_popularity_score": 42.0})
+    assert sub_scores.model_dump(by_alias=True)["trailPopularity"] == 42.0
+
+
+def test_error_body_omits_upgrade_url_when_unset():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    resp = TestClient(app).get("/v1/score")
+    assert resp.status_code == 400
+    assert resp.json() == {
+        "code": "invalid_request",
+        "message": "Provide address, or both lat and lon.",
+    }
+
+
+def test_validation_errors_use_the_contract_error_shape_not_fastapi_422():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+
+    resp = TestClient(app).get("/v1/score/not-a-uuid/explanation")
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["code"] == "invalid_request"
+    assert "geo_entity_id" in body["message"] or "geoEntityId" in body["message"]
+    assert "detail" not in body

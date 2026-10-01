@@ -1,0 +1,216 @@
+# Builds and deploys the API to the `benrispace-api` Lambda (PROJECT.md
+# "Hosting & Domain"). Terraform (infra/) owns the function's configuration;
+# this workflow only ever replaces its code.
+#
+# Required repo variables (Settings -> Secrets and variables -> Actions ->
+# Variables), both Terraform outputs/inputs:
+#   AWS_DEPLOY_ROLE_ARN  the GitHub OIDC deploy role (output github_deploy_role_arn)
+#   AWS_REGION           the region the function lives in
+# Optional:
+#   API_BASE_URL         smoke-check target, including /v1. Defaults to
+#                        https://api.benrispace.com/v1; point it at the API
+#                        Gateway execute-api URL until DNS is delegated.
+#
+# No static AWS keys: the deploy job exchanges a GitHub OIDC token for the
+# role. The role's trust policy only accepts refs/heads/main, and it would
+# reject a job that declares an `environment:` (different sub claim), so
+# don't add one here without changing infra/github_oidc.tf.
+#
+# The test/build job runs third-party code (pip, pytest) and deliberately
+# has no id-token permission; only the deploy job, which runs nothing but
+# the AWS CLI and curl, can assume the role.
+
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "common/**"
+      - "scoring/**"
+      - "pyproject.toml"
+      - "scripts/build_lambda.sh"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch: {} # from main: full deploy; from any other branch: test + build only
+
+permissions:
+  contents: read
+
+# One deploy at a time, in order. Never cancel a run mid-deploy: an
+# interrupted update-function-code/wait would leave the outcome unknown.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  FUNCTION_NAME: benrispace-api
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # the Lambda runtime's version
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest -q
+
+      # Pin the bundle to exactly the versions the tests just passed with,
+      # instead of letting the build resolve `>=` ranges a second time.
+      - name: Build build/lambda.zip
+        run: |
+          pip freeze --exclude-editable > "$RUNNER_TEMP/constraints.txt"
+          PIP_CONSTRAINT="$RUNNER_TEMP/constraints.txt" scripts/build_lambda.sh
+
+      # The runner is x86_64 and the bundle is arm64, so nothing above has
+      # actually loaded the compiled wheels. Import the handler from the
+      # real zip inside AWS's own python3.12 arm64 image (emulated) and send
+      # it one request, so a bundle that cannot start is caught here rather
+      # than after it has replaced the live function.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Invoke the bundle in the Lambda arm64 runtime image
+        run: |
+          unzip -q build/lambda.zip -d "$RUNNER_TEMP/bundle"
+          docker run --rm -i --platform linux/arm64 \
+            -v "$RUNNER_TEMP/bundle:/var/task:ro" \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            --entrypoint python3.12 \
+            public.ecr.aws/lambda/python:3.12 - <<'PY'
+          import json
+          import platform
+          import sys
+
+          sys.path.insert(0, "/var/task")
+          from api.lambda_handler import handler
+
+          event = {
+              "version": "2.0",
+              "routeKey": "$default",
+              "rawPath": "/v1/score",
+              "rawQueryString": "",
+              "headers": {"host": "api.benrispace.com", "x-forwarded-proto": "https"},
+              "requestContext": {
+                  "http": {"method": "GET", "path": "/v1/score", "sourceIp": "127.0.0.1"},
+                  "stage": "$default",
+              },
+              "isBase64Encoded": False,
+          }
+          response = handler(event, None)
+          print(platform.python_version(), platform.machine(), response["statusCode"], response["body"])
+          assert platform.machine() == "aarch64", platform.machine()
+          assert response["statusCode"] == 400, response
+          assert json.loads(response["body"])["code"] == "invalid_request", response
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-zip
+          path: build/lambda.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to Lambda
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write # request the OIDC token that is exchanged for the deploy role
+      contents: read
+    env:
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      API_BASE_URL: ${{ vars.API_BASE_URL || 'https://api.benrispace.com/v1' }}
+    steps:
+      - name: Check repo variables
+        run: |
+          missing=()
+          [[ -n "$AWS_DEPLOY_ROLE_ARN" ]] || missing+=("AWS_DEPLOY_ROLE_ARN")
+          [[ -n "$AWS_REGION" ]] || missing+=("AWS_REGION")
+          if (( ${#missing[@]} )); then
+            echo "::error title=Deploy is not configured::Missing repository variable(s): ${missing[*]}. Set them under Settings -> Secrets and variables -> Actions -> Variables (values come from the Terraform outputs in infra/)."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambda-zip
+          path: build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: deploy-api-${{ github.run_id }}
+
+      - name: Update function code
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://build/lambda.zip \
+            --query '{CodeSha256: CodeSha256, CodeSize: CodeSize, LastUpdateStatus: LastUpdateStatus}' \
+            --output table
+
+      - name: Wait for the update to finish
+        run: aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+
+      - name: Verify the function is running this build
+        run: |
+          expected="$(openssl dgst -sha256 -binary build/lambda.zip | base64)"
+          read -r deployed status state < <(
+            aws lambda get-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --query '[CodeSha256, LastUpdateStatus, State]' \
+              --output text
+          )
+          echo "CodeSha256=$deployed LastUpdateStatus=$status State=$state"
+          if [[ "$deployed" != "$expected" || "$status" != "Successful" || "$state" != "Active" ]]; then
+            echo "::error::Function is not running the zip that was just built (expected CodeSha256 $expected, status Successful, state Active)."
+            exit 1
+          fi
+
+      # Over the public URL, so it covers API Gateway -> Lambda -> the new
+      # code's cold start (which reads the database URL from SSM) and needs
+      # no IAM permission beyond updating the code. There is no automatic
+      # rollback: a failure here means production needs attention now.
+      - name: Smoke-check the deployed API
+        run: |
+          fetch() { # fetch <url> <accepted-status-regex>; body is left in body.json
+            local url="$1" accepted="$2" status attempt
+            for attempt in 1 2 3; do
+              : > body.json
+              status="$(curl --silent --show-error --max-time 30 --output body.json --write-out '%{http_code}' "$url" || true)"
+              if [[ "$status" =~ ^($accepted)$ ]]; then
+                echo "GET $url -> $status $(head -c 300 body.json)"
+                return 0
+              fi
+              echo "GET $url -> ${status:-no response} (attempt $attempt/3): $(head -c 300 body.json)"
+              sleep 5
+            done
+            return 1
+          }
+
+          if ! fetch "$API_BASE_URL/score" 400 || ! jq -e '.code == "invalid_request"' body.json > /dev/null; then
+            echo "::error::Smoke check failed: GET $API_BASE_URL/score should return the API's 400 invalid_request. The new code is live and is not serving requests -- check the function's CloudWatch logs (an SSM/database-URL failure at cold start shows up there)."
+            exit 1
+          fi
+
+          if ! fetch "$API_BASE_URL/score?lat=40.7580&lon=-73.9855" '200|404' || ! jq -e 'has("compositeScore") or .code == "not_found"' body.json > /dev/null; then
+            echo "::error::Smoke check failed: a database-backed request (GET /score by lat/lon) did not return 200 or the API's own 404. The function starts but cannot query Postgres -- check the SSM database URL and the Supabase pooler."
+            exit 1
+          fi

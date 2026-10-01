@@ -1,0 +1,44 @@
+# Static checks for the Terraform under infra/. Runs entirely offline from
+# AWS: `init -backend=false` downloads providers but never touches the S3
+# state backend, so no credentials or OIDC role are needed.
+
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+      - run: terraform fmt -check -recursive -diff
+        working-directory: infra
+
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - infra
+          - infra/bootstrap
+    defaults:
+      run:
+        working-directory: ${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.4"
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate

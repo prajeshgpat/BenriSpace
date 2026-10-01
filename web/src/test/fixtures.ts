@@ -1,0 +1,88 @@
+import type { Explanation, Score, SubScores } from "@/lib/api/types";
+
+export const GEO_ENTITY_ID = "21c5d4bd-e66e-423b-8f4c-8e569604f187";
+
+/** Captured from the live API: every sub-score but one is null, and `trailPopularity` is absent. */
+export const liveScoreBody = {
+  geoEntityId: GEO_ENTITY_ID,
+  address: "40.74920,-73.98500",
+  latitude: 40.7492000000001,
+  longitude: -73.9850000000001,
+  compositeScore: 62.7906976744186,
+  subScores: {
+    grocery: null,
+    gym: null,
+    cafe: null,
+    gasStation: null,
+    convenienceStore: null,
+    transit: null,
+    school: null,
+    road: null,
+    emergencyCorridor: null,
+    airport: 62.7906976744186,
+  },
+  weightsVersion: "v1-handtuned",
+  computedAt: "2026-09-29T03:12:03.491922Z",
+};
+
+export const liveExplanationBody = {
+  geoEntityId: GEO_ENTITY_ID,
+  explanation:
+    "This location's strongest factor is airport drive time (63/100).",
+  computedAt: "2026-09-29T03:12:03.491922Z",
+};
+
+export const emptySubScores: SubScores = {
+  grocery: null,
+  gym: null,
+  cafe: null,
+  gasStation: null,
+  convenienceStore: null,
+  transit: null,
+  school: null,
+  road: null,
+  emergencyCorridor: null,
+  airport: null,
+  trailPopularity: null,
+};
+
+export const fullSubScores: SubScores = {
+  grocery: 91.4,
+  gym: 72,
+  cafe: 88.6,
+  gasStation: 40,
+  convenienceStore: 35.2,
+  transit: 97,
+  school: 64.5,
+  road: 22,
+  emergencyCorridor: 0,
+  airport: 62.79,
+  trailPopularity: 100,
+};
+
+export function makeScore(overrides: Partial<Score> = {}): Score {
+  return {
+    geoEntityId: GEO_ENTITY_ID,
+    address: "40.74920,-73.98500",
+    latitude: 40.7492,
+    longitude: -73.985,
+    compositeScore: 62.79,
+    subScores: { ...emptySubScores, airport: 62.79 },
+    weightsVersion: "v1-handtuned",
+    computedAt: "2026-09-29T03:12:03.491922Z",
+    ...overrides,
+  };
+}
+
+export function makeExplanation(
+  overrides: Partial<Explanation> = {},
+): Explanation {
+  return { ...liveExplanationBody, ...overrides };
+}
+
+export function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
