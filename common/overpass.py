@@ -18,6 +18,7 @@ against the actual public Overpass instance, not hypothetical:
 
 import sys
 import time
+from collections.abc import Callable
 
 import httpx
 
@@ -91,3 +92,67 @@ def post_overpass_query(query: str, timeout: float, client: httpx.Client | None 
 
         resp.raise_for_status()
         return resp.json()
+
+
+def split_bbox(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[tuple[float, float, float, float]]:
+    """Four quadrants as (min_lat, max_lat, min_lon, max_lon) tuples."""
+    mid_lat = (min_lat + max_lat) / 2.0
+    mid_lon = (min_lon + max_lon) / 2.0
+    return [
+        (min_lat, mid_lat, min_lon, mid_lon),
+        (min_lat, mid_lat, mid_lon, max_lon),
+        (mid_lat, max_lat, min_lon, mid_lon),
+        (mid_lat, max_lat, mid_lon, max_lon),
+    ]
+
+
+def merge_overpass_elements(responses: list[dict]) -> dict:
+    """Merges several Overpass JSON responses into one, de-duplicating
+    elements by (type, id). Ways/relations that straddle a quadrant edge
+    are returned by both quadrants' bbox filters; without de-duplication
+    they would be double-counted."""
+    seen: set[tuple[str | None, int | None]] = set()
+    elements: list[dict] = []
+    for data in responses:
+        for el in data.get("elements", []):
+            key = (el.get("type"), el.get("id"))
+            if key[1] is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            elements.append(el)
+    return {"elements": elements}
+
+
+def fetch_with_quadrant_split(
+    fetch: Callable[[float, float, float, float], dict],
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+    max_depth: int = 2,
+    pause_s: float = 1.0,
+    _depth: int = 0,
+) -> dict:
+    """Calls fetch(min_lat, max_lat, min_lon, max_lon) -> Overpass JSON. On a
+    timeout / transport / HTTP error (429 and fast-busy are already retried
+    inside post_overpass_query, so what arrives here is a size problem),
+    splits the bbox into 4 quadrants and retries each, up to max_depth
+    levels (4**max_depth tiles worst case), merging de-duplicated results."""
+    try:
+        return fetch(min_lat, max_lat, min_lon, max_lon)
+    except (httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException) as exc:
+        if _depth >= max_depth:
+            raise
+        print(
+            f"[overpass] bbox ({min_lat},{min_lon},{max_lat},{max_lon}) failed at depth "
+            f"{_depth} ({exc}); splitting into quadrants",
+            file=sys.stderr,
+        )
+        parts = []
+        for sub in split_bbox(min_lat, max_lat, min_lon, max_lon):
+            time.sleep(pause_s)
+            parts.append(fetch_with_quadrant_split(fetch, *sub, max_depth, pause_s, _depth + 1))
+        return merge_overpass_elements(parts)

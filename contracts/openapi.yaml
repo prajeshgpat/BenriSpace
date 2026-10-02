@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: BenriSpace API
-  version: "0.4.0"
+  version: "0.6.0"
   description: >
     Phase 0 contract, plus the Phase 4 auth/rate-limit addition (non-breaking:
     new security requirement + new 401/429 responses, no existing fields
@@ -24,6 +24,53 @@ security:
   - apiKeyAuth: []
 
 paths:
+  /area:
+    get:
+      summary: Score the area bounded by secondary-and-above roads that contains a point.
+      description: >
+        The area is a face of the network of secondary roads and above
+        (secondary, primary, trunk, motorway and links), closed at the shore.
+        Its sub-scores and composite are the area-weighted average of the
+        latest scores of the geohash6 cells it overlaps (null factors are
+        skipped per factor), so they track the latest scoring run. Returns 404
+        when no area contains the point (or it is larger than the size cap);
+        clients then fall back to the single-cell `/score`.
+      operationId: getArea
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, format: double }
+      responses:
+        "200":
+          description: Area found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaScoreResponse"
+        "400":
+          description: Missing or invalid lat/lon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No area contains this point.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Point outside the coverage area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /score:
     get:
       summary: Get the precomputed composite score and sub-scores for an address.
@@ -202,6 +249,59 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /reverse:
+    get:
+      summary: Readable address for a map point.
+      description: >
+        Reverse-geocodes a coordinate into a short label such as
+        "350 5th Ave, New York, NY" (house number and street, locality, state
+        abbreviation). Falls back to the street, then the neighbourhood name;
+        `label` is null when nothing usable is known there. Proxies a
+        third-party geocoder so the browser never talks to it directly. Clients
+        should show coordinates (or nothing) rather than an error on failure.
+      operationId: reverseGeocode
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: -90
+            maximum: 90
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: -180
+            maximum: 180
+      responses:
+        "200":
+          description: The label (possibly null) for the requested point.
+          headers:
+            Cache-Control:
+              description: Cacheable for a few minutes.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReverseResponse"
+        "422":
+          description: The point is outside the covered metro area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The geocoding provider is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /map/cells:
     get:
       summary: Composite score per grid cell inside a map viewport.
@@ -234,7 +334,11 @@ paths:
           in: query
           description: >
             Comma-separated factors to include (see `FactorKey`). Omit for all
-            eleven. At least one is required if present.
+            fourteen, including the underlying signals `premiumRetail` and
+            `trailPopularity`. An explicit list means exactly those factors:
+            send it without them to leave them out. At least one is required
+            if present. (The website never lists the two underlying signals
+            in its toggles, so it omits `factors` when nothing is narrowed.)
           schema:
             type: string
             example: "grocery,transit,trailPopularity"
@@ -295,7 +399,10 @@ paths:
             type: string
         - name: factors
           in: query
-          description: Same as `/map/cells`.
+          description: >
+            Same as `/map/cells`: omitted means all fourteen factors
+            (underlying `premiumRetail` and `trailPopularity` included); an
+            explicit list means exactly those factors.
           schema:
             type: string
         - name: weights
@@ -312,12 +419,24 @@ paths:
             default: 10
         - name: minSeparationKm
           in: query
-          description: Minimum distance between returned areas.
+          deprecated: true
+          description: >
+            Minimum distance between returned areas, in kilometres. Prefer
+            `minSeparationMi`; sending both is a 400.
           schema:
             type: number
             minimum: 0
             maximum: 50
             default: 3
+        - name: minSeparationMi
+          in: query
+          description: >
+            Minimum distance between returned areas, in miles. Sending both
+            this and `minSeparationKm` is a 400 invalid_request.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 31
       responses:
         "200":
           description: Best areas first.
@@ -420,6 +539,9 @@ components:
         grocery: { type: number, nullable: true }
         gym: { type: number, nullable: true }
         cafe: { type: number, nullable: true }
+        restaurant: { type: number, nullable: true }
+        bar: { type: number, nullable: true }
+        premiumRetail: { type: number, nullable: true }
         gasStation: { type: number, nullable: true }
         convenienceStore: { type: number, nullable: true }
         transit: { type: number, nullable: true }
@@ -453,6 +575,56 @@ components:
         computedAt:
           type: string
           format: date-time
+        school:
+          $ref: "#/components/schemas/SchoolInfo"
+
+    AreaScoreResponse:
+      description: >
+        A `ScoreResponse` for a road-bounded area. `geoEntityId` is the
+        representative grid cell (the one under the clicked point);
+        `latitude`/`longitude` echo the clicked point; `address` is the
+        area's label ("Area bounded by ...").
+      allOf:
+        - $ref: "#/components/schemas/ScoreResponse"
+        - type: object
+          required: [areaId, area, explanation]
+          properties:
+            areaId:
+              type: integer
+            area:
+              type: object
+              required: [geometry, areaSqMi, boundedBy, cellCount]
+              properties:
+                geometry:
+                  type: object
+                  description: GeoJSON Polygon or MultiPolygon, [lon, lat], 5 decimals.
+                areaSqMi:
+                  type: number
+                boundedBy:
+                  type: array
+                  items: { type: string }
+                  description: Up to 4 road names that form most of the boundary.
+                cellCount:
+                  type: integer
+                  description: Number of grid cells blended into the score.
+            explanation:
+              type: string
+              description: Plain-language "why this score", from the area's sub-scores.
+
+    SchoolInfo:
+      type: object
+      nullable: true
+      description: >
+        School detail beside the `school` sub-score. `subScores.school` is
+        null when no rating exists for the location; `proximity` (0-100,
+        proximity+density only) is still reported so clients can show
+        "proximity 72, rating unavailable".
+      required: [ratingAvailable]
+      properties:
+        proximity: { type: number, nullable: true }
+        ratingAvailable: { type: boolean }
+        districtName: { type: string, nullable: true }
+        source: { type: string, nullable: true }
 
     ExplanationResponse:
       type: object
@@ -470,6 +642,15 @@ components:
         computedAt:
           type: string
           format: date-time
+        nearestMi:
+          type: object
+          nullable: true
+          description: >
+            Distance in miles to the nearest feature per factor
+            (FactorKey -> miles, null when unknown).
+          additionalProperties:
+            type: number
+            nullable: true
 
     AnchorPoint:
       type: object
@@ -543,11 +724,22 @@ components:
 
     FactorKey:
       type: string
-      description: A scoring factor. Same keys as `SubScores`.
+      description: >
+        A scoring factor. Same keys as `SubScores`. `premiumRetail` and
+        `trailPopularity` are underlying signals: they count toward the
+        overall score, but the website does not expose them as toggles. The
+        API treats them like any other factor. `emergencyCorridor` is
+        displayed as "Noise corridor" (main roads near fire stations,
+        hospitals and police stations, where sirens and through-traffic noise
+        are most likely; a rough proxy, default weight 0.75); the key is
+        unchanged.
       enum:
         - grocery
         - gym
         - cafe
+        - restaurant
+        - bar
+        - premiumRetail
         - gasStation
         - convenienceStore
         - transit
@@ -579,6 +771,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Suggestion"
+
+    ReverseResponse:
+      type: object
+      required: [label, latitude, longitude]
+      properties:
+        label:
+          type: string
+          nullable: true
+          example: "350 5th Ave, New York, NY"
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
 
     MapCellsResponse:
       type: object

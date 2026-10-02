@@ -26,6 +26,20 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
     "boto3>=1.34",
+    # ingestion/school_districts.py tests (never in the Lambda bundle)
+    "shapely>=2.0",
+    "pyshp>=2.3",
+]
+# School-district boundary + NCES school-location ingestion only; NOT in the Lambda bundle.
+schools = [
+    "shapely>=2.0",
+    "pyshp>=2.3",
+]
+# Offline neighborhood-polygon prototype (ingestion/areas); NOT in the Lambda bundle.
+geo = [
+    "shapely>=2.0",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
 ]
 
 [tool.ruff]

@@ -8,6 +8,8 @@ import os
 
 from dotenv import load_dotenv
 
+from scoring.engine import WEIGHTS_VERSION_V1, WEIGHTS_VERSION_V2  # noqa: F401 (re-exported)
+
 load_dotenv()
 
 DATABASE_URL = os.environ.get(
@@ -46,4 +48,6 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-SCORING_WEIGHTS_VERSION =os.environ.get("SCORING_WEIGHTS_VERSION", "v1-handtuned")
+# Deployed default stays v1 until v2 data is ingested; the v2 constant is
+# for the ingestion workflow / local runs to opt in via the env var.
+SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", WEIGHTS_VERSION_V1)
