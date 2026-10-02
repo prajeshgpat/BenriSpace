@@ -46,6 +46,12 @@ def fresh_cache():
     suggest_mod._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def no_locationiq_key(monkeypatch):
+    # .env is loaded on import; tests must never reach a real provider.
+    monkeypatch.delenv(suggest_mod.LOCATIONIQ_KEY_ENV, raising=False)
+
+
 # --- coverage -----------------------------------------------------------------
 
 
@@ -252,3 +258,139 @@ def test_malformed_provider_payload_is_unavailable(monkeypatch):
     monkeypatch.setattr(suggest_mod.httpx, "Client", FakeClient)
     with pytest.raises(SuggestUnavailable):
         suggest_mod.suggest("broadway", 5)
+
+
+# --- LocationIQ ---------------------------------------------------------------
+
+LIQ_RESULTS = [
+    {
+        "lat": "40.7484421",
+        "lon": "-73.9856589",
+        "class": "building",
+        "type": "yes",
+        "address": {
+            "name": "Empire State Building",
+            "house_number": "350",
+            "road": "5th Avenue",
+            "city": "New York",
+            "state": "New York",
+        },
+    },
+    {
+        "lat": "40.7484311",
+        "lon": "-73.9856903",
+        "class": "man_made",
+        "type": "tower",
+        "address": {
+            "name": "WNEW-FM (New York)",
+            "house_number": "350",
+            "road": "5th Avenue",
+            "city": "New York",
+            "state": "New York",
+        },
+    },
+    {
+        "lat": "40.7580",
+        "lon": "-73.9855",
+        "class": "highway",
+        "type": "primary",
+        "address": {"name": "Broadway", "road": "Broadway", "town": "Hoboken", "state": "New Jersey"},
+    },
+    {"lat": "bad", "lon": "x", "address": {}},
+    "junk",
+]
+
+
+def test_locationiq_results_clean_like_photon_ones():
+    features = suggest_mod.locationiq_to_features(LIQ_RESULTS)
+    labels = [s.label for s in clean_suggestions(features, "350 5th", 5)]
+    assert labels == ["350 5th Avenue, New York, NY", "Broadway, Hoboken, NJ"]
+
+
+def test_locationiq_non_list_payload_is_unavailable():
+    with pytest.raises(suggest_mod.SuggestUnavailable):
+        suggest_mod.locationiq_to_features({"error": "Invalid key"})
+
+
+def _fake_client(response=None, error=None, seen=None):
+    class FakeClient:
+        def __init__(self, *a, **k): ...
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+        def get(self, url, params=None, headers=None):
+            if seen is not None:
+                seen.append((url, params))
+            if error is not None:
+                raise error
+            return response
+
+    return FakeClient
+
+
+def _resp(status, payload):
+    return httpx.Response(status, json=payload, request=httpx.Request("GET", "https://x"))
+
+
+def test_locationiq_is_used_when_a_key_is_set_and_photon_is_not_called(monkeypatch):
+    monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "secret-key-123")
+    seen = []
+    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(_resp(200, LIQ_RESULTS), seen=seen))
+    monkeypatch.setattr(
+        suggest_mod, "fetch_photon_features", lambda q, limit: pytest.fail("Photon called")
+    )
+    resp = client.get("/v1/suggest", params={"q": "350 5th"})
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["label"] == "350 5th Avenue, New York, NY"
+    url, params = seen[0]
+    assert url == suggest_mod.LOCATIONIQ_URL
+    assert params["key"] == "secret-key-123" and params["bounded"] == 1
+
+
+def test_locationiq_no_matches_404_is_an_empty_result_not_a_fallback(monkeypatch):
+    monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "k")
+    monkeypatch.setattr(
+        suggest_mod.httpx, "Client", _fake_client(_resp(404, {"error": "Unable to geocode"}))
+    )
+    monkeypatch.setattr(
+        suggest_mod, "fetch_photon_features", lambda q, limit: pytest.fail("Photon called")
+    )
+    resp = client.get("/v1/suggest", params={"q": "zzzzzz"})
+    assert resp.status_code == 200 and resp.json() == {"suggestions": []}
+
+
+@pytest.mark.parametrize(
+    "response,error",
+    [
+        (_resp(429, {"error": "Rate Limited"}), None),
+        (_resp(401, {"error": "Invalid key"}), None),
+        (_resp(200, {"error": "weird"}), None),
+        (None, httpx.ReadTimeout("slow")),
+        (None, httpx.ConnectError("down")),
+    ],
+)
+def test_locationiq_failures_fall_back_to_photon(monkeypatch, response, error):
+    monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "k")
+    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(response, error))
+    monkeypatch.setattr(suggest_mod, "fetch_photon_features", lambda q, limit: load("350_5th_ave"))
+    resp = client.get("/v1/suggest", params={"q": "350 5th"})
+    assert resp.status_code == 200
+    assert resp.json()["suggestions"][0]["label"] == "350 5th Avenue, New York, NY"
+
+
+def test_the_api_key_never_appears_in_provider_error_messages(monkeypatch):
+    secret = "super-secret-key-999"
+    url_error = httpx.ConnectError(f"failed for https://api.locationiq.com/v1/autocomplete?key={secret}")
+    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(error=url_error))
+    with pytest.raises(suggest_mod.SuggestUnavailable) as caught:
+        suggest_mod.fetch_locationiq_features(secret, "q", 5)
+    assert secret not in str(caught.value)
+    status_error = httpx.HTTPStatusError(
+        f"401 for url https://x?key={secret}",
+        request=httpx.Request("GET", "https://x"),
+        response=httpx.Response(401),
+    )
+    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(_resp(401, {})))
+    with pytest.raises(suggest_mod.SuggestUnavailable) as caught:
+        suggest_mod.fetch_locationiq_features(secret, "q", 5)
+    assert secret not in str(caught.value) and secret not in repr(status_error.__cause__)

@@ -49,9 +49,37 @@ def load_database_url_from_ssm() -> None:
     os.environ["DATABASE_URL"] = value
 
 
+LOCATIONIQ_SSM_PARAM_ENV = "LOCATIONIQ_API_KEY_SSM_PARAM"
+
+
+def load_locationiq_key_from_ssm() -> None:
+    """Optional: address suggestions fall back to Photon without the key, so
+    unlike the database URL any failure here is logged (error type only,
+    never the value) and ignored. An unset or placeholder parameter means
+    "not configured yet"."""
+    param_name = os.environ.get(LOCATIONIQ_SSM_PARAM_ENV)
+    if not param_name:
+        return
+    try:
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "ssm",
+            config=Config(connect_timeout=3, read_timeout=3, retries={"total_max_attempts": 2}),
+        )
+        value = client.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
+    except Exception as exc:  # noqa: BLE001 - optional secret, any failure means Photon
+        print(f"LocationIQ key not loaded from SSM ({type(exc).__name__}); using Photon")
+        return
+    if value.strip() and not value.startswith("placeholder"):
+        os.environ["LOCATIONIQ_API_KEY"] = value.strip()
+
+
 # Must run before anything imports common.config, which reads DATABASE_URL
 # from the environment at import time.
 load_database_url_from_ssm()
+load_locationiq_key_from_ssm()
 
 from mangum import Mangum
 
