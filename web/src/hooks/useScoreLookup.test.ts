@@ -1,10 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type { ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { Explanation, Score } from "@/lib/api/types";
-import { makeExplanation, makeScore } from "@/test/fixtures";
+import { makeExplanation, makeScore, stubClient } from "@/test/fixtures";
 
 import { useScoreLookup } from "./useScoreLookup";
 
@@ -18,12 +19,15 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const byAddress = (address: string): ScoreTarget => ({ kind: "address", address });
+
 function makeClient(overrides: Partial<ApiClient> = {}): ApiClient {
-  return {
+  return stubClient({
     getScore: vi.fn(async () => makeScore()),
+    getScoreByCoordinates: vi.fn(async () => makeScore()),
     getScoreExplanation: vi.fn(async () => makeExplanation()),
     ...overrides,
-  };
+  });
 }
 
 describe("useScoreLookup", () => {
@@ -42,7 +46,7 @@ describe("useScoreLookup", () => {
       getScoreExplanation: vi.fn(() => explanation.promise),
     });
 
-    const { result } = renderHook(() => useScoreLookup("350 5th Ave", client));
+    const { result } = renderHook(() => useScoreLookup(byAddress("350 5th Ave"), client));
 
     expect(result.current.state).toEqual({ status: "loading", address: "350 5th Ave" });
 
@@ -68,7 +72,7 @@ describe("useScoreLookup", () => {
     const error = new ApiError("not-found", "Outside coverage", { status: 404 });
     const client = makeClient({ getScore: vi.fn(async () => Promise.reject(error)) });
 
-    const { result } = renderHook(() => useScoreLookup("Washington DC", client));
+    const { result } = renderHook(() => useScoreLookup(byAddress("Washington DC"), client));
 
     await waitFor(() => expect(result.current.state.status).toBe("error"));
     expect(result.current.state).toEqual({
@@ -84,7 +88,7 @@ describe("useScoreLookup", () => {
       getScore: vi.fn(async () => Promise.reject(new RangeError("boom"))),
     });
 
-    const { result } = renderHook(() => useScoreLookup("anywhere", client));
+    const { result } = renderHook(() => useScoreLookup(byAddress("anywhere"), client));
 
     await waitFor(() => expect(result.current.state.status).toBe("error"));
     expect(result.current.state).toMatchObject({ error: { kind: "server" } });
@@ -96,7 +100,7 @@ describe("useScoreLookup", () => {
   ])("keeps the score when the explanation is unavailable because %s", async (_label, respond) => {
     const client = makeClient({ getScoreExplanation: vi.fn(respond) });
 
-    const { result } = renderHook(() => useScoreLookup("350 5th Ave", client));
+    const { result } = renderHook(() => useScoreLookup(byAddress("350 5th Ave"), client));
 
     await waitFor(() =>
       expect(result.current.state).toMatchObject({
@@ -114,7 +118,7 @@ describe("useScoreLookup", () => {
     const client = makeClient({ getScore });
 
     const { result, rerender } = renderHook(
-      ({ address }) => useScoreLookup(address, client),
+      ({ address }) => useScoreLookup(address === null ? null : byAddress(address), client),
       { initialProps: { address: "first" } },
     );
     const firstSignal = getScore.mock.calls[0][1]?.signal;
@@ -139,7 +143,7 @@ describe("useScoreLookup", () => {
       .mockResolvedValueOnce(makeScore());
     const client = makeClient({ getScore });
 
-    const { result } = renderHook(() => useScoreLookup("350 5th Ave", client));
+    const { result } = renderHook(() => useScoreLookup(byAddress("350 5th Ave"), client));
     await waitFor(() => expect(result.current.state.status).toBe("error"));
 
     act(() => result.current.retry());
@@ -152,7 +156,7 @@ describe("useScoreLookup", () => {
   it("returns to idle when the address is cleared", async () => {
     const client = makeClient();
     const { result, rerender } = renderHook(
-      ({ address }: { address: string | null }) => useScoreLookup(address, client),
+      ({ address }: { address: string | null }) => useScoreLookup(address === null ? null : byAddress(address), client),
       { initialProps: { address: "350 5th Ave" as string | null } },
     );
     await waitFor(() => expect(result.current.state.status).toBe("success"));
@@ -160,5 +164,28 @@ describe("useScoreLookup", () => {
     rerender({ address: null });
 
     expect(result.current.state).toEqual({ status: "idle" });
+  });
+
+  it("looks coordinates up directly, labelled for display", async () => {
+    const client = makeClient();
+    const target: ScoreTarget = {
+      kind: "coordinates",
+      lat: 40.7484,
+      lon: -73.9857,
+      label: "Empire State Building",
+    };
+
+    const { result } = renderHook(() => useScoreLookup(target, client));
+
+    expect(result.current.state).toEqual({
+      status: "loading",
+      address: "Empire State Building",
+    });
+    await waitFor(() => expect(result.current.state.status).toBe("success"));
+    expect(client.getScoreByCoordinates).toHaveBeenCalledWith(
+      { lat: 40.7484, lon: -73.9857 },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(client.getScore).not.toHaveBeenCalled();
   });
 });

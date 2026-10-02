@@ -1,5 +1,8 @@
+import Link from "next/link";
+
 import type { ExplanationState } from "@/hooks/useScoreLookup";
 import type { Score } from "@/lib/api/types";
+import { mapHref } from "@/lib/map/viewport";
 import {
   SCORE_MAX,
   bandLabel,
@@ -79,11 +82,26 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
             </span>
           ) : null}
         </p>
-        <CopyLinkButton />
+        <div className={styles.actions}>
+          <Link
+            className={styles.mapLink}
+            href={mapHref({
+              lat: score.latitude,
+              lon: score.longitude,
+              zoom: RESULT_MAP_ZOOM,
+            })}
+            prefetch={false}
+          >
+            View on map
+          </Link>
+          <CopyLinkButton />
+        </div>
       </footer>
     </article>
   );
 }
+
+const RESULT_MAP_ZOOM = 13;
 
 const RING_RADIUS = 52;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;

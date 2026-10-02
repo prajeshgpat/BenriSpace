@@ -1,0 +1,70 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 208799169,
+    "osm_key": "building",
+    "osm_value": "apartments",
+    "type": "house",
+    "name": "Boston Commons",
+    "street": "Seaview Avenue",
+    "locality": "Historic East Side",
+    "city": "Bridgeport",
+    "county": "Greater Bridgeport Planning Region",
+    "state": "Connecticut",
+    "country": "United States",
+    "postcode": "06610",
+    "countrycode": "US",
+    "extent": [
+     -73.1710009,
+     41.1931815,
+     -73.1703515,
+     41.1929557
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.1706762,
+     41.1930896
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 280540409,
+    "osm_key": "building",
+    "osm_value": "apartments",
+    "type": "house",
+    "housenumber": "38",
+    "name": "Heritage Commons",
+    "street": "Boston Road",
+    "district": "Newfield Heights",
+    "city": "Middletown",
+    "county": "Lower Connecticut River Valley Planning Region",
+    "state": "Connecticut",
+    "country": "United States",
+    "postcode": "06457",
+    "countrycode": "US",
+    "extent": [
+     -72.6760953,
+     41.5534843,
+     -72.6752012,
+     41.552759
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -72.6754513,
+     41.553107
+    ]
+   }
+  }
+ ]
+}

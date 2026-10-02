@@ -260,3 +260,220 @@ describe("parseScore", () => {
     expect(parsed).not.toHaveProperty("unexpected");
   });
 });
+
+describe("getScoreByCoordinates", () => {
+  it("requests lat and lon, not an address", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(liveScoreBody));
+
+    const score = await client.getScoreByCoordinates({ lat: 40.7484, lon: -73.9857 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/score?lat=40.7484&lon=-73.9857`);
+    expect(score.geoEntityId).toBe(GEO_ENTITY_ID);
+  });
+
+  it("maps a 404 to not-found", async () => {
+    const { client } = clientReturning(jsonResponse({ code: "not_found", message: "none" }, 404));
+    expect((await rejection(client.getScoreByCoordinates({ lat: 0, lon: 0 }))).kind).toBe("not-found");
+  });
+});
+
+describe("suggestAddresses", () => {
+  const body = {
+    suggestions: [
+      { label: "350 5th Avenue, New York, NY", latitude: 40.7484, longitude: -73.9857 },
+      { label: "", latitude: 1, longitude: 2 },
+      { label: "No coords" },
+    ],
+  };
+
+  it("sends q and limit and keeps only well-formed suggestions", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+
+    const result = await client.suggestAddresses("350 5th", { limit: 3 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/suggest?q=350+5th&limit=3`);
+    expect(result).toEqual([
+      { label: "350 5th Avenue, New York, NY", latitude: 40.7484, longitude: -73.9857 },
+    ]);
+  });
+
+  it("defaults the limit to 5", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse({ suggestions: [] }));
+    await client.suggestAddresses("abc");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=5");
+  });
+
+  it("rejects a 503 so callers can degrade quietly", async () => {
+    const { client } = clientReturning(
+      jsonResponse({ code: "suggest_unavailable", message: "down" }, 503),
+    );
+    expect((await rejection(client.suggestAddresses("350 5th"))).kind).toBe("server");
+  });
+
+  it("rejects a malformed body", async () => {
+    const { client } = clientReturning(jsonResponse({ nope: true }));
+    expect((await rejection(client.suggestAddresses("350 5th"))).kind).toBe("invalid-response");
+  });
+
+  it("uses a short timeout of its own, not the client-wide one", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const { client } = clientReturning(jsonResponse({ suggestions: [] }));
+
+    await client.suggestAddresses("350 5th");
+
+    expect(timeout).toHaveBeenCalledWith(5_000);
+  });
+
+  it("propagates a caller abort untouched", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    const client = createApiClient({ baseUrl: BASE_URL, fetch: fetchMock });
+    const pending = client.suggestAddresses("350 5th", { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.not.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("getMapCells", () => {
+  const body = {
+    precision: 6,
+    factors: ["grocery", "transit"],
+    weights: { grocery: 1.5, transit: 1.5 },
+    weightsVersion: "v1-handtuned",
+    count: 2,
+    truncated: true,
+    geohashes: ["dr5ru7", "dr5ru6"],
+    scores: [88.1, 75],
+  };
+
+  it("builds the query from bbox, precision, factors, weights and limit", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+
+    await client.getMapCells({
+      bbox: [-74.05, 40.68, -73.85, 40.82],
+      precision: 6,
+      factors: ["grocery", "transit"],
+      weights: { transit: 2 },
+      limit: 12000,
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/v1/map/cells");
+    expect(url.searchParams.get("bbox")).toBe("-74.05,40.68,-73.85,40.82");
+    expect(url.searchParams.get("precision")).toBe("6");
+    expect(url.searchParams.get("factors")).toBe("grocery,transit");
+    expect(url.searchParams.get("weights")).toBe("transit:2");
+    expect(url.searchParams.get("limit")).toBe("12000");
+  });
+
+  it("omits factors and weights when not given", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+    await client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 5 });
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.has("factors")).toBe(false);
+    expect(url.searchParams.has("weights")).toBe(false);
+    expect(url.searchParams.get("precision")).toBe("5");
+  });
+
+  it("keeps the parallel arrays aligned and exposes truncated and weights", async () => {
+    const { client } = clientReturning(jsonResponse(body));
+    const cells = await client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 6 });
+    expect(cells.geohashes).toEqual(["dr5ru7", "dr5ru6"]);
+    expect(cells.scores).toEqual([88.1, 75]);
+    expect(cells.truncated).toBe(true);
+    expect(cells.weights).toEqual({ grocery: 1.5, transit: 1.5 });
+    expect(cells.factors).toEqual(["grocery", "transit"]);
+  });
+
+  it("drops a cell whose score is not a number but keeps the arrays aligned", async () => {
+    const { client } = clientReturning(
+      jsonResponse({ ...body, geohashes: ["a1", "dr5ru7", "dr5ru6"], scores: [null, 5, 6] }),
+    );
+    const cells = await client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 6 });
+    expect(cells.geohashes).toEqual(["dr5ru7", "dr5ru6"]);
+    expect(cells.scores).toEqual([5, 6]);
+  });
+
+  it("rejects mismatched parallel arrays", async () => {
+    const { client } = clientReturning(jsonResponse({ ...body, scores: [1] }));
+    expect((await rejection(client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 6 }))).kind).toBe(
+      "invalid-response",
+    );
+  });
+
+  it("maps 429 to rate-limited with Retry-After", async () => {
+    const { client } = clientReturning(
+      new Response(JSON.stringify({ code: "rate_limited", message: "slow" }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "12" },
+      }),
+    );
+    const error = await rejection(client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 6 }));
+    expect(error.kind).toBe("rate-limited");
+    expect(error.retryAfterSeconds).toBe(12);
+  });
+
+  it("maps 400 to invalid-request", async () => {
+    const { client } = clientReturning(jsonResponse({ code: "bad_bbox", message: "bad" }, 400));
+    expect((await rejection(client.getMapCells({ bbox: [-75, 40, -74, 41], precision: 6 }))).kind).toBe(
+      "invalid-request",
+    );
+  });
+});
+
+describe("getMapTop", () => {
+  const body = {
+    factors: ["grocery"],
+    weights: { grocery: 1.5 },
+    weightsVersion: "v1-handtuned",
+    results: [
+      {
+        geohash: "dr5ru7",
+        latitude: 40.7546,
+        longitude: -73.985,
+        score: 99.8,
+        metroArea: "nyc",
+        subScores: { grocery: 99.7, gym: null },
+      },
+      { geohash: "bad" },
+    ],
+  };
+
+  it("builds the query and normalises sub-scores", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+
+    const top = await client.getMapTop({
+      bbox: [-74.05, 40.68, -73.85, 40.82],
+      factors: ["grocery"],
+      weights: { grocery: 3 },
+      limit: 10,
+      minSeparationKm: 1,
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/v1/map/top");
+    expect(url.searchParams.get("bbox")).toBe("-74.05,40.68,-73.85,40.82");
+    expect(url.searchParams.get("weights")).toBe("grocery:3");
+    expect(url.searchParams.get("minSeparationKm")).toBe("1");
+    expect(top.results).toHaveLength(1);
+    expect(top.results[0].subScores.grocery).toBe(99.7);
+    expect(top.results[0].subScores.cafe).toBeNull();
+    expect(top.results[0].metroArea).toBe("nyc");
+  });
+
+  it("has no bbox by default, meaning the whole metro", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+    await client.getMapTop({});
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE_URL}/map/top?`);
+  });
+
+  it("rejects a body without results", async () => {
+    const { client } = clientReturning(jsonResponse({ factors: [] }));
+    expect((await rejection(client.getMapTop({}))).kind).toBe("invalid-response");
+  });
+});

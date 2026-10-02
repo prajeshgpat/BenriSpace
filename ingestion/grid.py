@@ -29,22 +29,13 @@ import sys
 
 import pygeohash as pgh
 
+from common.coverage import BOUNDING_BOXES
 from common.db import get_connection
 from common.ingestion_log import ingestion_job
 
 GEOHASH_PRECISION = 6
 LAT_STEP = 0.0054  # ~geohash6 cell height in degrees
 LON_STEP = 0.0110  # ~geohash6 cell width in degrees at mid-latitudes
-
-# (metro_area, min_lat, max_lat, min_lon, max_lon)
-BOUNDING_BOXES = [
-    ("nyc", 40.49, 40.92, -74.26, -73.70),
-    ("long_island", 40.55, 41.20, -73.75, -71.85),
-    ("westchester", 40.87, 41.40, -73.95, -73.60),
-    ("hudson_valley", 41.10, 42.00, -74.50, -73.60),
-    ("northern_nj", 39.85, 41.10, -75.20, -73.90),
-    ("fairfield_ct", 40.95, 41.40, -73.75, -73.05),
-]
 
 
 def generate_cells() -> dict[str, tuple[str, float, float]]:

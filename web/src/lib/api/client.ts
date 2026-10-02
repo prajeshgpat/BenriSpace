@@ -1,7 +1,19 @@
 import { FACTOR_KEYS } from "@/lib/score/factors";
 
 import { ApiError } from "./errors";
-import type { Explanation, Score, ScoreQuery, SubScores } from "./types";
+import type {
+  Explanation,
+  FactorKey,
+  MapCells,
+  MapCellsQuery,
+  MapTop,
+  MapTopQuery,
+  MapTopResult,
+  Score,
+  ScoreQuery,
+  Suggestion,
+  SubScores,
+} from "./types";
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
 
@@ -13,10 +25,30 @@ export interface ApiClientOptions {
 
 export interface RequestOptions {
   signal?: AbortSignal;
+  /** Overrides the client-wide timeout for this request. */
+  timeoutMs?: number;
 }
+
+export interface Coordinates {
+  lat: number;
+  lon: number;
+}
+
+/** Autocomplete is a nicety; give up quickly rather than hold the UI. */
+export const SUGGEST_TIMEOUT_MS = 5_000;
 
 export interface ApiClient {
   getScore(address: string, options?: RequestOptions): Promise<Score>;
+  getScoreByCoordinates(
+    coordinates: Coordinates,
+    options?: RequestOptions,
+  ): Promise<Score>;
+  suggestAddresses(
+    query: string,
+    options?: RequestOptions & { limit?: number },
+  ): Promise<Suggestion[]>;
+  getMapCells(query: MapCellsQuery, options?: RequestOptions): Promise<MapCells>;
+  getMapTop(query: MapTopQuery, options?: RequestOptions): Promise<MapTop>;
   getScoreExplanation(
     geoEntityId: string,
     options?: RequestOptions,
@@ -100,7 +132,120 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function errorFromResponse(status: number, body: unknown): ApiError {
+const FACTOR_KEY_SET: ReadonlySet<string> = new Set(FACTOR_KEYS);
+
+function isFactorKey(value: unknown): value is FactorKey {
+  return typeof value === "string" && FACTOR_KEY_SET.has(value);
+}
+
+function parseWeights(raw: unknown): Record<string, number> {
+  if (!isObject(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(([, value]) => isFiniteNumber(value)),
+  ) as Record<string, number>;
+}
+
+function parseFactors(raw: unknown): FactorKey[] {
+  return Array.isArray(raw) ? raw.filter(isFactorKey) : [];
+}
+
+export function parseSuggestions(body: unknown): Suggestion[] {
+  if (!isObject(body) || !Array.isArray(body.suggestions)) {
+    throw invalidResponse("suggestions");
+  }
+  return body.suggestions.flatMap((item): Suggestion[] =>
+    isObject(item) &&
+    isNonEmptyString(item.label) &&
+    isFiniteNumber(item.latitude) &&
+    isFiniteNumber(item.longitude)
+      ? [{ label: item.label, latitude: item.latitude, longitude: item.longitude }]
+      : [],
+  );
+}
+
+export function parseMapCells(body: unknown): MapCells {
+  if (
+    !isObject(body) ||
+    !Array.isArray(body.geohashes) ||
+    !Array.isArray(body.scores) ||
+    body.geohashes.length !== body.scores.length ||
+    typeof body.truncated !== "boolean"
+  ) {
+    throw invalidResponse("map cells");
+  }
+  const rawScores: unknown[] = body.scores;
+  const geohashes: string[] = [];
+  const scores: number[] = [];
+  body.geohashes.forEach((hash: unknown, index) => {
+    const score = rawScores[index];
+    if (isNonEmptyString(hash) && isFiniteNumber(score)) {
+      geohashes.push(hash);
+      scores.push(score);
+    }
+  });
+  return {
+    precision: isFiniteNumber(body.precision) ? body.precision : 6,
+    factors: parseFactors(body.factors),
+    weights: parseWeights(body.weights),
+    weightsVersion:
+      typeof body.weightsVersion === "string" ? body.weightsVersion : "",
+    truncated: body.truncated,
+    geohashes,
+    scores,
+  };
+}
+
+export function parseMapTop(body: unknown): MapTop {
+  if (!isObject(body) || !Array.isArray(body.results)) {
+    throw invalidResponse("best areas");
+  }
+  const results = body.results.flatMap((item): MapTopResult[] =>
+    isObject(item) &&
+    isNonEmptyString(item.geohash) &&
+    isFiniteNumber(item.latitude) &&
+    isFiniteNumber(item.longitude) &&
+    isFiniteNumber(item.score)
+      ? [
+          {
+            geohash: item.geohash,
+            latitude: item.latitude,
+            longitude: item.longitude,
+            score: item.score,
+            metroArea: typeof item.metroArea === "string" ? item.metroArea : "",
+            subScores: normalizeSubScores(item.subScores),
+          },
+        ]
+      : [],
+  );
+  return {
+    factors: parseFactors(body.factors),
+    weights: parseWeights(body.weights),
+    weightsVersion:
+      typeof body.weightsVersion === "string" ? body.weightsVersion : "",
+    results,
+  };
+}
+
+function formatNumber(value: number): string {
+  return String(Math.round(value * 1e5) / 1e5);
+}
+
+function mapParams(query: MapCellsQuery | MapTopQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  if (query.bbox) params.set("bbox", query.bbox.map(formatNumber).join(","));
+  if (query.factors) params.set("factors", query.factors.join(","));
+  const weights = Object.entries(query.weights ?? {});
+  if (weights.length > 0) {
+    params.set("weights", weights.map(([k, v]) => `${k}:${formatNumber(v)}`).join(","));
+  }
+  return params;
+}
+
+function errorFromResponse(
+  status: number,
+  body: unknown,
+  headers?: Headers,
+): ApiError {
   const code = isObject(body) && typeof body.code === "string" ? body.code : undefined;
   const message =
     isObject(body) && typeof body.message === "string"
@@ -109,6 +254,14 @@ function errorFromResponse(status: number, body: unknown): ApiError {
   const details = { status, code };
 
   if (status === 404) return new ApiError("not-found", message, details);
+  if (status === 429) {
+    const retryAfter = Number(headers?.get("Retry-After"));
+    return new ApiError("rate-limited", message, {
+      ...details,
+      retryAfterSeconds:
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+    });
+  }
   if (status === 400 && code === "unresolvable_address") {
     return new ApiError("unresolvable-address", message, details);
   }
@@ -127,8 +280,11 @@ export function createApiClient({
 }: ApiClientOptions): ApiClient {
   const root = baseUrl.replace(/\/+$/, "");
 
-  async function getJson(path: string, signal?: AbortSignal): Promise<unknown> {
-    const timeout = AbortSignal.timeout(timeoutMs);
+  async function getJson(
+    path: string,
+    { signal, timeoutMs: requestTimeoutMs }: RequestOptions = {},
+  ): Promise<unknown> {
+    const timeout = AbortSignal.timeout(requestTimeoutMs ?? timeoutMs);
     let response: Response;
     try {
       response = await fetchImpl(`${root}${path}`, {
@@ -147,7 +303,7 @@ export function createApiClient({
     }
 
     const body = await readJson(response);
-    if (!response.ok) throw errorFromResponse(response.status, body);
+    if (!response.ok) throw errorFromResponse(response.status, body, response.headers);
     return body;
   }
 
@@ -155,12 +311,43 @@ export function createApiClient({
     async getScore(address, options) {
       const query: ScoreQuery = { address };
       const params = new URLSearchParams(query as Record<string, string>);
-      return parseScore(await getJson(`/score?${params}`, options?.signal));
+      return parseScore(await getJson(`/score?${params}`, options));
+    },
+
+    async getScoreByCoordinates({ lat, lon }, options) {
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      return parseScore(await getJson(`/score?${params}`, options));
     },
 
     async getScoreExplanation(geoEntityId, options) {
       const path = `/score/${encodeURIComponent(geoEntityId)}/explanation`;
-      return parseExplanation(await getJson(path, options?.signal));
+      return parseExplanation(await getJson(path, options));
+    },
+
+    async suggestAddresses(query, { limit = 5, ...options } = {}) {
+      const params = new URLSearchParams({ q: query, limit: String(limit) });
+      return parseSuggestions(
+        await getJson(`/suggest?${params}`, {
+          timeoutMs: SUGGEST_TIMEOUT_MS,
+          ...options,
+        }),
+      );
+    },
+
+    async getMapCells(query, options) {
+      const params = mapParams(query);
+      params.set("precision", String(query.precision));
+      if (query.limit) params.set("limit", String(query.limit));
+      return parseMapCells(await getJson(`/map/cells?${params}`, options));
+    },
+
+    async getMapTop(query, options) {
+      const params = mapParams(query);
+      if (query.limit) params.set("limit", String(query.limit));
+      if (query.minSeparationKm !== undefined) {
+        params.set("minSeparationKm", String(query.minSeparationKm));
+      }
+      return parseMapTop(await getJson(`/map/top?${params}`, options));
     },
   };
 }

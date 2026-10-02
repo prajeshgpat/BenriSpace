@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-import { resolveApiBaseUrl } from "./src/lib/config";
+import { BASEMAP_ORIGIN, resolveApiBaseUrl } from "./src/lib/config";
 
 const apiOrigin = new URL(
   resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL),
@@ -14,9 +14,15 @@ const contentSecurityPolicy = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  // MapLibre fetches the style, TileJSON, vector tiles, glyphs and sprites
+  // from the basemap origin with fetch() (connect-src) and decodes sprite and
+  // raster tiles into images (img-src). Its tile parsing runs in a Web Worker
+  // that it starts from a Blob URL (worker-src, with child-src for Safari).
+  `img-src 'self' data: blob: ${BASEMAP_ORIGIN}`,
   "font-src 'self'",
-  `connect-src 'self' ${apiOrigin}`,
+  `connect-src 'self' ${apiOrigin} ${BASEMAP_ORIGIN}`,
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

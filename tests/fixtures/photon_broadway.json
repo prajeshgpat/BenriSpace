@@ -1,0 +1,315 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 420904657,
+    "osm_key": "highway",
+    "osm_value": "pedestrian",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Herald Square",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10120",
+    "countrycode": "US",
+    "extent": [
+     -73.9877857,
+     40.7514446,
+     -73.9876865,
+     40.750682
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9877338,
+     40.751063
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 976050704,
+    "osm_key": "highway",
+    "osm_value": "living_street",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "NoMad",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US",
+    "extent": [
+     -73.9887752,
+     40.7454486,
+     -73.9887015,
+     40.745099
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.988755,
+     40.7452779
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 976050703,
+    "osm_key": "highway",
+    "osm_value": "pedestrian",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "NoMad",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10010",
+    "countrycode": "US",
+    "extent": [
+     -73.9890279,
+     40.7440931,
+     -73.9889755,
+     40.7438166
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9890012,
+     40.7439548
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 34080174,
+    "osm_key": "highway",
+    "osm_value": "living_street",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Flatiron District",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10010",
+    "countrycode": "US",
+    "extent": [
+     -73.9895193,
+     40.7409542,
+     -73.9892691,
+     40.7403752
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9894205,
+     40.7406801
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 1136460179,
+    "osm_key": "highway",
+    "osm_value": "tertiary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Theater District",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10019",
+    "countrycode": "US",
+    "extent": [
+     -73.9838813,
+     40.7620858,
+     -73.9836782,
+     40.7617781
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9837792,
+     40.7619316
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 968737544,
+    "osm_key": "highway",
+    "osm_value": "secondary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Little Italy",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10013",
+    "countrycode": "US",
+    "extent": [
+     -74.0006622,
+     40.7217942,
+     -73.9998623,
+     40.7208456
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.000264,
+     40.7213214
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 421853609,
+    "osm_key": "highway",
+    "osm_value": "primary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Upper West Side",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10024",
+    "countrycode": "US",
+    "extent": [
+     -73.9733006,
+     40.7930115,
+     -73.9731283,
+     40.7927728
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9732148,
+     40.7928924
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 352858052,
+    "osm_key": "highway",
+    "osm_value": "primary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Upper West Side",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10025",
+    "countrycode": "US",
+    "extent": [
+     -73.9730999,
+     40.7943346,
+     -73.9718639,
+     40.7926891
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9724842,
+     40.7935135
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 500796507,
+    "osm_key": "highway",
+    "osm_value": "primary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Manhattan Valley",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10205",
+    "countrycode": "US",
+    "extent": [
+     -73.9679062,
+     40.8028712,
+     -73.9677238,
+     40.8022515
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.967833,
+     40.8025667
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 402097157,
+    "osm_key": "highway",
+    "osm_value": "primary",
+    "type": "street",
+    "name": "Broadway",
+    "locality": "Morningside Heights",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10115",
+    "countrycode": "US",
+    "extent": [
+     -73.9644893,
+     40.807827,
+     -73.9641703,
+     40.8073865
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.964331,
+     40.8076076
+    ]
+   }
+  }
+ ]
+}

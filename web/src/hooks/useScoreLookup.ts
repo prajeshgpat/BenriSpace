@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { targetKey, targetLabel, type ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError, isApiError } from "@/lib/api/errors";
 import type { Score } from "@/lib/api/types";
@@ -44,16 +45,25 @@ function toApiError(cause: unknown): ApiError {
 }
 
 export function useScoreLookup(
-  address: string | null,
+  target: ScoreTarget | null,
   client: ApiClient,
 ): ScoreLookup {
   const [attempt, setAttempt] = useState(0);
   const [entry, setEntry] = useState<Entry | null>(null);
 
-  const requestKey = address === null ? null : `${attempt}:${address}`;
+  const address = target === null ? null : targetLabel(target);
+  const requestKey = target === null ? null : `${attempt}:${targetKey(target)}`;
+
+  // Objects are rebuilt on every render; the key is the identity that matters.
+  const targetRef = useRef(target);
+  useEffect(() => {
+    targetRef.current = target;
+  });
 
   useEffect(() => {
-    if (address === null || requestKey === null) return;
+    const current = targetRef.current;
+    if (current === null || requestKey === null) return;
+    const address = targetLabel(current);
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -64,7 +74,13 @@ export function useScoreLookup(
     (async () => {
       let score: Score;
       try {
-        score = await client.getScore(address, { signal });
+        score =
+          current.kind === "address"
+            ? await client.getScore(current.address, { signal })
+            : await client.getScoreByCoordinates(
+                { lat: current.lat, lon: current.lon },
+                { signal },
+              );
       } catch (cause) {
         settle({ status: "error", address, error: toApiError(cause) });
         return;
@@ -93,7 +109,7 @@ export function useScoreLookup(
     })();
 
     return () => controller.abort();
-  }, [address, client, requestKey]);
+  }, [client, requestKey]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 

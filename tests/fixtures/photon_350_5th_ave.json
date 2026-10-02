@@ -1,0 +1,173 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 34633854,
+    "osm_key": "office",
+    "osm_value": "yes",
+    "type": "house",
+    "housenumber": "350",
+    "name": "Empire State Building",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US",
+    "extent": [
+     -73.9865012,
+     40.7489585,
+     -73.9848166,
+     40.7479255
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856589,
+     40.7484421
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 357606924,
+    "osm_key": "man_made",
+    "osm_value": "tower",
+    "type": "house",
+    "housenumber": "350",
+    "name": "WNEW-FM (New York)",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856903,
+     40.7484311
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 357606935,
+    "osm_key": "man_made",
+    "osm_value": "tower",
+    "type": "house",
+    "housenumber": "350",
+    "name": "WCBS-FM (New York)",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856932,
+     40.7484357
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 357606895,
+    "osm_key": "man_made",
+    "osm_value": "tower",
+    "type": "house",
+    "housenumber": "350",
+    "name": "WQXR-FM (New York)",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856963,
+     40.7484343
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 357606910,
+    "osm_key": "man_made",
+    "osm_value": "tower",
+    "type": "house",
+    "housenumber": "350",
+    "name": "WFAN-FM (New York)",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856926,
+     40.7484398
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 357606907,
+    "osm_key": "man_made",
+    "osm_value": "tower",
+    "type": "house",
+    "housenumber": "350",
+    "name": "WSKQ-FM (New York)",
+    "street": "5th Avenue",
+    "locality": "Koreatown",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10118",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9856942,
+     40.7484273
+    ]
+   }
+  }
+ ]
+}

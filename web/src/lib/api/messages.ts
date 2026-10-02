@@ -13,6 +13,11 @@ const MESSAGES: Record<ApiErrorKind, ErrorMessage> = {
     body: "BenriSpace currently scores the New York metro area: the five boroughs, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County.",
     retryable: false,
   },
+  "rate-limited": {
+    title: "Too many requests",
+    body: "You've hit the request limit for now. Wait a moment and try again.",
+    retryable: true,
+  },
   "unresolvable-address": {
     title: "We couldn't find that address",
     body: "Check the spelling, or add a city and state, for example “350 5th Ave, New York, NY”.",

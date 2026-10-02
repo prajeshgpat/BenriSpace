@@ -1,0 +1,310 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "R",
+    "osm_id": 170708,
+    "osm_key": "place",
+    "osm_value": "town",
+    "type": "city",
+    "name": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extra": {
+     "admin_level": "8"
+    },
+    "extent": [
+     -74.0439878,
+     40.759099,
+     -74.0142459,
+     40.7303906
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0323752,
+     40.7433066
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 6556450069,
+    "osm_key": "railway",
+    "osm_value": "station",
+    "type": "house",
+    "name": "Hoboken",
+    "street": "Hudson Place",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0286157,
+     40.7354944
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 812959161,
+    "osm_key": "building",
+    "osm_value": "train_station",
+    "type": "house",
+    "name": "Hoboken",
+    "street": "Hudson Place",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extent": [
+     -74.0295416,
+     40.7357575,
+     -74.0279734,
+     40.7353936
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0287427,
+     40.735565
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 7024801771,
+    "osm_key": "railway",
+    "osm_value": "station",
+    "type": "house",
+    "name": "Hoboken Terminal",
+    "street": "Warrington Plaza",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0273829,
+     40.7349447
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 634012795,
+    "osm_key": "railway",
+    "osm_value": "station",
+    "type": "house",
+    "name": "Hoboken Terminal",
+    "street": "Hoboken Newport Walkway- Hudson River Waterfront Walkway",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extent": [
+     -74.0304727,
+     40.7340617,
+     -74.0291209,
+     40.7337603
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0297968,
+     40.7339145
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 26808027,
+    "osm_key": "building",
+    "osm_value": "train_station",
+    "type": "house",
+    "name": "Hoboken Terminal",
+    "street": "Hoboken Newport Walkway- Hudson River Waterfront Walkway",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extent": [
+     -74.0301409,
+     40.7359802,
+     -74.0261458,
+     40.734341
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0283152,
+     40.7351461
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 802613138,
+    "osm_key": "railway",
+    "osm_value": "subway",
+    "type": "house",
+    "name": "Hoboken - World Trade Center",
+    "street": "West Street",
+    "locality": "Battery Park City",
+    "district": "Manhattan",
+    "city": "New York",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10281",
+    "countrycode": "US",
+    "extent": [
+     -74.0140311,
+     40.7131052,
+     -74.0134826,
+     40.7130179
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0137545,
+     40.713043
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 26807513,
+    "osm_key": "amenity",
+    "osm_value": "school",
+    "type": "house",
+    "housenumber": "800",
+    "name": "Hoboken High School",
+    "street": "Clinton Street",
+    "locality": "Uptown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extent": [
+     -74.0336845,
+     40.7482103,
+     -74.03251,
+     40.7468753
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0330646,
+     40.7476351
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 449685639,
+    "osm_key": "amenity",
+    "osm_value": "library",
+    "type": "house",
+    "housenumber": "500",
+    "name": "Hoboken Public Library",
+    "street": "Park Avenue",
+    "locality": "Uptown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US",
+    "extent": [
+     -74.0324417,
+     40.7430719,
+     -74.03214,
+     40.7427623
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0322821,
+     40.7428824
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 367697376,
+    "osm_key": "tourism",
+    "osm_value": "museum",
+    "type": "house",
+    "housenumber": "213",
+    "name": "Hoboken Fire Department Museum",
+    "street": "Bloomfield Street",
+    "locality": "Downtown",
+    "city": "Hoboken",
+    "county": "Hudson",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07030",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -74.0309564,
+     40.739273
+    ]
+   }
+  }
+ ]
+}

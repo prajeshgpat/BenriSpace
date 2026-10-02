@@ -1,0 +1,272 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 651822956,
+    "osm_key": "shop",
+    "osm_value": "yes",
+    "type": "house",
+    "housenumber": "100",
+    "name": "Frames of Mine",
+    "street": "Main Street",
+    "locality": "Koreatown",
+    "city": "Fort Lee",
+    "county": "Bergen",
+    "state": "New Jersey",
+    "country": "United States",
+    "postcode": "07024",
+    "countrycode": "US",
+    "extent": [
+     -73.9657457,
+     40.8506099,
+     -73.9655027,
+     40.8505177
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9656209,
+     40.8505652
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8805828636,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "city": "Yonkers",
+    "county": "Westchester",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10701",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9041299,
+     40.9349019
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8805885935,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "district": "Tuckahoe",
+    "city": "Eastchester",
+    "county": "Westchester",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10707",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.8256707,
+     40.9493658
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8805880413,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "district": "Tuckahoe",
+    "city": "Eastchester",
+    "county": "Westchester",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10707",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.825713,
+     40.9493284
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8805989619,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "East Main Street",
+    "locality": "Homestead Park",
+    "city": "New Rochelle",
+    "county": "Westchester",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10801",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.7678438,
+     40.9178731
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8783517332,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "city": "Port Washington",
+    "county": "Nassau",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "11050",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.6895363,
+     40.8303203
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8783520664,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "city": "Mineola",
+    "county": "Nassau",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "11501",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.6386561,
+     40.7420722
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8783520261,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "city": "Hempstead",
+    "county": "Nassau",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "11550",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.625008,
+     40.7098675
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "N",
+    "osm_id": 8788952232,
+    "osm_key": "place",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Street",
+    "city": "Tappan",
+    "county": "Rockland",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "10983",
+    "countrycode": "US"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.9482689,
+     41.0214251
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "osm_type": "W",
+    "osm_id": 771988080,
+    "osm_key": "building",
+    "osm_value": "house",
+    "type": "house",
+    "housenumber": "100",
+    "street": "Main Avenue",
+    "city": "Sea Cliff",
+    "county": "Nassau",
+    "state": "New York",
+    "country": "United States",
+    "postcode": "11579",
+    "countrycode": "US",
+    "extent": [
+     -73.643195,
+     40.84861,
+     -73.643061,
+     40.848537
+    ]
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -73.643128,
+     40.8485735
+    ]
+   }
+  }
+ ]
+}
