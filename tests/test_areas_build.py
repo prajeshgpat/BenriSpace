@@ -229,7 +229,11 @@ def test_cli_dry_run_on_cached_sample(tmp_path):
     metrics = json.loads((out / "metrics.json").read_text())
     assert len(gj["features"]) == metrics["face_count"] > 100
     assert [ft["id"] for ft in gj["features"]] == list(range(1, metrics["face_count"] + 1))
-    assert (out / "areas_preview.png").stat().st_size > 1000
+    import importlib.util
+
+    # The PNG preview needs the optional matplotlib (the `geo` extra).
+    if importlib.util.find_spec("matplotlib") is not None:
+        assert (out / "areas_preview.png").stat().st_size > 1000
     assert metrics.get("faces_over_water", 0) == 0
 
 
