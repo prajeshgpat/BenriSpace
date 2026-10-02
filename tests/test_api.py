@@ -273,3 +273,129 @@ def test_every_scored_factor_has_a_human_readable_explanation_label():
 
     assert set(SubScores.model_fields) == set(FACTOR_LABELS)
     assert all("_" not in label for label in FACTOR_LABELS.values())
+
+
+# --- v2: feet/miles, school info, nearestMi, triangulate prefilter --------
+
+
+def test_explanation_distances_are_feet_and_miles_only():
+    import re
+
+    from api.explain import nearest_m_by_factor
+
+    nearest = nearest_m_by_factor({"grocery_nearest_m": 140, "gym_nearest_m": 1200})
+    text = build_explanation(SubScores(grocery=90, gym=10, cafe=50), nearest)
+    assert "Nearest feature: grocery access 450 ft, gym access 0.7 mi." in text
+    assert not re.search(r"\d\s*(km|m|metres|meters)\b", text)
+
+
+def test_explanation_without_distances_is_unchanged():
+    assert "Nearest" not in build_explanation(SubScores(grocery=90, gym=10))
+
+
+def test_nearest_mi_by_factor_picks_nearest_premium_brand_and_nulls():
+    from api.explain import nearest_mi_by_factor
+
+    out = nearest_mi_by_factor(
+        {
+            "grocery_nearest_m": 1609.344,
+            "whole_foods_nearest_m": 3000,
+            "starbucks_nearest_m": 804.672,
+            "emergency_facility_nearest_m": 0,
+        }
+    )
+    assert out["grocery"] == pytest.approx(1.0)
+    assert out["premiumRetail"] == pytest.approx(0.5)
+    assert out["emergencyCorridor"] == 0.0
+    assert out["gym"] is None
+    assert set(out) == {
+        "grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore",
+        "transit", "school", "trailPopularity", "premiumRetail", "emergencyCorridor",
+    }  # fmt: skip
+    assert all(v is None for v in nearest_mi_by_factor(None).values())
+
+
+def _score_row(**extra):
+    return {
+        "composite_score": 70, "weights_version": "v1", "computed_at": datetime.now(timezone.utc),
+        **extra,
+    }  # fmt: skip
+
+
+def test_school_info_null_for_v1_rows():
+    geo = {"id": uuid4(), "latitude": 40.0, "longitude": -73.0, "formatted_address": "x"}
+    body = build_score_response(geo, _score_row(), None).model_dump(by_alias=True, mode="json")
+    assert body["school"] is None
+
+
+def test_school_info_populated_for_v2_rows():
+    geo = {"id": uuid4(), "latitude": 40.0, "longitude": -73.0, "formatted_address": "x"}
+    feature = {"school_district_name": "Garden City UFSD", "school_rating_source": "niche"}
+    resp = build_score_response(geo, _score_row(school_proximity_score=72.0), feature)
+    body = resp.model_dump(by_alias=True, mode="json")
+    assert body["school"] == {
+        "proximity": 72.0, "ratingAvailable": False,
+        "districtName": "Garden City UFSD", "source": "niche",
+    }  # fmt: skip
+    rated = build_score_response(geo, _score_row(school_proximity_score=72.0, school_score=80), feature)
+    assert rated.school.rating_available is True
+
+
+def test_triangulate_bbox_contains_circle_and_modes_combine():
+    from api.triangulate_sql import box_is_empty, circle_bbox, combined_bbox
+
+    a = anchor_to_circle(40.7, -73.9, 10, "drive")
+    b = anchor_to_circle(40.7, -73.5, 10, "drive")
+    box = circle_bbox(a)
+    # every point on the circle edge (haversine <= radius) lies inside the box
+    for bearing_lat, bearing_lon in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+        import math
+
+        d = a.radius_m
+        lat = a.latitude + bearing_lat * d / 111_194.9
+        lon = a.longitude + bearing_lon * d / (111_194.9 * math.cos(math.radians(a.latitude)))
+        assert box[0] <= lat <= box[1] and box[2] <= lon <= box[3]
+    union = combined_bbox([a, b], "union")
+    assert union[2] <= circle_bbox(a)[2] and union[3] >= circle_bbox(b)[3]
+    assert box_is_empty(combined_bbox([a, b], "intersect"))  # ~30 km apart, 11 km radii
+    assert combined_bbox([], "intersect") is None
+
+
+def test_triangulate_prefilter_gives_same_ranking_as_full_scan():
+    from api.triangulate_sql import combined_bbox
+
+    circles = [anchor_to_circle(40.70, -73.90, 15, "drive"), anchor_to_circle(40.72, -73.88, 15, "walk")]
+    cells = [
+        {"latitude": 40.70 + i * 0.004, "longitude": -73.90 + j * 0.004, "composite_score": i * 7 + j}
+        for i in range(-30, 30)
+        for j in range(-30, 30)
+    ]
+    for mode in ("intersect", "union"):
+        box = combined_bbox(circles, mode)
+        pre = [
+            c for c in cells
+            if box[0] <= c["latitude"] <= box[1] and box[2] <= c["longitude"] <= box[3]
+        ]  # fmt: skip
+        assert rank_candidates(pre, circles, mode, 1000) == rank_candidates(cells, circles, mode, 1000)
+
+
+def test_triangulate_sql_and_empty_box_short_circuits():
+    from api.triangulate_sql import build_candidates_sql, get_scored_candidates_in_box
+
+    sql, params = build_candidates_sql((1.0, 2.0, 3.0, 4.0))
+    assert "ge.latitude between %s and %s" in sql and params == [1.0, 2.0, 3.0, 4.0, None]
+    assert build_candidates_sql(None)[1] == [None]
+
+    class Boom:
+        def cursor(self):
+            raise AssertionError("must not query an empty box")
+
+    assert get_scored_candidates_in_box(Boom(), (2.0, 1.0, 0.0, 1.0)) == []
+
+
+def test_candidate_sql_prefers_the_configured_weights_version():
+    from api.triangulate_sql import build_candidates_sql
+
+    sql, params = build_candidates_sql((1.0, 2.0, 3.0, 4.0), "v2-handtuned")
+    assert "(s.weights_version = %s) desc" in sql
+    assert params == [1.0, 2.0, 3.0, 4.0, "v2-handtuned"]

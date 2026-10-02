@@ -13,6 +13,7 @@ import api.main as main_mod
 from api.main import app
 from api.mapdata import (
     FACTOR_COLUMNS,
+    UNDERLYING_FACTOR_KEYS,
     InvalidMapRequest,
     ScoreSpec,
     build_cells_response,
@@ -49,7 +50,7 @@ def test_factor_keys_are_the_camelcase_of_the_column_names_and_match_the_contrac
         parts = column.removesuffix("_score").split("_")
         assert key == parts[0] + "".join(p.title() for p in parts[1:])
     assert ALL == [
-        "grocery", "gym", "cafe", "gasStation", "convenienceStore", "transit",
+        "grocery", "gym", "cafe", "restaurant", "bar", "premiumRetail", "gasStation", "convenienceStore", "transit",
         "school", "road", "emergencyCorridor", "airport", "trailPopularity",
     ]  # fmt: skip
 
@@ -277,7 +278,7 @@ def test_top_response_shape_rounds_and_includes_all_sub_scores():
     r = body["results"][0]
     assert r["latitude"] == 40.7816 and r["score"] == 100.0 and r["metroArea"] == "nyc"
     assert set(r["subScores"]) == {
-        "grocery", "gym", "cafe", "gasStation", "convenienceStore", "transit",
+        "grocery", "gym", "cafe", "restaurant", "bar", "premiumRetail", "gasStation", "convenienceStore", "transit",
         "school", "road", "emergencyCorridor", "airport", "trailPopularity",
     }  # fmt: skip
 
@@ -351,6 +352,9 @@ def test_cells_route_truncation_uses_limit_plus_one(stub_db):
         ("/v1/map/top", {"limit": 51}),
         ("/v1/map/top", {"minSeparationKm": 51}),
         ("/v1/map/top", {"minSeparationKm": -1}),
+        ("/v1/map/top", {"minSeparationMi": 32}),
+        ("/v1/map/top", {"minSeparationMi": -1}),
+        ("/v1/map/top", {"minSeparationMi": 2, "minSeparationKm": 3}),
     ],
 )
 def test_map_routes_reject_bad_input_with_invalid_request(stub_db, path, params):
@@ -372,7 +376,29 @@ def test_top_route_applies_separation_and_limit(stub_db):
     assert resp.json()["factors"] == ALL
 
 
+def test_top_route_accepts_miles_and_matches_the_km_equivalent(stub_db):
+    mi = client.get("/v1/map/top", params={"limit": 3, "minSeparationMi": 5 / 1.609344})
+    km = client.get("/v1/map/top", params={"limit": 3, "minSeparationKm": 5})
+    assert mi.status_code == 200
+    assert mi.json() == km.json()
+
+
 def test_openapi_document_lists_the_new_paths():
     schema = app.openapi()
     for path in ("/v1/suggest", "/v1/map/cells", "/v1/map/top"):
         assert path in schema["paths"]
+
+
+def test_underlying_factor_keys_parity_with_engine():
+    from scoring.engine import CATEGORY_SPECS
+
+    assert UNDERLYING_FACTOR_KEYS == ("premiumRetail", "trailPopularity")
+    flagged = {s.score_column for s in CATEGORY_SPECS if s.underlying}
+    assert {FACTOR_COLUMNS[k] for k in UNDERLYING_FACTOR_KEYS} == flagged
+
+
+def test_omitted_factors_still_includes_underlying_and_explicit_list_is_exact():
+    assert set(UNDERLYING_FACTOR_KEYS) <= set(parse_factors(None))
+    assert len(parse_factors(None)) == 14
+    assert parse_factors("grocery,premiumRetail") == ["grocery", "premiumRetail"]
+    assert parse_factors("grocery") == ["grocery"]

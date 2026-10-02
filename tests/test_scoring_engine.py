@@ -1,5 +1,8 @@
+import pytest
+
 from scoring.engine import (
     CATEGORY_SPECS,
+    DEFAULT_WEIGHTS,
     compute_composite,
     compute_rating_raw,
     compute_raw_goodness,
@@ -71,18 +74,120 @@ def test_compute_rating_raw():
     assert compute_rating_raw({"grocery_count_500m": 5}, spec("grocery_score")) is None
 
 
-def test_missing_rating_does_not_penalize_relative_to_rated_rows():
-    # Three cells with IDENTICAL proximity/density but different rating
-    # availability. If a missing rating were ever treated as "worst
-    # possible," the no-rating cell would rank below the low-rating cell --
-    # that's the bug this test guards against.
+def test_school_missing_rating_is_null_and_never_penalized():
+    # Identical proximity/density, different rating availability. The
+    # unrated cell gets NO school score (not 0, not proximity-only), and the
+    # rated cells order by rating.
     rows = [
         {"geo_entity_id": "no_rating", "school_count_1600m": 3, "school_nearest_m": 200, "school_avg_rating_1600m": None},
         {"geo_entity_id": "low_rating", "school_count_1600m": 3, "school_nearest_m": 200, "school_avg_rating_1600m": 1.0},
         {"geo_entity_id": "high_rating", "school_count_1600m": 3, "school_nearest_m": 200, "school_avg_rating_1600m": 9.0},
     ]
+    for r in rows:  # a second factor so the unrated cell still gets a row
+        r.update(grocery_count_500m=2, grocery_nearest_m=100)
     scored = score_metro_cohort(rows)
-    assert scored["low_rating"]["school_score"] < scored["no_rating"]["school_score"] < scored["high_rating"]["school_score"]
+    assert "school_score" not in scored["no_rating"]
+    assert scored["low_rating"]["school_score"] < scored["high_rating"]["school_score"]
+    # proximity is still reported for every cell with school data
+    assert all("school_proximity_score" in scored[k] for k in scored)
+
+
+def test_school_blend_is_20_80():
+    rows = [
+        {"geo_entity_id": "a", "school_count_1600m": 0, "school_nearest_m": 5000, "school_avg_rating_1600m": 10.0},
+        {"geo_entity_id": "b", "school_count_1600m": 10, "school_nearest_m": 0, "school_avg_rating_1600m": 0.0},
+    ]
+    scored = score_metro_cohort(rows)
+    # a: proximity 0, rating 100 -> 0.2*0 + 0.8*100; b: proximity 100, rating 0 -> 20
+    assert scored["a"]["school_score"] == pytest.approx(80.0)
+    assert scored["b"]["school_score"] == pytest.approx(20.0)
+    assert scored["b"]["school_proximity_score"] == pytest.approx(100.0)
+    assert spec("school_score").rating_weight == 0.8
+    assert spec("school_score").missing_rating == "null"
+
+
+def test_school_unrated_cell_excluded_from_composite():
+    rows = [
+        {"geo_entity_id": "a", "school_count_1600m": 2, "school_nearest_m": 100, "school_avg_rating_1600m": None,
+         "grocery_count_500m": 1, "grocery_nearest_m": 100},
+        {"geo_entity_id": "b", "grocery_count_500m": 5, "grocery_nearest_m": 50},
+    ]
+    scored = score_metro_cohort(rows)
+    assert "school_score" not in scored["a"]
+    assert scored["a"]["composite_score"] == pytest.approx(scored["a"]["grocery_score"])
+
+
+def test_trail_blend_unchanged_and_falls_back_to_proximity_only():
+    t = spec("trail_popularity_score")
+    assert t.rating_weight == pytest.approx(1 / 3)
+    assert t.missing_rating == "blend_only"
+    rows = [
+        {"geo_entity_id": "a", "running_trail_count_800m": 0, "running_trail_nearest_m": 5000, "strava_segment_popularity_raw": 0.0},
+        {"geo_entity_id": "b", "running_trail_count_800m": 10, "running_trail_nearest_m": 0, "strava_segment_popularity_raw": 100.0},
+        {"geo_entity_id": "c", "running_trail_count_800m": 10, "running_trail_nearest_m": 0, "strava_segment_popularity_raw": None},
+    ]
+    scored = score_metro_cohort(rows)
+    assert scored["b"]["trail_popularity_score"] == pytest.approx(100.0)
+    assert scored["c"]["trail_popularity_score"] == pytest.approx(100.0)  # proximity-only
+    assert "school_proximity_score" not in scored["a"]
+
+
+def test_premium_retail_direction_higher_is_better():
+    rows = [
+        {"geo_entity_id": "lo", "premium_retail_raw": 1.0},
+        {"geo_entity_id": "hi", "premium_retail_raw": 9.0},
+    ]
+    scored = score_metro_cohort(rows)
+    assert scored["hi"]["premium_retail_score"] > scored["lo"]["premium_retail_score"]
+
+
+def test_restaurant_and_bar_prefer_closer_and_more():
+    rows = [
+        {"geo_entity_id": "far", "restaurant_count_500m": 1, "restaurant_nearest_m": 400, "bar_count_500m": 0, "bar_nearest_m": None},
+        {"geo_entity_id": "near", "restaurant_count_500m": 20, "restaurant_nearest_m": 30, "bar_count_500m": 5, "bar_nearest_m": 40},
+    ]
+    scored = score_metro_cohort(rows)
+    assert scored["near"]["restaurant_score"] > scored["far"]["restaurant_score"]
+    assert scored["near"]["bar_score"] > scored["far"]["bar_score"]
+
+
+def test_emergency_corridor_prefers_facility_signal_and_falls_back_to_proxy():
+    e = spec("emergency_corridor_score")
+    both = {"emergency_corridor_facility_raw": 4.0, "emergency_corridor_proxy_raw": 99.0}
+    assert compute_raw_goodness(both, e) == -4.0
+    assert compute_raw_goodness({"emergency_corridor_facility_raw": None, "emergency_corridor_proxy_raw": 7.0}, e) == -7.0
+    assert compute_raw_goodness({"emergency_corridor_proxy_raw": 7.0}, e) == -7.0
+    assert compute_raw_goodness({}, e) is None
+    # damping applies to the facility signal too
+    assert compute_raw_goodness({**both, "street_orientation": "side_street"}, e) == -2.0
+
+
+def test_default_weights_v2_and_factor_count():
+    assert len(CATEGORY_SPECS) == 14
+    assert set(DEFAULT_WEIGHTS) == {s.score_column for s in CATEGORY_SPECS}
+    assert DEFAULT_WEIGHTS["restaurant_score"] == 1.0
+    assert DEFAULT_WEIGHTS["bar_score"] == 0.5
+    assert DEFAULT_WEIGHTS["premium_retail_score"] == 0.75
+    assert DEFAULT_WEIGHTS["emergency_corridor_score"] == 0.75
+
+
+def test_underlying_flag_marks_only_premium_retail_and_trail_popularity():
+    from scoring.engine import UNDERLYING_SCORE_COLUMNS
+
+    assert UNDERLYING_SCORE_COLUMNS == {"premium_retail_score", "trail_popularity_score"}
+    assert {s.score_column for s in CATEGORY_SPECS if s.underlying} == set(UNDERLYING_SCORE_COLUMNS)
+    # underlying metrics still carry a default weight and count in the composite
+    assert all(c in DEFAULT_WEIGHTS for c in UNDERLYING_SCORE_COLUMNS)
+    assert DEFAULT_WEIGHTS["premium_retail_score"] == 0.75
+    assert DEFAULT_WEIGHTS["trail_popularity_score"] == 1.25
+
+
+def test_composite_with_all_14_factors():
+    scores = {c: 100.0 for c in DEFAULT_WEIGHTS}
+    assert compute_composite(scores) == pytest.approx(100.0)
+    scores["bar_score"] = 0.0
+    total = sum(DEFAULT_WEIGHTS.values())
+    assert compute_composite(scores) == pytest.approx(100.0 * (total - 0.5) / total)
 
 
 def test_trail_popularity_works_without_strava_data():

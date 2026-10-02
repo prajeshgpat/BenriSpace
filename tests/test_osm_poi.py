@@ -250,8 +250,12 @@ def test_compute_cell_features_all_columns_present():
     assert features["convenience_store_nearest_m"] is not None
     assert features["convenience_store_nearest_m"] > 500.0
 
-    # exactly the 10 feature_store columns this job owns, nothing more/less
+    # exactly the feature_store columns this job owns, nothing more/less
     assert set(features) == {
+        "restaurant_count_500m", "restaurant_nearest_m",
+        "bar_count_500m", "bar_nearest_m",
+        "whole_foods_nearest_m", "starbucks_nearest_m", "target_nearest_m",
+        "premium_retail_raw",
         "grocery_count_500m", "grocery_nearest_m",
         "gym_count_500m", "gym_nearest_m",
         "cafe_count_500m", "cafe_nearest_m",
@@ -284,3 +288,137 @@ def test_compute_cell_features_missing_category_key_treated_as_empty():
     assert features["grocery_count_500m"] == 1
     assert features["gym_count_500m"] == 0
     assert features["gym_nearest_m"] is None
+
+
+# --------------------------------------------------------------------------
+# v2: restaurants, bars, brands, premium_retail_raw, split path
+# --------------------------------------------------------------------------
+
+import httpx
+import pytest
+
+from common import overpass
+from ingestion.osm_poi import (
+    categorize_poi_all,
+    fetch_pois_for_bbox,
+    premium_retail_raw,
+)
+
+
+def test_restaurant_vs_fast_food():
+    assert categorize_poi({"amenity": "restaurant"}) == "restaurant"
+    assert categorize_poi({"amenity": "fast_food"}) is None
+    assert categorize_poi_all({"amenity": "fast_food", "name": "Shake Shack"}) == []
+
+
+@pytest.mark.parametrize("value", ["bar", "pub", "biergarten"])
+def test_bar_pub_biergarten(value):
+    assert categorize_poi({"amenity": value}) == "bar"
+
+
+def test_brand_by_wikidata_is_non_exclusive():
+    wf = {"shop": "supermarket", "brand:wikidata": "Q1809448", "name": "Whole Foods Market"}
+    assert categorize_poi_all(wf) == ["grocery", "whole_foods"]
+    sb = {"amenity": "cafe", "brand:wikidata": "Q37158"}
+    assert categorize_poi_all(sb) == ["cafe", "starbucks"]
+    # Target tagged as department_store: no base category, brand only.
+    assert categorize_poi_all({"shop": "department_store", "brand:wikidata": "Q1046951"}) == [
+        "target"
+    ]
+
+
+def test_brand_name_fallback_case_insensitive_and_restricted():
+    assert categorize_poi_all({"shop": "supermarket", "name": "WHOLE FOODS"}) == [
+        "grocery",
+        "whole_foods",
+    ]
+    assert categorize_poi_all({"amenity": "cafe", "brand": "starbucks"}) == ["cafe", "starbucks"]
+    assert categorize_poi_all({"shop": "department_store", "name": "Target"}) == ["target"]
+    # Not shop/cafe -> no name fallback
+    assert categorize_poi_all({"amenity": "restaurant", "name": "Starbucks"}) == ["restaurant"]
+    # Different brand's wikidata wins over a coincidental name
+    assert categorize_poi_all({"shop": "supermarket", "name": "Target", "brand:wikidata": "Q1"}) == [
+        "grocery"
+    ]
+    # Exact match only
+    assert categorize_poi_all({"shop": "mall", "name": "Target Center Mall"}) == []
+
+
+def test_group_double_counts_brand_and_base():
+    pois = [
+        (40.0, -73.0, {"shop": "supermarket", "brand:wikidata": "Q1809448"}),
+        (40.1, -73.1, {"amenity": "cafe", "name": "Starbucks"}),
+        (40.2, -73.2, {"amenity": "fast_food"}),
+    ]
+    g = group_pois_by_category(pois)
+    assert g["grocery"] == [(40.0, -73.0)] and g["whole_foods"] == [(40.0, -73.0)]
+    assert g["cafe"] == g["starbucks"] == [(40.1, -73.1)]
+    assert g["restaurant"] == [] and g["target"] == []
+
+
+def test_premium_retail_raw():
+    assert premium_retail_raw(None, None, None) is None
+    assert premium_retail_raw(0.0, 0.0, 0.0) == pytest.approx(2.5)
+    assert premium_retail_raw(None, 800.0, None) == pytest.approx(0.5)
+    assert premium_retail_raw(800.0, None, 800.0) == pytest.approx(0.5 + 0.25)
+    assert premium_retail_raw(None, None, 1600.0) == pytest.approx(0.5 / 3)
+
+
+def test_compute_cell_features_v2_columns():
+    pois = {c: [] for c in ("grocery", "gym", "cafe", "gas_station", "convenience_store")}
+    pois["restaurant"] = [(CELL_LAT, CELL_LON)] * 2
+    pois["bar"] = []
+    pois["starbucks"] = [(CELL_LAT, CELL_LON)]
+    f = compute_cell_features(CELL_LAT, CELL_LON, pois)
+    assert f["restaurant_count_500m"] == 2 and f["restaurant_nearest_m"] == 0.0
+    assert f["bar_count_500m"] == 0 and f["bar_nearest_m"] is None
+    assert f["starbucks_nearest_m"] == 0.0
+    assert f["whole_foods_nearest_m"] is None and f["target_nearest_m"] is None
+    assert f["premium_retail_raw"] == pytest.approx(1.0)
+
+
+def test_query_includes_v2_statements():
+    q = build_overpass_query(40.0, 41.0, -74.0, -73.0)
+    assert '"amenity"="restaurant"' in q and '"amenity"="biergarten"' in q
+    assert "fast_food" not in q
+    for qid in ("Q1809448", "Q37158", "Q1046951"):
+        assert qid in q
+
+
+def _el(i):
+    return {"type": "node", "id": i, "lat": 40.0, "lon": -73.0, "tags": {"amenity": "bar"}}
+
+
+def test_split_path_on_timeout_dedupes(monkeypatch):
+    monkeypatch.setattr(overpass.time, "sleep", lambda s: None)
+    monkeypatch.setattr("ingestion.osm_poi.post_overpass_query", None, raising=False)
+    calls = []
+
+    def fake_post(query, timeout):
+        calls.append(query)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("too big")
+        return {"elements": [_el(1), _el(len(calls))]}  # id 1 straddles quadrants
+
+    monkeypatch.setattr("ingestion.osm_poi.post_overpass_query", fake_post)
+    pois = fetch_pois_for_bbox(40.0, 41.0, -74.0, -73.0)
+    assert len(calls) == 5
+    assert len(pois) == 5  # id 1 once + 4 distinct
+
+
+def test_split_gives_up_at_max_depth(monkeypatch):
+    monkeypatch.setattr(overpass.time, "sleep", lambda s: None)
+    n = []
+
+    def always_fail(*bbox):
+        n.append(bbox)
+        raise httpx.ReadTimeout("x")
+
+    with pytest.raises(httpx.ReadTimeout):
+        overpass.fetch_with_quadrant_split(always_fail, 0, 1, 0, 1, max_depth=1)
+    assert len(n) == 2  # root + first sub-tile, which re-raises
+
+
+def test_merge_overpass_elements_keeps_idless():
+    m = overpass.merge_overpass_elements([{"elements": [_el(1), {"type": "node"}]}, {"elements": [_el(1)]}])
+    assert len(m["elements"]) == 2
