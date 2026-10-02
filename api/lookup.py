@@ -5,7 +5,7 @@ nearest-neighbor fallback, mapping a `scores` row onto the SubScores
 response shape) are plain functions over dicts -- see tests/test_api.py.
 """
 
-from api.schemas import ScoreResponse, SubScores
+from api.schemas import SchoolInfo, ScoreResponse, SubScores
 from common.geo import haversine_m
 from scoring.engine import CATEGORY_SPECS
 
@@ -50,7 +50,34 @@ def sub_scores_from_score_row(score_row: dict) -> SubScores:
     return SubScores(**fields)
 
 
-def build_score_response(geo_entity: dict, score_row: dict) -> ScoreResponse:
+def get_feature_row(conn, geo_entity_id: str) -> dict | None:
+    """The feature_store row for one geo_entity (nearest distances in
+    metres, school district fields), or None."""
+    with conn.cursor() as cur:
+        cur.execute("select * from feature_store where geo_entity_id = %s", (geo_entity_id,))
+        return cur.fetchone()
+
+
+def school_info_from_rows(score_row: dict, feature_row: dict | None) -> SchoolInfo | None:
+    """SchoolInfo when any school data exists (v2 rows), else None so v1
+    rows serialize `school: null`."""
+    feature_row = feature_row or {}
+    proximity = score_row.get("school_proximity_score")
+    district = feature_row.get("school_district_name")
+    source = feature_row.get("school_rating_source")
+    if proximity is None and district is None and source is None:
+        return None
+    return SchoolInfo(
+        proximity=None if proximity is None else float(proximity),
+        rating_available=score_row.get("school_score") is not None,
+        district_name=district,
+        source=source,
+    )
+
+
+def build_score_response(
+    geo_entity: dict, score_row: dict, feature_row: dict | None = None
+) -> ScoreResponse:
     """Pure response builder from plain dict rows (psycopg's dict_row
     cursor output, or a hand-built dict in tests) -- no DB access here.
     `geo_entity` needs id/latitude/longitude/formatted_address;
@@ -68,4 +95,5 @@ def build_score_response(geo_entity: dict, score_row: dict) -> ScoreResponse:
         sub_scores=sub_scores_from_score_row(score_row),
         weights_version=score_row["weights_version"],
         computed_at=score_row["computed_at"],
+        school=school_info_from_rows(score_row, feature_row),
     )

@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/area": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Score the area bounded by secondary-and-above roads that contains a point.
+         * @description The area is a face of the network of secondary roads and above (secondary, primary, trunk, motorway and links), closed at the shore. Its sub-scores and composite are the area-weighted average of the latest scores of the geohash6 cells it overlaps (null factors are skipped per factor), so they track the latest scoring run. Returns 404 when no area contains the point (or it is larger than the size cap); clients then fall back to the single-cell `/score`.
+         */
+        get: operations["getArea"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/score": {
         parameters: {
             query?: never;
@@ -75,6 +95,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reverse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readable address for a map point.
+         * @description Reverse-geocodes a coordinate into a short label such as "350 5th Ave, New York, NY" (house number and street, locality, state abbreviation). Falls back to the street, then the neighbourhood name; `label` is null when nothing usable is known there. Proxies a third-party geocoder so the browser never talks to it directly. Clients should show coordinates (or nothing) rather than an error on failure.
+         */
+        get: operations["reverseGeocode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/map/cells": {
         parameters: {
             query?: never;
@@ -130,6 +170,9 @@ export interface components {
             grocery?: number | null;
             gym?: number | null;
             cafe?: number | null;
+            restaurant?: number | null;
+            bar?: number | null;
+            premiumRetail?: number | null;
             gasStation?: number | null;
             convenienceStore?: number | null;
             transit?: number | null;
@@ -152,7 +195,30 @@ export interface components {
             weightsVersion: string;
             /** Format: date-time */
             computedAt: string;
+            school?: components["schemas"]["SchoolInfo"];
         };
+        /** @description A `ScoreResponse` for a road-bounded area. `geoEntityId` is the representative grid cell (the one under the clicked point); `latitude`/`longitude` echo the clicked point; `address` is the area's label ("Area bounded by ..."). */
+        AreaScoreResponse: components["schemas"]["ScoreResponse"] & {
+            areaId: number;
+            area: {
+                /** @description GeoJSON Polygon or MultiPolygon, [lon, lat], 5 decimals. */
+                geometry: Record<string, never>;
+                areaSqMi: number;
+                /** @description Up to 4 road names that form most of the boundary. */
+                boundedBy: string[];
+                /** @description Number of grid cells blended into the score. */
+                cellCount: number;
+            };
+            /** @description Plain-language "why this score", from the area's sub-scores. */
+            explanation: string;
+        };
+        /** @description School detail beside the `school` sub-score. `subScores.school` is null when no rating exists for the location; `proximity` (0-100, proximity+density only) is still reported so clients can show "proximity 72, rating unavailable". */
+        SchoolInfo: {
+            proximity?: number | null;
+            ratingAvailable: boolean;
+            districtName?: string | null;
+            source?: string | null;
+        } | null;
         ExplanationResponse: {
             /** Format: uuid */
             geoEntityId: string;
@@ -160,6 +226,10 @@ export interface components {
             explanation: string;
             /** Format: date-time */
             computedAt: string;
+            /** @description Distance in miles to the nearest feature per factor (FactorKey -> miles, null when unknown). */
+            nearestMi?: {
+                [key: string]: number | null;
+            } | null;
         };
         /** @description A single user-provided anchor (job, school, landmark, etc). */
         AnchorPoint: {
@@ -203,10 +273,10 @@ export interface components {
             results: components["schemas"]["RankedAddress"][];
         };
         /**
-         * @description A scoring factor. Same keys as `SubScores`.
+         * @description A scoring factor. Same keys as `SubScores`. `premiumRetail` and `trailPopularity` are underlying signals: they count toward the overall score, but the website does not expose them as toggles. The API treats them like any other factor. `emergencyCorridor` is displayed as "Noise corridor" (main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely; a rough proxy, default weight 0.75); the key is unchanged.
          * @enum {string}
          */
-        FactorKey: "grocery" | "gym" | "cafe" | "gasStation" | "convenienceStore" | "transit" | "school" | "road" | "emergencyCorridor" | "airport" | "trailPopularity";
+        FactorKey: "grocery" | "gym" | "cafe" | "restaurant" | "bar" | "premiumRetail" | "gasStation" | "convenienceStore" | "transit" | "school" | "road" | "emergencyCorridor" | "airport" | "trailPopularity";
         Suggestion: {
             /** @example 350 5th Avenue, New York, NY */
             label: string;
@@ -217,6 +287,14 @@ export interface components {
         };
         SuggestResponse: {
             suggestions: components["schemas"]["Suggestion"][];
+        };
+        ReverseResponse: {
+            /** @example 350 5th Ave, New York, NY */
+            label: string | null;
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
         };
         MapCellsResponse: {
             precision: number;
@@ -294,6 +372,56 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getArea: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Area found. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AreaScoreResponse"];
+                };
+            };
+            /** @description Missing or invalid lat/lon. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No area contains this point. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Point outside the coverage area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     getScore: {
         parameters: {
             query?: {
@@ -460,6 +588,49 @@ export interface operations {
             };
         };
     };
+    reverseGeocode: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The label (possibly null) for the requested point. */
+            200: {
+                headers: {
+                    /** @description Cacheable for a few minutes. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReverseResponse"];
+                };
+            };
+            /** @description The point is outside the covered metro area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The geocoding provider is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     getMapCells: {
         parameters: {
             query: {
@@ -467,7 +638,7 @@ export interface operations {
                 bbox: string;
                 /** @description Geohash length of the returned cells. 6 ≈ 1.2 km × 0.6 km, 5 ≈ 4.9 km × 4.9 km. */
                 precision?: 5 | 6;
-                /** @description Comma-separated factors to include (see `FactorKey`). Omit for all eleven. At least one is required if present. */
+                /** @description Comma-separated factors to include (see `FactorKey`). Omit for all fourteen, including the underlying signals `premiumRetail` and `trailPopularity`. An explicit list means exactly those factors: send it without them to leave them out. At least one is required if present. (The website never lists the two underlying signals in its toggles, so it omits `factors` when nothing is narrowed.) */
                 factors?: string;
                 /** @description Optional `factor:weight` overrides, e.g. `transit:2,cafe:0.5`. Weights must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use the default hand-tuned weight. Overrides for factors not in `factors` are ignored. */
                 weights?: string;
@@ -507,13 +678,18 @@ export interface operations {
             query?: {
                 /** @description Restrict to a viewport (`minLon,minLat,maxLon,maxLat`). Omit for the whole covered area. */
                 bbox?: string;
-                /** @description Same as `/map/cells`. */
+                /** @description Same as `/map/cells`: omitted means all fourteen factors (underlying `premiumRetail` and `trailPopularity` included); an explicit list means exactly those factors. */
                 factors?: string;
                 /** @description Same as `/map/cells`. */
                 weights?: string;
                 limit?: number;
-                /** @description Minimum distance between returned areas. */
+                /**
+                 * @deprecated
+                 * @description Minimum distance between returned areas, in kilometres. Prefer `minSeparationMi`; sending both is a 400.
+                 */
                 minSeparationKm?: number;
+                /** @description Minimum distance between returned areas, in miles. Sending both this and `minSeparationKm` is a 400 invalid_request. */
+                minSeparationMi?: number;
             };
             header?: never;
             path?: never;

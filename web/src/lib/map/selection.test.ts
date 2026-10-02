@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FACTOR_KEYS } from "@/lib/score/factors";
+import { FACTOR_KEYS, UNDERLYING_FACTOR_KEYS } from "@/lib/score/factors";
 
 import {
   ALL_FACTORS,
@@ -9,6 +9,7 @@ import {
   applyPreset,
   createSelection,
   importanceOf,
+  isAllSelected,
   learnDefaults,
   resolveWeights,
   setImportance,
@@ -49,6 +50,23 @@ describe("selection", () => {
       expect(preset.factors.length).toBeGreaterThan(0);
       for (const key of preset.factors) expect(FACTOR_KEYS).toContain(key);
     }
+  });
+
+  it("keeps underlying metrics out of presets and selections", () => {
+    for (const preset of PRESETS) {
+      for (const key of UNDERLYING_FACTOR_KEYS) {
+        expect(preset.factors).not.toContain(key);
+      }
+    }
+    expect(createSelection([...FACTOR_KEYS, "premiumRetail"]).factors).toEqual(
+      FACTOR_KEYS,
+    );
+  });
+
+  it("treats all toggleable factors as 'all selected'", () => {
+    expect(isAllSelected(ALL_FACTORS)).toBe(true);
+    expect(ALL_FACTORS.factors).toHaveLength(12);
+    expect(isAllSelected(toggleFactor(ALL_FACTORS, "bar"))).toBe(false);
   });
 
   it("recognises the active preset only while importance is untouched", () => {

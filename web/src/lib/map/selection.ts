@@ -100,14 +100,14 @@ export const PRESETS: readonly Preset[] = [
   {
     id: "errands",
     label: "Daily errands",
-    description: "Groceries, coffee, the gym and a transit stop close by.",
-    factors: ["grocery", "cafe", "gym", "transit"],
+    description: "Groceries, coffee, restaurants, the gym and a transit stop close by.",
+    factors: ["grocery", "cafe", "restaurant", "gym", "transit"],
   },
   {
     id: "family",
     label: "Family",
-    description: "Schools, trails and groceries, away from siren-heavy routes.",
-    factors: ["school", "trailPopularity", "grocery", "emergencyCorridor"],
+    description: "Schools and groceries, away from noise corridors.",
+    factors: ["school", "grocery", "emergencyCorridor"],
   },
   {
     id: "commuter",
@@ -119,12 +119,11 @@ export const PRESETS: readonly Preset[] = [
     id: "quiet",
     label: "Quiet",
     description:
-      "Few sirens, gas stations and convenience stores; room to walk.",
+      "Few noisy corridors, gas stations and convenience stores.",
     factors: [
       "emergencyCorridor",
       "gasStation",
       "convenienceStore",
-      "trailPopularity",
     ],
   },
 ];

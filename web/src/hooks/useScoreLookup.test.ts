@@ -5,7 +5,7 @@ import type { ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { Explanation, Score } from "@/lib/api/types";
-import { makeExplanation, makeScore, stubClient } from "@/test/fixtures";
+import { makeAreaScore, makeExplanation, makeScore, stubClient } from "@/test/fixtures";
 
 import { useScoreLookup } from "./useScoreLookup";
 
@@ -187,5 +187,90 @@ describe("useScoreLookup", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(client.getScore).not.toHaveBeenCalled();
+  });
+
+  describe("area lookups for coordinates", () => {
+    const click: ScoreTarget = { kind: "coordinates", lat: 40.725, lon: -73.995, label: "40.7250, -73.9950" };
+
+    it("uses the area, its inline explanation, and makes no further calls", async () => {
+      const area = makeAreaScore();
+      const client = makeClient({ getAreaByCoordinates: vi.fn(async () => area) });
+
+      const { result } = renderHook(() => useScoreLookup(click, client));
+
+      await waitFor(() => expect(result.current.state.status).toBe("success"));
+      expect(result.current.state).toMatchObject({
+        address: "40.7250, -73.9950",
+        score: area.score,
+        area: area.area,
+        explanation: { status: "ready", text: area.explanation },
+      });
+      expect(client.getAreaByCoordinates).toHaveBeenCalledWith(
+        { lat: 40.725, lon: -73.995 },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(client.getScoreByCoordinates).not.toHaveBeenCalled();
+      expect(client.getScoreExplanation).not.toHaveBeenCalled();
+    });
+
+    it("marks a blank inline explanation unavailable", async () => {
+      const client = makeClient({
+        getAreaByCoordinates: vi.fn(async () => makeAreaScore({ explanation: " " })),
+      });
+      const { result } = renderHook(() => useScoreLookup(click, client));
+      await waitFor(() =>
+        expect(result.current.state).toMatchObject({ explanation: { status: "unavailable" } }),
+      );
+    });
+
+    it.each([
+      ["404", new ApiError("not-found", "none", { status: 404 })],
+      ["500", new ApiError("server", "boom", { status: 500 })],
+      ["a network failure", new ApiError("network", "down")],
+      ["an invalid body", new ApiError("invalid-response", "bad")],
+    ])("falls back to the grid square on %s, without an error", async (_label, error) => {
+      const client = makeClient({ getAreaByCoordinates: vi.fn(async () => Promise.reject(error)) });
+
+      const { result } = renderHook(() => useScoreLookup(click, client));
+
+      await waitFor(() => expect(result.current.state.status).toBe("success"));
+      expect(result.current.state).toMatchObject({ area: null });
+      expect(client.getScoreByCoordinates).toHaveBeenCalledTimes(1);
+      await waitFor(() =>
+        expect(result.current.state).toMatchObject({ explanation: { status: "ready" } }),
+      );
+      expect(client.getScoreExplanation).toHaveBeenCalledTimes(1);
+    });
+
+    it("still reports an error when the fallback fails too", async () => {
+      const client = makeClient({
+        getAreaByCoordinates: vi.fn(async () => Promise.reject(new ApiError("server", "x"))),
+        getScoreByCoordinates: vi.fn(async () =>
+          Promise.reject(new ApiError("not-found", "outside", { status: 404 })),
+        ),
+      });
+      const { result } = renderHook(() => useScoreLookup(click, client));
+      await waitFor(() => expect(result.current.state.status).toBe("error"));
+      expect(result.current.state).toMatchObject({ error: { kind: "not-found" } });
+    });
+
+    it("stays cell-based for a best-areas pick", async () => {
+      const client = makeClient({ getAreaByCoordinates: vi.fn(async () => makeAreaScore()) });
+      const pick: ScoreTarget = { ...click, precision: "cell" };
+
+      const { result } = renderHook(() => useScoreLookup(pick, client));
+
+      await waitFor(() => expect(result.current.state.status).toBe("success"));
+      expect(client.getAreaByCoordinates).not.toHaveBeenCalled();
+      expect(client.getScoreByCoordinates).toHaveBeenCalledTimes(1);
+      expect(result.current.state).toMatchObject({ area: null });
+    });
+
+    it("never asks for an area for a typed address", async () => {
+      const client = makeClient({ getAreaByCoordinates: vi.fn(async () => makeAreaScore()) });
+      const { result } = renderHook(() => useScoreLookup(byAddress("350 5th Ave"), client));
+      await waitFor(() => expect(result.current.state.status).toBe("success"));
+      expect(client.getAreaByCoordinates).not.toHaveBeenCalled();
+    });
   });
 });

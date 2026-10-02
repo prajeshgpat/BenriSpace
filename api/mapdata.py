@@ -12,7 +12,7 @@ from api.schemas import MapCellsResponse, MapTopResponse, MapTopResult
 from common.config import SCORING_WEIGHTS_VERSION
 from common.db import MapBbox, get_map_top_candidates
 from common.geo import haversine_m
-from scoring.engine import DEFAULT_WEIGHTS
+from scoring.engine import DEFAULT_WEIGHTS, UNDERLYING_SCORE_COLUMNS
 
 # Wire factor key -> `scores` column. The only place that maps them; ordering
 # is the contract's FactorKey order. tests/test_mapdata.py fails if a scored
@@ -21,6 +21,9 @@ FACTOR_COLUMNS: dict[str, str] = {
     "grocery": "grocery_score",
     "gym": "gym_score",
     "cafe": "cafe_score",
+    "restaurant": "restaurant_score",
+    "bar": "bar_score",
+    "premiumRetail": "premium_retail_score",
     "gasStation": "gas_station_score",
     "convenienceStore": "convenience_store_score",
     "transit": "transit_score",
@@ -30,6 +33,14 @@ FACTOR_COLUMNS: dict[str, str] = {
     "airport": "airport_score",
     "trailPopularity": "trail_popularity_score",
 }
+
+# API keys of underlying metrics: they count toward the composite (an omitted
+# `factors` means all 14) but the website offers no toggle for them.
+UNDERLYING_FACTOR_KEYS: tuple[str, ...] = tuple(
+    key
+    for key, column in FACTOR_COLUMNS.items()
+    if column in UNDERLYING_SCORE_COLUMNS
+)
 
 MAX_WEIGHT = 1_000_000.0
 SCORE_DECIMALS = 1

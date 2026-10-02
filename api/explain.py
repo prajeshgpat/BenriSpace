@@ -17,6 +17,49 @@ rewrite.
 """
 
 from api.schemas import SubScores
+from common.units import format_distance, m_to_mi
+
+# Wire FactorKey -> feature_store column(s) holding the nearest-feature
+# distance in metres; several columns mean "nearest of these".
+NEAREST_COLUMNS: dict[str, tuple[str, ...]] = {
+    "grocery": ("grocery_nearest_m",),
+    "gym": ("gym_nearest_m",),
+    "cafe": ("cafe_nearest_m",),
+    "restaurant": ("restaurant_nearest_m",),
+    "bar": ("bar_nearest_m",),
+    "gasStation": ("gas_station_nearest_m",),
+    "convenienceStore": ("convenience_store_nearest_m",),
+    "transit": ("transit_nearest_m",),
+    "school": ("school_nearest_m",),
+    "trailPopularity": ("running_trail_nearest_m",),
+    "premiumRetail": ("whole_foods_nearest_m", "starbucks_nearest_m", "target_nearest_m"),
+    "emergencyCorridor": ("emergency_facility_nearest_m",),
+}
+FEATURE_STORE_NEAREST_COLUMNS = tuple(c for cols in NEAREST_COLUMNS.values() for c in cols)
+
+
+def _snake_to_camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def nearest_m_by_factor(feature_row: dict | None) -> dict[str, float | None]:
+    """FactorKey -> nearest-feature distance in metres (None when unknown),
+    for the factors that have one. Internals stay metric."""
+    row = feature_row or {}
+    out: dict[str, float | None] = {}
+    for factor, columns in NEAREST_COLUMNS.items():
+        values = [float(row[c]) for c in columns if row.get(c) is not None]
+        out[factor] = min(values) if values else None
+    return out
+
+
+def nearest_mi_by_factor(feature_row: dict | None) -> dict[str, float | None]:
+    """Same as nearest_m_by_factor but in miles, for ExplanationResponse.nearestMi."""
+    return {
+        factor: None if meters is None else round(m_to_mi(meters), 3)
+        for factor, meters in nearest_m_by_factor(feature_row).items()
+    }
 
 # Human-facing names for each SubScores field (snake_case, matching the
 # Pydantic field names -- CamelModel handles the wire-format camelCase
@@ -25,24 +68,30 @@ FACTOR_LABELS: dict[str, str] = {
     "grocery": "grocery access",
     "gym": "gym access",
     "cafe": "cafe access",
+    "restaurant": "restaurant access",
+    "bar": "bar and pub access",
+    "premium_retail": "access to premium retail (Whole Foods, Starbucks, Target)",
     "gas_station": "distance from gas stations",
     "convenience_store": "distance from convenience stores",
     "transit": "transit access",
     "school": "school quality and proximity",
     "road": "road and traffic conditions",
-    "emergency_corridor": "distance from emergency-vehicle corridors",
+    "emergency_corridor": "distance from the noise corridor",
     "airport": "airport drive time",
     "trail_popularity": "access to popular running and walking trails",
 }
 
 
-def build_explanation(sub_scores: SubScores) -> str:
+def build_explanation(
+    sub_scores: SubScores, nearest_m: dict[str, float | None] | None = None
+) -> str:
     """Rule-based explanation: calls out the strongest and weakest
     normalized sub-scores by name, then lists the rest. All SubScores
     values are already 0-100 with direction applied (openapi.yaml's
     SubScores description, enforced in scoring/engine.py before storage),
     so "highest" always means "most favorable" here -- no sign-flipping
-    needed in this module."""
+    needed in this module. `nearest_m` (from nearest_m_by_factor) optionally
+    adds the nearest-feature distances, always formatted in feet/miles."""
     values = {
         field: value
         for field, value in sub_scores.model_dump(by_alias=False).items()
@@ -69,5 +118,13 @@ def build_explanation(sub_scores: SubScores) -> str:
             f"{FACTOR_LABELS.get(field, field)} {v:.0f}/100" for field, v in remaining
         )
         sentences.append(f"Other factors: {summary}.")
+
+    nearest_parts = []
+    for field in dict.fromkeys((best_field, worst_field)):
+        text = format_distance((nearest_m or {}).get(_snake_to_camel(field)))
+        if text:
+            nearest_parts.append(f"{FACTOR_LABELS.get(field, field)} {text}")
+    if nearest_parts:
+        sentences.append(f"Nearest feature: {', '.join(nearest_parts)}.")
 
     return " ".join(sentences)

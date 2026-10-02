@@ -33,6 +33,18 @@
   font-size: 1rem;
 }
 
+.input[data-adorned] {
+  padding-right: 3rem;
+}
+
+.adornment {
+  position: absolute;
+  inset-block: 0;
+  right: 0.25rem;
+  display: flex;
+  align-items: center;
+}
+
 .input::placeholder {
   color: var(--text-subtle);
   opacity: 1;

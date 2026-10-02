@@ -38,7 +38,7 @@ convenient.
 | Train/transit accessibility                                         | Positive                                                                         | GTFS static feeds (per agency)                                         |
 | School quality                                                      | Positive                                                                         | NYC Open Data + surrounding county sources                             |
 | Road/traffic conditions (e.g. single-lane roads causing congestion) | Negative                                                                         | OSM road classification tags                                           |
-| Emergency vehicle route noise                                       | Negative (mitigated by street orientation — side street vs. facing the corridor) | OSM road classification (proxy only — phase 2 refinement, not precise) |
+| Noise corridor (emergency vehicle route noise; API key `emergencyCorridor`)                                     | Negative (mitigated by street orientation — side street vs. facing the corridor) | OSM road classification (proxy only — phase 2 refinement, not precise) |
 | Proximity to tier-1 airports (JFK, Dulles, SFO-class)               | Positive                                                                         | Hardcoded list + drive time via routing engine                         |
 | Popular running/walking trails (proxy for popularity, desirable neighborhood, safety) | Positive | OSM trail/path tags (free, required) + Strava Segments API popularity (optional enhancement, requires app registration) |
 

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { targetKey, targetLabel, type ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError, isApiError } from "@/lib/api/errors";
-import type { Score } from "@/lib/api/types";
+import type { AreaInfo, Score } from "@/lib/api/types";
 
 export type ExplanationState =
   | { status: "loading" }
@@ -19,6 +19,8 @@ export type LookupState =
       status: "success";
       address: string;
       score: Score;
+      /** The secondary-road polygon behind the score; null for a plain grid-square score. */
+      area: AreaInfo | null;
       explanation: ExplanationState;
     }
   | { status: "error"; address: string; error: ApiError };
@@ -72,6 +74,30 @@ export function useScoreLookup(
     };
 
     (async () => {
+      // The area is the better answer for a point, but it is an upgrade, not
+      // a requirement: any failure quietly falls back to the grid square.
+      if (current.kind === "coordinates" && current.precision !== "cell") {
+        try {
+          const result = await client.getAreaByCoordinates(
+            { lat: current.lat, lon: current.lon },
+            { signal },
+          );
+          const text = result.explanation;
+          settle({
+            status: "success",
+            address,
+            score: result.score,
+            area: result.area,
+            explanation: text.trim()
+              ? { status: "ready", text }
+              : { status: "unavailable" },
+          });
+          return;
+        } catch {
+          if (signal.aborted) return;
+        }
+      }
+
       let score: Score;
       try {
         score =
@@ -89,6 +115,7 @@ export function useScoreLookup(
         status: "success",
         address,
         score,
+        area: null,
         explanation: { status: "loading" },
       });
 
@@ -105,7 +132,7 @@ export function useScoreLookup(
       } catch {
         explanation = { status: "unavailable" };
       }
-      settle({ status: "success", address, score, explanation });
+      settle({ status: "success", address, score, area: null, explanation });
     })();
 
     return () => controller.abort();

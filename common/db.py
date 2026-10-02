@@ -51,6 +51,22 @@ FEATURE_STORE_COLUMNS = {
     "running_trail_nearest_m",
     "strava_segment_count_800m",
     "strava_segment_popularity_raw",
+    # v2 (contracts/migrations/0002_v2.sql)
+    "restaurant_count_500m",
+    "restaurant_nearest_m",
+    "bar_count_500m",
+    "bar_nearest_m",
+    "whole_foods_nearest_m",
+    "starbucks_nearest_m",
+    "target_nearest_m",
+    "premium_retail_raw",
+    "emergency_facility_count_1600m",
+    "emergency_facility_nearest_m",
+    "emergency_corridor_facility_raw",
+    "school_district_geoid",
+    "school_district_name",
+    "school_district_rating",
+    "school_rating_source",
 }
 
 
@@ -211,22 +227,25 @@ def get_geo_entities_in_bbox(
         return list(cur)
 
 
-def get_latest_score(conn: psycopg.Connection, geo_entity_id: str) -> dict | None:
-    """Most recent (by computed_at) scores row for one geo_entity, whatever
-    weights_version that happens to be. Phase 1 doesn't expose a
-    weights_version query param yet (per api/ instructions: "for now just
-    take the newest row") -- that's a natural later addition here without
-    touching callers' shapes."""
+def get_latest_score(
+    conn: psycopg.Connection,
+    geo_entity_id: str,
+    weights_version: str | None = None,
+) -> dict | None:
+    """Most recent (by computed_at) scores row for one geo_entity. When
+    `weights_version` is given its rows win over other versions (the newest
+    row of any version is the fallback), so a score lookup agrees with the
+    map while a newer weights version is being rolled out."""
     with conn.cursor() as cur:
         cur.execute(
             """
             select *
             from scores
             where geo_entity_id = %s
-            order by computed_at desc
+            order by (weights_version = %s) desc nulls last, computed_at desc
             limit 1
             """,
-            (geo_entity_id,),
+            (geo_entity_id, weights_version),
         )
         return cur.fetchone()
 
@@ -259,6 +278,12 @@ def iter_latest_scored_geo_entities(conn: psycopg.Connection) -> Iterator[dict]:
 # no composite (NULL) and is dropped.
 
 MAP_SCORE_COLUMNS = frozenset(spec.score_column for spec in CATEGORY_SPECS)
+
+# Informational scores columns the engine writes that are not composite
+# factors (never valid in build_composite_sql).
+SCORES_EXTRA_COLUMNS = frozenset(
+    spec.proximity_score_column for spec in CATEGORY_SPECS if spec.proximity_score_column
+)
 
 # (min_lon, min_lat, max_lon, max_lat)
 MapBbox = tuple[float, float, float, float]
@@ -379,3 +404,45 @@ def get_map_top_candidates(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return list(cur)
+
+
+# --- Road-bounded areas (GET /v1/area; contracts/migrations/0003_areas.sql) ---
+
+
+def get_area_candidates(conn: psycopg.Connection, lat: float, lon: float) -> list[dict]:
+    """Areas whose bounding box contains the point. Returns [] (after rolling
+    back the failed statement) when the areas tables have not been created."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select id, area_sq_m, geometry, bounded_by,
+                       min_lat, max_lat, min_lon, max_lon
+                from areas
+                where %s between min_lat and max_lat and %s between min_lon and max_lon
+                """,
+                (lat, lon),
+            )
+            return list(cur)
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return []
+
+
+def get_area_aggregate(
+    conn: psycopg.Connection, area_id: int, weights_version: str | None
+) -> dict | None:
+    """Area-weighted score aggregate (see api.areas.aggregate_sql), or None
+    when the tables are missing or no cell of the area has a score."""
+    from api.areas import aggregate_sql
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(aggregate_sql(), (weights_version, area_id))
+            row = cur.fetchone()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return None
+    if row is None or not row.get("cell_count") or row.get("composite_score") is None:
+        return None
+    return row

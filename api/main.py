@@ -27,11 +27,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.explain import build_explanation
+from api.areas import AREA_MAX_SQ_MI, SQ_M_PER_SQ_MI, build_area_response, pick_area
+from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.geocoding import geocode_address
 from api.lookup import (
     bbox_around,
     build_score_response,
+    get_feature_row,
     nearest_geo_entity,
     sub_scores_from_score_row,
 )
@@ -42,33 +44,40 @@ from api.mapdata import (
     parse_bbox,
     parse_score_spec,
 )
+from api.reverse import ReverseUnavailable
+from api.reverse import reverse as reverse_geocode
 from api.schemas import (
     AnchorPoint,
+    AreaScoreResponse,
     Error,
     ExplanationResponse,
     MapCellsResponse,
     MapTopResponse,
     RankedAddress,
+    ReverseResponse,
     ScoreResponse,
     SuggestResponse,
     TriangulateRequest,
     TriangulateResponse,
 )
-from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, normalize_query
+from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses
 from api.triangulate import anchor_to_circle, rank_candidates
+from api.triangulate_sql import combined_bbox, get_scored_candidates_in_box
 from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
 from common.db import (
+    get_area_aggregate,
+    get_area_candidates,
     get_connection,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
     get_latest_score,
     get_map_cells,
-    iter_latest_scored_geo_entities,
 )
 from common.geo import encode as geohash_encode
+from common.units import mi_to_km
 
-app = FastAPI(title="BenriSpace API", version="0.4.0")
+app = FastAPI(title="BenriSpace API", version="0.5.0")
 
 # The frontend is a separate origin (benrispace.com / localhost:3000) from
 # the API (api.benrispace.com / localhost:8000), so browsers need CORS.
@@ -149,11 +158,14 @@ def get_score(
                 404, "not_found", "No geo entity within ingestion coverage for this location."
             )
 
-        score_row = get_latest_score(conn, str(geo_entity["id"]))
+        score_row = get_latest_score(
+            conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION
+        )
         if score_row is None:
             return _error(404, "not_found", "No score on file for this geo entity yet.")
+        feature_row = get_feature_row(conn, str(geo_entity["id"]))
 
-    return build_score_response(geo_entity, score_row)
+    return build_score_response(geo_entity, score_row, feature_row)
 
 
 @app.get(
@@ -163,16 +175,20 @@ def get_score(
 )
 def get_score_explanation(geo_entity_id: UUID):
     with get_connection() as conn:
-        score_row = get_latest_score(conn, str(geo_entity_id))
+        score_row = get_latest_score(conn, str(geo_entity_id), SCORING_WEIGHTS_VERSION)
+        feature_row = get_feature_row(conn, str(geo_entity_id)) if score_row else None
     if score_row is None:
         return _error(404, "not_found", "No score on file for this geo entity.")
 
     sub_scores = sub_scores_from_score_row(score_row)
-    explanation = build_explanation(sub_scores)  # Phase 1 template placeholder, see api/explain.py
+    # Phase 1 template placeholder, see api/explain.py. Distances are
+    # metric internally and rendered in feet/miles.
+    explanation = build_explanation(sub_scores, nearest_m_by_factor(feature_row))
     return ExplanationResponse(
         geo_entity_id=geo_entity_id,
         explanation=explanation,
         computed_at=score_row["computed_at"],
+        nearest_mi=nearest_mi_by_factor(feature_row),
     )
 
 
@@ -196,7 +212,11 @@ def triangulate(body: TriangulateRequest):
         circles.append(anchor_to_circle(lat, lon, anchor.max_travel_minutes, anchor.mode))
 
     with get_connection() as conn:
-        candidates = [dict(row) for row in iter_latest_scored_geo_entities(conn)]
+        # Bounding-box prefilter: only cells near the circles leave the DB;
+        # rank_candidates still does the exact haversine test.
+        candidates = get_scored_candidates_in_box(
+            conn, combined_bbox(circles, body.combine_mode), SCORING_WEIGHTS_VERSION
+        )
 
     for c in candidates:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
@@ -243,6 +263,67 @@ def suggest(
 
 
 @app.get(
+    "/v1/reverse",
+    response_model=ReverseResponse,
+    responses={422: {"model": Error}, 503: {"model": Error}},
+)
+def reverse(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+):
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+    try:
+        label = reverse_geocode(lat, lon)
+    except ReverseUnavailable:
+        return _error(503, "reverse_unavailable", "Address lookup is temporarily unavailable.")
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return ReverseResponse(label=label, latitude=lat, longitude=lon)
+
+
+@app.get(
+    "/v1/area",
+    response_model=AreaScoreResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
+)
+def get_area(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+):
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+
+    def not_found() -> JSONResponse:
+        return _error(404, "area_not_found", "No road-bounded area found for this location.")
+
+    with get_connection() as conn:
+        area = pick_area(lat, lon, get_area_candidates(conn, lat, lon))
+        if area is None or area["area_sq_m"] / SQ_M_PER_SQ_MI > AREA_MAX_SQ_MI:
+            return not_found()
+        aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
+        if aggregate is None:
+            return not_found()
+        # The grid cell under the click supplies geoEntityId, school district
+        # and nearest distances (same lookup as /score?lat&lon).
+        geo_entity = get_geo_entity_by_geohash(conn, geohash_encode(lat, lon, precision=6))
+        if geo_entity is None:
+            min_lat, max_lat, min_lon, max_lon = bbox_around(lat, lon)
+            geo_entity = nearest_geo_entity(
+                lat, lon, get_geo_entities_in_bbox(conn, min_lat, max_lat, min_lon, max_lon)
+            )
+        if geo_entity is None:
+            return not_found()
+        feature_row = get_feature_row(conn, str(geo_entity["id"]))
+
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return build_area_response(
+        area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
+    )
+
+
+@app.get(
     "/v1/map/cells",
     response_model=MapCellsResponse,
     responses={400: {"model": Error}},
@@ -283,8 +364,21 @@ def get_map_top(
     factors: str | None = Query(default=None),
     weights: str | None = Query(default=None),
     limit: int = Query(default=10, ge=1, le=50),
-    min_separation_km: float = Query(default=3.0, ge=0, le=50, alias="minSeparationKm"),
+    min_separation_km: float | None = Query(
+        default=None, ge=0, le=50, alias="minSeparationKm", deprecated=True
+    ),
+    min_separation_mi: float | None = Query(default=None, ge=0, le=31, alias="minSeparationMi"),
 ):
+    if min_separation_km is not None and min_separation_mi is not None:
+        return _error(
+            400,
+            "invalid_request",
+            "Provide minSeparationMi or the deprecated minSeparationKm, not both.",
+        )
+    if min_separation_mi is not None:
+        min_separation_km = mi_to_km(min_separation_mi)
+    elif min_separation_km is None:
+        min_separation_km = 3.0  # default spacing, same as before
     try:
         parsed_bbox = parse_bbox(bbox) if bbox is not None else None
         spec = parse_score_spec(factors, weights)

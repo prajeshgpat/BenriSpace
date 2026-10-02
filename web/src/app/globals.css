@@ -26,8 +26,36 @@
   --header-height: 3.25rem;
 }
 
+/* Dark tokens apply for an explicit choice, or for the OS preference when
+   the visitor has not made one (the theme switch sets data-theme on <html>). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-sunken: #242422;
+  --text: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-subtle: #a3a299;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: #7d7b75;
+  --accent: #256abf;
+  --accent-hover: #1c5cab;
+  --accent-text: #ffffff;
+  --link: #86b6ef;
+  --meter-fill: #3987e5;
+  --meter-track: #0d366b;
+  --danger: #f2837d;
+  --focus-ring: #86b6ef;
+  --shadow: none;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --page: #0d0d0d;
     --surface: #1a1a19;
     --surface-sunken: #242422;

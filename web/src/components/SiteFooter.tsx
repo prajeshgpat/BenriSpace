@@ -44,7 +44,14 @@ export function SiteFooter() {
         <ExternalLink href="https://developer.njtransit.com">
           NJ Transit
         </ExternalLink>{" "}
-        GTFS. Scores describe an area, not a single building.
+        GTFS. School locations from{" "}
+        <ExternalLink href="https://nces.ed.gov/programs/edge/">NCES</ExternalLink>{" "}
+        and district ratings from the{" "}
+        <ExternalLink href="https://educationdata.urban.org/">
+          Education Data Portal
+        </ExternalLink>{" "}
+        (Urban Institute, ODC Attribution License). Scores describe an area,
+        not a single building.
       </p>
     </footer>
   );

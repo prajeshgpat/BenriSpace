@@ -3,9 +3,12 @@ import type { ReactNode } from "react";
 
 import { SITE_NAME } from "@/lib/site";
 
+import { SiteAccount } from "./SiteAccount";
+import { SiteNav } from "./SiteNav";
+import { ThemeToggle } from "./ThemeToggle";
 import styles from "./SiteShell.module.css";
 
-/** The slim header shared by every page; the data credits live with the page content. */
+/** The header shared by every page: brand, menu tabs and the theme switch. */
 export function SiteShell({ children }: { children: ReactNode }) {
   return (
     <div className={styles.shell}>
@@ -32,10 +35,17 @@ export function SiteShell({ children }: { children: ReactNode }) {
             />
             <circle cx="16" cy="16" r="2.5" fill="#ffffff" />
           </svg>
-          <span>{SITE_NAME}</span>
+          <span className={styles.name}>{SITE_NAME}</span>
         </Link>
 
-        <span className={styles.region}>New York metro</span>
+        <div className={styles.navSlot}>
+          <SiteNav />
+        </div>
+
+        <div className={styles.tools}>
+          <ThemeToggle />
+          <SiteAccount />
+        </div>
       </header>
 
       <div className={styles.content}>{children}</div>

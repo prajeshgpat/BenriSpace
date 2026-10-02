@@ -116,11 +116,15 @@ export function formatCoordinates(latitude: number, longitude: number): string {
  */
 export function describeScoredLocation(
   score: Pick<Score, "address" | "latitude" | "longitude">,
+  /** A reverse-geocoded street address for the point, when one is known. */
+  readableAddress: string | null = null,
 ): string {
   const coordinates = formatCoordinates(score.latitude, score.longitude);
   const address = score.address.trim();
   if (address === "" || isCoordinateAddress(address)) {
-    return `Scored for the area around ${coordinates}`;
+    return readableAddress
+      ? `Scored for the area around ${readableAddress}`
+      : `Scored for the area around ${coordinates}`;
   }
   return `Scored for ${address} (${coordinates})`;
 }

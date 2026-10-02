@@ -6,6 +6,8 @@ export interface FactorMeta {
   label: string;
   description: string;
   group: FactorGroup;
+  /** Counts toward the overall score but cannot be switched on or off. */
+  underlying?: boolean;
 }
 
 export const FACTOR_GROUPS: Record<FactorGroup, string> = {
@@ -36,6 +38,22 @@ export const FACTORS: Record<FactorKey, FactorMeta> = {
     description: "Coffee shops and cafes close by.",
     group: "amenities",
   },
+  restaurant: {
+    label: "Restaurants",
+    description: "Restaurants within a short walk.",
+    group: "amenities",
+  },
+  bar: {
+    label: "Bars & pubs",
+    description: "Bars, pubs and beer gardens within a short walk.",
+    group: "amenities",
+  },
+  premiumRetail: {
+    label: "Premium retail",
+    description: "Whole Foods, Starbucks and Target nearby: a signal of a nicer area (Target counts for less).",
+    group: "neighborhood",
+    underlying: true,
+  },
   transit: {
     label: "Public transit",
     description: "Subway, rail and bus stops within reach.",
@@ -57,9 +75,10 @@ export const FACTORS: Record<FactorKey, FactorMeta> = {
     group: "neighborhood",
   },
   trailPopularity: {
-    label: "Trails",
-    description: "Popular running and walking trails nearby.",
+    label: "Running route popularity",
+    description: "Running trails and paths nearby.",
     group: "neighborhood",
+    underlying: true,
   },
   gasStation: {
     label: "Gas stations",
@@ -72,10 +91,22 @@ export const FACTORS: Record<FactorKey, FactorMeta> = {
     group: "neighborhood",
   },
   emergencyCorridor: {
-    label: "Emergency routes",
-    description: "Higher means further from siren-heavy corridors.",
+    label: "Noise corridor",
+    description:
+      "Main roads near fire stations, hospitals and police stations: where sirens and through-traffic noise are most likely.",
     group: "neighborhood",
   },
 };
 
-export const FACTOR_KEYS = Object.keys(FACTORS) as FactorKey[];
+/** Every factor the API scores, including the underlying ones. */
+export const ALL_FACTOR_KEYS = Object.keys(FACTORS) as FactorKey[];
+
+/** Underlying metrics: counted in the overall score, never toggled in the UI. */
+export const UNDERLYING_FACTOR_KEYS = ALL_FACTOR_KEYS.filter(
+  (key) => FACTORS[key].underlying,
+);
+
+/** The user-facing, togglable factors (what the UI lists and counts). */
+export const FACTOR_KEYS = ALL_FACTOR_KEYS.filter(
+  (key) => !FACTORS[key].underlying,
+);

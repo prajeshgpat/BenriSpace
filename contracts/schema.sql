@@ -72,6 +72,23 @@ create table feature_store (
     strava_segment_count_800m  integer,     -- null when Strava isn't configured, not 0 — see normalization.md
     strava_segment_popularity_raw numeric,  -- aggregate athlete/effort-count signal, null when unavailable
 
+    -- v2 columns (contracts/migrations/0002_v2.sql) — all nullable
+    restaurant_count_500m int,
+    restaurant_nearest_m double precision,
+    bar_count_500m int,
+    bar_nearest_m double precision,
+    whole_foods_nearest_m double precision,
+    starbucks_nearest_m double precision,
+    target_nearest_m double precision,
+    premium_retail_raw double precision,
+    emergency_facility_count_1600m int,
+    emergency_facility_nearest_m double precision,
+    emergency_corridor_facility_raw double precision,
+    school_district_geoid text,
+    school_district_name text,
+    school_district_rating double precision,
+    school_rating_source text,
+
     updated_at                  timestamptz not null default now()
 );
 
@@ -96,6 +113,11 @@ create table scores (
     emergency_corridor_score numeric,
     airport_score            numeric,
     trail_popularity_score   numeric,
+    -- v2 columns (contracts/migrations/0002_v2.sql) — nullable
+    restaurant_score         double precision,
+    bar_score                double precision,
+    premium_retail_score     double precision,
+    school_proximity_score   double precision,  -- informational, not a composite factor
 
     composite_score     numeric not null,
 
@@ -124,3 +146,30 @@ create table ingestion_runs (
 );
 
 create index ingestion_runs_source_idx on ingestion_runs (source);
+
+-- Road-bounded areas (migration 0003): faces of the secondary-and-above road
+-- network, scored on demand from the geohash cells they overlap.
+create table if not exists areas (
+    id            integer primary key,
+    build_version text not null,
+    metro_area    text,
+    min_lat       double precision not null,
+    max_lat       double precision not null,
+    min_lon       double precision not null,
+    max_lon       double precision not null,
+    area_sq_m     double precision not null,
+    geometry      jsonb not null,          -- GeoJSON Polygon/MultiPolygon, [lon, lat], 5 decimals
+    bounded_by    text[] not null default '{}',
+    created_at    timestamptz not null default now()
+);
+
+create index if not exists areas_bbox_idx on areas (min_lat, max_lat, min_lon, max_lon);
+
+create table if not exists area_cells (
+    area_id       integer not null references areas (id) on delete cascade,
+    geohash       text not null,
+    overlap_sq_m  double precision not null,
+    primary key (area_id, geohash)
+);
+
+create index if not exists area_cells_geohash_idx on area_cells (geohash);

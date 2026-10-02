@@ -15,7 +15,14 @@ export const RAMP_STOPS: ReadonlyArray<
   [100, "#fde725"],
 ];
 
-export const CELL_OPACITY = 0.6;
+/** The dark basemap swallows the low end of the ramp, so cells are more opaque on it. */
+export const CELL_OPACITY = { light: 0.6, dark: 0.55 } as const;
+
+/** The clicked secondary-road area: a tint, an accent outline and a contrasting casing. */
+export const AREA_STYLE = {
+  light: { fillOpacity: 0.12, line: "#1d4ed8", casing: "#ffffff" },
+  dark: { fillOpacity: 0.18, line: "#93c5fd", casing: "#0b1020" },
+} as const;
 
 export const RAMP_GRADIENT = `linear-gradient(to right, ${RAMP_STOPS.map(
   ([score, color]) => `${color} ${(score / SCORE_MAX) * 100}%`,

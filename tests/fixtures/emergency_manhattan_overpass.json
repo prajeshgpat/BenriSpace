@@ -1,0 +1,318 @@
+{
+ "elements": [
+  {
+   "type": "node",
+   "id": 357642750,
+   "lat": 40.764233,
+   "lon": -73.963647,
+   "tags": {
+    "amenity": "hospital",
+    "emergency": "no",
+    "healthcare": "hospital",
+    "name": "Manhattan Eye Ear and Throat Hospital"
+   }
+  },
+  {
+   "type": "node",
+   "id": 368047441,
+   "lat": 40.7568252,
+   "lon": -73.9709356,
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 8/Ladder 2/Battalion 8"
+   }
+  },
+  {
+   "type": "node",
+   "id": 368047477,
+   "lat": 40.7669769,
+   "lon": -73.9636471,
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 39/Ladder 16"
+   }
+  },
+  {
+   "type": "node",
+   "id": 368051919,
+   "lat": 40.7670729,
+   "lon": -73.9638697,
+   "tags": {
+    "amenity": "police",
+    "name": "NYPD 19 PCT"
+   }
+  },
+  {
+   "type": "node",
+   "id": 368051925,
+   "lat": 40.7538947,
+   "lon": -73.9949396,
+   "tags": {
+    "amenity": "police",
+    "name": "Midtown South Precinct Police Station"
+   }
+  },
+  {
+   "type": "node",
+   "id": 1581175993,
+   "lat": 40.7464784,
+   "lon": -73.9717941,
+   "tags": {
+    "amenity": "hospital",
+    "emergency": "no",
+    "healthcare": "hospital",
+    "name": "NYU Langone Outpatient Surgery Center"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2380484204,
+   "lat": 40.7426863,
+   "lon": -73.9983835,
+   "tags": {
+    "amenity": "police",
+    "name": "NYPD 10 PCT"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2380526285,
+   "lat": 40.7567621,
+   "lon": -73.9707859,
+   "tags": {
+    "amenity": "police",
+    "name": "NYPD 17 PCT"
+   }
+  },
+  {
+   "type": "node",
+   "id": 12947534824,
+   "lat": 40.7513983,
+   "lon": -73.9948286,
+   "tags": {
+    "amenity": "police"
+   }
+  },
+  {
+   "type": "node",
+   "id": 14219942455,
+   "lat": 40.7458912,
+   "lon": -73.9816024,
+   "tags": {
+    "amenity": "hospital",
+    "healthcare": "hospital",
+    "name": "Hassenfeild Children's Hospital at NYU Lagone"
+   }
+  },
+  {
+   "type": "way",
+   "id": 150365209,
+   "center": {
+    "lat": 40.7389726,
+    "lon": -73.9752246
+   },
+   "tags": {
+    "amenity": "hospital",
+    "emergency": "yes",
+    "healthcare": "hospital",
+    "name": "NYC Health + Hospitals/Bellevue"
+   }
+  },
+  {
+   "type": "way",
+   "id": 150368085,
+   "center": {
+    "lat": 40.7420343,
+    "lon": -73.9736761
+   },
+   "tags": {
+    "amenity": "hospital",
+    "emergency": "yes",
+    "healthcare": "hospital",
+    "name": "NYU Langone Health - Tisch Hospital"
+   }
+  },
+  {
+   "type": "way",
+   "id": 248827217,
+   "center": {
+    "lat": 40.741693,
+    "lon": -73.9788834
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 16/Ladder 7"
+   }
+  },
+  {
+   "type": "way",
+   "id": 258646143,
+   "center": {
+    "lat": 40.7565143,
+    "lon": -73.9863826
+   },
+   "tags": {
+    "amenity": "police",
+    "name": "NYPD Times Square Substation"
+   }
+  },
+  {
+   "type": "way",
+   "id": 264644793,
+   "center": {
+    "lat": 40.7411699,
+    "lon": -73.9968771
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 3/Ladder 12/Battalion 7"
+   }
+  },
+  {
+   "type": "way",
+   "id": 264685145,
+   "center": {
+    "lat": 40.7478043,
+    "lon": -73.9914426
+   },
+   "tags": {
+    "amenity": "police",
+    "name": "New York Police Department Traffic Control Division"
+   }
+  },
+  {
+   "type": "way",
+   "id": 264685229,
+   "center": {
+    "lat": 40.7484972,
+    "lon": -73.9911243
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 1/Ladder 24"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265147548,
+   "center": {
+    "lat": 40.7667707,
+    "lon": -73.9803087
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 23"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265281584,
+   "center": {
+    "lat": 40.7531327,
+    "lon": -73.9903494
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 26"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265282509,
+   "center": {
+    "lat": 40.7565371,
+    "lon": -73.9965055
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 34/Ladder 21"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265300012,
+   "center": {
+    "lat": 40.7598782,
+    "lon": -73.9967614
+   },
+   "tags": {
+    "amenity": "police",
+    "name": "Manhattan South Task Force"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265312769,
+   "center": {
+    "lat": 40.7607089,
+    "lon": -73.996594
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Rescue 1"
+   }
+  },
+  {
+   "type": "way",
+   "id": 265864930,
+   "center": {
+    "lat": 40.7486639,
+    "lon": -73.9740044
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 21"
+   }
+  },
+  {
+   "type": "way",
+   "id": 266149352,
+   "center": {
+    "lat": 40.760758,
+    "lon": -73.9868225
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 54/Ladder 4/Battalion 9"
+   }
+  },
+  {
+   "type": "way",
+   "id": 266170661,
+   "center": {
+    "lat": 40.7550188,
+    "lon": -73.981931
+   },
+   "tags": {
+    "amenity": "fire_station",
+    "name": "FDNY Engine 65"
+   }
+  },
+  {
+   "type": "way",
+   "id": 818557074,
+   "center": {
+    "lat": 40.7697294,
+    "lon": -73.9869586
+   },
+   "tags": {
+    "amenity": "hospital",
+    "emergency": "yes",
+    "healthcare": "hospital",
+    "name": "Mount Sinai West"
+   }
+  },
+  {
+   "type": "way",
+   "id": 1355085289,
+   "center": {
+    "lat": 40.7648315,
+    "lon": -73.9851786
+   },
+   "tags": {
+    "amenity": "police",
+    "name": "NYPD Midtown North PCT"
+   }
+  }
+ ]
+}

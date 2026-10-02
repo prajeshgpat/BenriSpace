@@ -12,6 +12,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (placeholder geometry, see below) |
 | `GET /suggest` | Address autocomplete | available after the next deploy |
+| `GET /reverse` | Readable address for a map point | available after the next deploy |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | available after the next deploy |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | available after the next deploy |
 
@@ -30,18 +31,18 @@ Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are re
   `code` is stable and meant for programs; `message` is for humans and may change.
 - **`null` means "not measured", never 0.** A sub-score can be `null` when the underlying data does not exist for that spot yet. Treat it as unknown. Composites ignore `null` factors rather than counting them as zero.
 - **CORS:** browsers may call the API only from `https://benrispace.com`, `https://www.benrispace.com` and `http://localhost:3000`. From any other origin the browser will block the response. Server-side clients (curl, Python, Node) are not affected by CORS.
-- **Caching:** `/suggest`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
+- **Caching:** `/suggest`, `/reverse`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
 - **Rate limiting:** the API Gateway currently allows a steady 10 requests per second with bursts of 20, across all callers. Beyond that you get `429 Too Many Requests` (from API Gateway, not the application, so the body is not in the error shape above). Per-user quotas arrive with API keys.
 
 ## What a score means
 
-- Scores run from **0 to 100, and higher is always better**. Factors where less is better (gas stations nearby, traffic, emergency-vehicle corridors, airport drive time) are already inverted, so a high `gasStation` score means "far from gas stations".
+- Scores run from **0 to 100, and higher is always better**. Factors where less is better (gas stations nearby, traffic, the noise corridor, airport drive time) are already inverted, so a high `gasStation` score means "far from gas stations".
 - Scores are **relative within a metro area**, not absolute. Each factor is min-max normalized across all cells in the same metro area (for example `nyc` or `northern_nj`), so 100 means "best in its metro area for this factor" and 0 means "worst". A suburban cell is compared with other suburban cells in its own area, not with Manhattan.
-- **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more gas stations, traffic and emergency-vehicle noise. In the example below, 350 5th Avenue scores 100 on transit but 10 on distance from gas stations. A composite near 80 is exceptional.
-- The **composite** (`compositeScore`) is a weighted average of the eleven sub-scores. Default weights (version `v1-handtuned`): grocery 1.5, gym 1.0, cafe 1.0, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.5, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
+- **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more gas stations, traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but 10 on distance from gas stations. A composite near 80 is exceptional.
+- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
-### The eleven factors
+### The fourteen factors
 
 | Key | Meaning of a high score |
 | --- | --- |
@@ -53,13 +54,19 @@ Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are re
 | `transit` | Close to frequent transit stops |
 | `school` | Schools close by and well rated |
 | `road` | Light traffic and congestion nearby |
-| `emergencyCorridor` | Far from emergency-vehicle corridors |
+| `emergencyCorridor` | Far from the noise corridor (API key `emergencyCorridor`; displayed as "Noise corridor") |
 | `airport` | Short drive to a major airport |
-| `trailPopularity` | Running and walking trails close by |
+| `trailPopularity` | Mapped running trails close by (underlying metric) |
+
+The table above is completed by `restaurant` (restaurants close by), `bar` (bars and pubs close by), and `premiumRetail` (close to Whole Foods, Starbucks and Target); the API serves only rows matching its configured weights version, so rows from an older version lack them.
+
+**Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely. It is a rough proxy (default weight 0.75). The API key `emergencyCorridor` and the database columns keep their names.
+
+**Underlying metrics.** `premiumRetail` and `trailPopularity` (running route popularity, built from mapped running trails in OpenStreetMap; Strava segment popularity is an optional enrichment that is not configured today) are underlying metrics. They count toward the overall score, but the website offers no toggle for them. The API does not treat them specially: omit `factors` and all fourteen factors are used, underlying ones included; send an explicit `factors` list and exactly those factors are used.
 
 ## Geohash cells
 
-The metro area is divided into a grid of **geohash6** cells, roughly 1.2 km by 0.6 km. Every score belongs to one cell. `/map/cells` identifies cells by their geohash string (for example `dr5ru0`); with `precision=5` the cells are about 4.9 km by 4.9 km (`dr5ru`), and each one is the average of the finer cells inside it.
+The metro area is divided into a grid of **geohash6** cells, roughly 0.75 by 0.4 miles. Every score belongs to one cell. `/map/cells` identifies cells by their geohash string (for example `dr5ru0`); with `precision=5` the cells are about 3 by 3 miles (`dr5ru`), and each one is the average of the finer cells inside it.
 
 A geohash is a base-32 string (alphabet `0123456789bcdefghjkmnpqrstuvwxyz`) in which each character narrows a latitude/longitude rectangle; a longer string is a smaller rectangle, and a cell's prefix is the larger cell containing it. To get a cell's rectangle, decode it:
 
@@ -101,7 +108,7 @@ Score for one place. Give either `address`, or `lat` and `lon`, not both.
 | `lat` | number | with `lon` | Latitude. Skips geocoding; use this with a `/suggest` result. |
 | `lon` | number | with `lat` | Longitude. |
 
-The point is snapped to its geohash6 cell; if that exact cell is not in the grid, the nearest covered cell within about 3 km is used.
+The point is snapped to its geohash6 cell; if that exact cell is not in the grid, the nearest covered cell within about 2 miles is used.
 
 ```bash
 curl "https://api.benrispace.com/v1/score?lat=40.7484&lon=-73.9857"
@@ -132,6 +139,20 @@ curl "https://api.benrispace.com/v1/score?lat=40.7484&lon=-73.9857"
 }
 ```
 
+### Units: feet and miles
+
+Everything user-facing is in feet and miles: distances in text, `nearestMi`, `minSeparationMi`, the cell sizes above. Internally the data and the scoring stay metric (the `*_500m` / `*_nearest_m` columns and radii), so a "within 500 m" count is described to users as about 0.3 mi. Distances in prose follow one rule: under 0.1 mi they are feet rounded to the nearest 50 (`450 ft`), otherwise miles to one decimal (`0.4 mi`).
+
+### `school`
+
+Alongside `subScores.school` (which is `null` when no school rating exists for the location) the response carries a `school` object, or `null` for rows scored before school data was ingested:
+
+```json
+{ "school": { "proximity": 72.0, "ratingAvailable": false, "districtName": "Example UFSD", "source": "example-source" } }
+```
+
+`proximity` is 0-100 and counts schools nearby regardless of rating, so a client can show "proximity 72, rating unavailable". `ratingAvailable` is true when `subScores.school` is non-null. `districtName` and `source` come from the stored school-district data and may be `null`. The values above only illustrate the shape.
+
 `address` is the cell's formatted address when one is stored, otherwise its `"lat,lon"` string (as here). The coordinates are those of the matched grid cell, not necessarily the point you sent.
 
 Errors:
@@ -148,9 +169,56 @@ Errors:
 
 ---
 
+## `GET /area`
+
+Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `lat` | number | yes | Latitude, inside the covered area |
+| `lon` | number | yes | Longitude, inside the covered area |
+
+The point picks the smallest area whose polygon contains it; a point within 40 m of an area's edge (a click on the road itself) snaps to that area. `geoEntityId`, `school` district and the nearest-feature distances in `explanation` come from the grid cell under the point; `address` is "Area bounded by ..." with up to four road names. `area.geometry` is a GeoJSON Polygon or MultiPolygon in `[lon, lat]`.
+
+```bash
+curl "http://localhost:8000/v1/area?lat=40.7484&lon=-73.9857"
+```
+
+Shape only. The values below are illustrative, not real data, and `subScores` is shortened:
+
+```json
+{
+  "geoEntityId": "00000000-0000-0000-0000-000000000000",
+  "address": "Area bounded by Road A, Road B, Road C and Road D",
+  "latitude": 40.7484,
+  "longitude": -73.9857,
+  "compositeScore": 70.0,
+  "subScores": { "grocery": 70.0, "gym": 70.0, "...": 70.0 },
+  "weightsVersion": "v1-handtuned",
+  "computedAt": "2026-01-01T00:00:00Z",
+  "school": null,
+  "areaId": 1,
+  "area": {
+    "geometry": { "type": "Polygon", "coordinates": [[[-73.99, 40.74], [-73.98, 40.74], [-73.98, 40.75], [-73.99, 40.74]]] },
+    "areaSqMi": 0.5,
+    "boundedBy": ["Road A", "Road B", "Road C", "Road D"],
+    "cellCount": 3
+  },
+  "explanation": "This area's strongest factor is ... Nearest feature from this spot: ..."
+}
+```
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | `lat`/`lon` missing, not numbers, or out of range |
+| 404 | `area_not_found` | No area contains or is within 40 m of the point, the area is larger than 10 square miles, no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
+| 422 | `out_of_coverage` | The point is outside the covered metro area |
+
 ## `GET /score/{geoEntityId}/explanation`
 
-A short plain-language explanation of one score: the strongest factor, the weakest, and the rest. Currently generated from a template; an LLM-written explanation may replace it later without changing the shape.
+A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Currently generated from a template; an LLM-written explanation may replace it later without changing the shape.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -163,9 +231,15 @@ curl "https://api.benrispace.com/v1/score/21c5d4bd-e66e-423b-8f4c-8e569604f187/e
 ```json
 {
   "geoEntityId": "21c5d4bd-e66e-423b-8f4c-8e569604f187",
-  "explanation": "This location's strongest factor is transit access (100/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 99/100, grocery access 99/100, gym access 98/100, distance from emergency-vehicle corridors 95/100, road and traffic conditions 85/100, access to popular running and walking trails 79/100, school quality and proximity 77/100, airport drive time 63/100, distance from gas stations 10/100.",
+  "explanation": "This location's strongest factor is transit access (100/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 99/100, grocery access 99/100, gym access 98/100, distance from the noise corridor 95/100, road and traffic conditions 85/100, access to popular running and walking trails 79/100, school quality and proximity 77/100, airport drive time 63/100, distance from gas stations 10/100.",
   "computedAt": "2026-09-30T15:02:10.262476Z"
 }
+```
+
+Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. For locations scored before the newer data was ingested the values are `null`, and the explanation omits its "Nearest feature" sentence. Shape:
+
+```json
+{ "nearestMi": { "grocery": 0.2, "gym": null, "premiumRetail": 0.8 } }
 ```
 
 Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no score exists for it.
@@ -176,7 +250,7 @@ Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no sco
 
 Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score.
 
-**This is a placeholder.** There is no routing engine yet, so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 40 km/h, transit 25 km/h, walk 4.8 km/h). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
+**This is a placeholder.** There is no routing engine yet, so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
 
 Request body (JSON):
 
@@ -287,6 +361,37 @@ On a 503, fall back to plain-text search (`GET /score?address=...`) rather than 
 
 ---
 
+## `GET /reverse`
+
+*Available after the next deploy.*
+
+Turns a coordinate (for example a map click) into a short readable address. The label is `house number + street, locality, state` (NY, NJ, CT, PA abbreviated), the same style as `/suggest`. With no house number it is the street; with no street it is the neighbourhood name; if nothing usable is known, `label` is `null` (still HTTP 200). The point is echoed back as sent. Results are cached on the server for 10 minutes, by coordinates rounded to 4 decimals (about 11 m).
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `lat` | number | yes | Latitude, inside the covered area |
+| `lon` | number | yes | Longitude, inside the covered area |
+
+```bash
+curl "http://localhost:8000/v1/reverse?lat=40.7314&lon=-74.0635"
+```
+
+```json
+{ "label": "9 Journal Square Concourse, Jersey City, NJ", "latitude": 40.7314, "longitude": -74.0635 }
+```
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | `lat`/`lon` missing, not numbers, or outside -90..90 / -180..180 |
+| 422 | `out_of_coverage` | The point is outside the covered metro area |
+| 503 | `reverse_unavailable` | Every provider timed out, errored or sent something unreadable |
+
+On a 503, show the coordinates (or nothing) rather than an error. Error responses are not cached.
+
+---
+
 ## `GET /map/cells`
 
 *Available after the next deploy.*
@@ -298,8 +403,8 @@ For each cell, the composite uses only the selected factors that are not `null` 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `bbox` | string | yes | Viewport as `minLon,minLat,maxLon,maxLat`. Cells whose grid point lies inside are returned. |
-| `precision` | integer | no | `6` (default, about 1.2 x 0.6 km cells) or `5` (about 4.9 x 4.9 km; the mean of the finer cells). Use 5 when zoomed out. |
-| `factors` | string | no | Comma-separated factor keys to include, for example `transit,cafe`. Omit for all eleven. Must not be empty if present. |
+| `precision` | integer | no | `6` (default, about 0.75 x 0.4 mile cells) or `5` (about 3 x 3 miles; the mean of the finer cells). Use 5 when zoomed out. |
+| `factors` | string | no | Comma-separated factor keys to include, for example `transit,cafe`. Omit for all fourteen (including the underlying `premiumRetail` and `trailPopularity`); an explicit list means exactly those factors. Must not be empty if present. |
 | `weights` | string | no | Overrides as `factor:number`, comma-separated, for example `transit:2,cafe:0.5`. Numbers must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use their default weight. Overrides for factors not in `factors` are ignored. |
 | `limit` | integer | no | 1 to 20000, default 8000. `truncated` is true when more cells matched. |
 
@@ -327,7 +432,7 @@ A viewport spanning the whole covered area holds about 64,000 cells at `precisio
 Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min must be less than max; latitudes within +-90, longitudes within +-180), an unknown factor (including in `weights`), an empty `factors`, a weight that is not a number, is 0 or negative, is NaN/infinite or is above 1,000,000, a repeated weight, `precision` other than 5 or 6, or `limit` out of range.
 
 ```json
-{ "code": "invalid_request", "message": "unknown factor 'foo'; valid factors: grocery, gym, cafe, gasStation, convenienceStore, transit, school, road, emergencyCorridor, airport, trailPopularity" }
+{ "code": "invalid_request", "message": "unknown factor 'foo'; valid factors: grocery, gym, cafe, restaurant, bar, premiumRetail, gasStation, convenienceStore, transit, school, road, emergencyCorridor, airport, trailPopularity" }
 ```
 
 ---
@@ -336,7 +441,7 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 
 *Available after the next deploy.*
 
-"Where should I look?" Ranks cells by the same composite as `/map/cells`, then walks down the list keeping each cell that is at least `minSeparationKm` from every cell already kept, so you get distinct neighbourhoods rather than ten adjacent blocks. Because scores are relative within each metro area, the winners are the best spots in their metro area for the factors you chose; narrowing `factors` to one or two shows where each is at its maximum (with `factors=transit` the top score is 100).
+"Where should I look?" Ranks cells by the same composite as `/map/cells`, then walks down the list keeping each cell that is at least `minSeparationMi` from every cell already kept, so you get distinct neighbourhoods rather than ten adjacent blocks. Because scores are relative within each metro area, the winners are the best spots in their metro area for the factors you chose; narrowing `factors` to one or two shows where each is at its maximum (with `factors=transit` the top score is 100).
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -344,12 +449,13 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 | `factors` | string | no | As for `/map/cells` |
 | `weights` | string | no | As for `/map/cells` |
 | `limit` | integer | no | 1 to 50, default 10 |
-| `minSeparationKm` | number | no | 0 to 50, default 3 |
+| `minSeparationMi` | number | no | Minimum distance between returned areas, in miles. 0 to 31; default about 1.9 (the old 3 km default). |
+| `minSeparationKm` | number | no | **Deprecated**, still works. Kilometres, 0 to 50, default 3. Sending it together with `minSeparationMi` is a `400 invalid_request`. |
 
-You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all eleven factors, whatever you selected for the ranking).
+You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all fourteen factors, whatever you selected for the ranking).
 
 ```bash
-curl "http://localhost:8000/v1/map/top?factors=transit,cafe&bbox=-74.05,40.68,-73.85,40.82&limit=2&minSeparationKm=3"
+curl "http://localhost:8000/v1/map/top?factors=transit,cafe&bbox=-74.05,40.68,-73.85,40.82&limit=2&minSeparationMi=2"
 ```
 
 ```json
@@ -378,13 +484,13 @@ curl "http://localhost:8000/v1/map/top?factors=transit,cafe&bbox=-74.05,40.68,-7
       "longitude": -74.007,
       "score": 99.9,
       "metroArea": "nyc",
-      "subScores": { "...": "trimmed, same eleven keys as above" }
+      "subScores": { "...": "trimmed, same fourteen keys as above" }
     }
   ]
 }
 ```
 
-Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50 or `minSeparationKm` outside 0-50.
+Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50 `minSeparationMi` outside 0-31 (or `minSeparationKm` outside 0-50), or both separation parameters at once. The response has no separation field; the spacing is applied, not echoed.
 
 ---
 

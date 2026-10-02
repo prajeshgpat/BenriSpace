@@ -1,0 +1,7 @@
+[
+  {"NCESSCH": "360000100001", "NAME": "PS 1", "STATE": "NY", "LAT": "40.7500", "LON": "-73.9900"},
+  {"NCESSCH": "340000100001", "NAME": "NJ Elem", "STATE": "NJ", "LAT": 40.7440, "LON": -74.0300},
+  {"NCESSCH": "060000100001", "NAME": "CA School", "STATE": "CA", "LAT": 34.05, "LON": -118.2},
+  {"NCESSCH": "360000100002", "NAME": "Upstate", "STATE": "NY", "LAT": 43.0, "LON": -73.9},
+  {"NCESSCH": "360000100003", "NAME": "No coords", "STATE": "NY", "LAT": null, "LON": null}
+]

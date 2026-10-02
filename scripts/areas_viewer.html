@@ -1,0 +1,80 @@
+<!doctype html>
+<!-- LOCAL dev viewer for the neighborhood-polygon prototype. Not deployed.
+     From the repo root:  python -m http.server 8000
+     then open http://localhost:8000/scripts/areas_viewer.html
+     (or pick the .geojson files with the file inputs). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Areas prototype viewer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+<style>
+  html, body, #map { margin: 0; height: 100%; font: 13px system-ui, sans-serif; }
+  #panel { position: absolute; top: 8px; left: 8px; z-index: 2; background: #fffe; padding: 8px 10px;
+           border-radius: 6px; max-width: 260px; }
+  #panel label { display: block; margin: 3px 0; }
+  #info { margin-top: 6px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <b>Neighborhood prototype</b>
+  <label><input type="checkbox" id="tHoods" checked> neighborhoods</label>
+  <label><input type="checkbox" id="tBlocks" checked> blocks</label>
+  <div>neighborhoods.geojson <input type="file" id="fH" accept=".geojson,.json"></div>
+  <div>blocks.geojson <input type="file" id="fB" accept=".geojson,.json"></div>
+  <div id="info">hover a neighborhood</div>
+</div>
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+const map = new maplibregl.Map({
+  container: "map", style: "https://tiles.openfreemap.org/styles/liberty",
+  center: [-73.995, 40.708], zoom: 12.5,
+});
+const empty = { type: "FeatureCollection", features: [] };
+const palette = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ac"];
+function setData(id, data) { const s = map.getSource(id); if (s) s.setData(data); }
+async function load() {
+  try {
+    setData("hoods", await (await fetch("../data/prototype/neighborhoods.geojson")).json());
+    setData("blocks", await (await fetch("../data/prototype/blocks.geojson")).json());
+  } catch (e) { document.getElementById("info").textContent = "fetch failed; use the file inputs"; }
+}
+map.on("load", () => {
+  map.addSource("blocks", { type: "geojson", data: empty });
+  map.addSource("hoods", { type: "geojson", data: empty, generateId: true });
+  map.addLayer({ id: "blocks-fill", type: "fill", source: "blocks",
+    paint: { "fill-color": ["match", ["get", "kind"], "park", "#2e9e5b", "rural", "#c0a060", "#ffffff"],
+             "fill-opacity": ["match", ["get", "kind"], "block", 0.0, 0.5] } });
+  map.addLayer({ id: "blocks-line", type: "line", source: "blocks",
+    paint: { "line-color": "#666", "line-width": 0.5, "line-opacity": 0.7 } });
+  map.addLayer({ id: "hoods-fill", type: "fill", source: "hoods",
+    paint: { "fill-color": ["match", ["%", ["get", "id"], 10], 0, palette[0], 1, palette[1], 2, palette[2],
+             3, palette[3], 4, palette[4], 5, palette[5], 6, palette[6], 7, palette[7], 8, palette[8], palette[9]],
+             "fill-opacity": 0.35 } });
+  map.addLayer({ id: "hoods-line", type: "line", source: "hoods",
+    paint: { "line-color": "#111", "line-width": 2 } });
+  map.addLayer({ id: "hoods-label", type: "symbol", source: "hoods", minzoom: 14,
+    layout: { "text-field": ["get", "title"], "text-size": 11 },
+    paint: { "text-color": "#111", "text-halo-color": "#fff", "text-halo-width": 1.5 } });
+  load();
+  map.on("mousemove", "hoods-fill", (e) => {
+    const p = e.features[0].properties;
+    document.getElementById("info").textContent =
+      `${p.title}${p.subtitle ? " (" + p.subtitle + ")" : ""} - ${p.blocks} blocks, PP ${p.polsby_popper}`;
+  });
+});
+function vis(id, layers) {
+  document.getElementById(id).onchange = (e) =>
+    layers.forEach((l) => map.setLayoutProperty(l, "visibility", e.target.checked ? "visible" : "none"));
+}
+vis("tHoods", ["hoods-fill", "hoods-line", "hoods-label"]);
+vis("tBlocks", ["blocks-fill", "blocks-line"]);
+for (const [inp, src] of [["fH", "hoods"], ["fB", "blocks"]]) {
+  document.getElementById(inp).onchange = async (e) => setData(src, JSON.parse(await e.target.files[0].text()));
+}
+</script>
+</body>
+</html>

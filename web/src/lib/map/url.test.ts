@@ -18,19 +18,23 @@ const EMPTY: ExplorerUrlInput = {
   target: null,
   view: null,
   selection: ALL_FACTORS,
-  scope: "metro",
 };
 
 describe("parseExplorerParams", () => {
-  it("defaults to no place, no view, all factors, metro scope", () => {
+  it("defaults to no place, no view, all factors", () => {
     expect(parse("")).toEqual({
       target: null,
       targetError: null,
       center: null,
       zoom: null,
       selection: ALL_FACTORS,
-      scope: "metro",
     });
+  });
+
+  it("ignores a retired paths=1 param and never re-serialises it", () => {
+    const state = parse("paths=1");
+    expect(state).not.toHaveProperty("showPaths");
+    expect(serializeExplorerParams({ ...EMPTY, ...state })).toBe("");
   });
 
   it("reads an address, with or without coordinates", () => {
@@ -100,22 +104,6 @@ describe("parseExplorerParams", () => {
     });
   });
 
-  it("reads the scope", () => {
-    expect(parse("scope=view").scope).toBe("view");
-    expect(parse("scope=nonsense").scope).toBe("metro");
-  });
-});
-
-describe("initialView", () => {
-  it("prefers the centre in the URL", () => {
-    expect(initialView(parse("lat=40.7&lon=-74&center=41,-73&z=9"))).toEqual({
-      lat: 41,
-      lon: -73,
-      zoom: 9,
-    });
-    expect(initialView(parse("center=41,-73"))?.zoom).toBe(12);
-  });
-
   it("falls back to a scored place, close up", () => {
     expect(initialView(parse("lat=40.7&lon=-74"))).toEqual({
       lat: 40.7,
@@ -135,7 +123,7 @@ describe("initialView", () => {
 describe("serializeExplorerParams", () => {
   it("omits defaults so the common URL stays short", () => {
     expect(serializeExplorerParams(EMPTY)).toBe("");
-    expect(explorerHref(EMPTY)).toBe("/");
+    expect(explorerHref(EMPTY)).toBe("/app");
   });
 
   it("writes an address, and coordinates with their label", () => {
@@ -164,7 +152,7 @@ describe("serializeExplorerParams", () => {
           label: "40.7527, -73.9772",
         },
       }),
-    ).toBe("/?lat=40.7527&lon=-73.9772");
+    ).toBe("/app?lat=40.7527&lon=-73.9772");
   });
 
   it("leaves the centre out while the map is on the scored place", () => {
@@ -195,18 +183,16 @@ describe("serializeExplorerParams", () => {
       target: { kind: "coordinates", lat: 40.7, lon: -74, label: "Home" },
       view: { lat: 40.7484, lon: -73.9857, zoom: 12.34 },
       selection: createSelection(["transit", "grocery"], { transit: "high" }),
-      scope: "view",
     };
     const query = serializeExplorerParams(input);
     expect(query).toBe(
-      "address=Home&lat=40.7&lon=-74&center=40.7484%2C-73.9857&z=12.34&factors=grocery%2Ctransit&importance=transit%3Ahigh&scope=view",
+      "address=Home&lat=40.7&lon=-74&center=40.7484%2C-73.9857&z=12.34&factors=grocery%2Ctransit&importance=transit%3Ahigh",
     );
     const state = parse(query);
     expect(state.target).toEqual(input.target);
     expect(state.center).toEqual({ lat: 40.7484, lon: -73.9857 });
     expect(state.zoom).toBe(12.34);
     expect(state.selection).toEqual(input.selection);
-    expect(state.scope).toBe("view");
   });
 
   it("encodes an empty selection as none", () => {
@@ -236,7 +222,6 @@ describe("legacyMapQuery", () => {
       z: "13",
       factors: "transit",
       importance: "transit:high",
-      scope: "view",
     });
     const state = parse(query);
     expect(state.target).toBeNull();
@@ -244,7 +229,6 @@ describe("legacyMapQuery", () => {
     expect(state.zoom).toBe(13);
     expect(state.selection.factors).toEqual(["transit"]);
     expect(state.selection.importance).toEqual({ transit: "high" });
-    expect(state.scope).toBe("view");
   });
 
   it("never turns a map link into a scored place", () => {

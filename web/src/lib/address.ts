@@ -1,3 +1,5 @@
+import { APP_PATH } from "@/lib/site";
+
 export const ADDRESS_MIN_LENGTH = 3;
 export const ADDRESS_MAX_LENGTH = 200;
 export const ADDRESS_PARAM = "address";
@@ -37,7 +39,17 @@ export interface LatLon {
 /** What to score: free text to geocode, or coordinates that skip geocoding. */
 export type ScoreTarget =
   | { kind: "address"; address: string }
-  | { kind: "coordinates"; lat: number; lon: number; label: string };
+  | {
+      kind: "coordinates";
+      lat: number;
+      lon: number;
+      label: string;
+      /**
+       * `"cell"` pins the lookup to the grid square (a best-areas pick);
+       * otherwise the secondary-road area around the point is tried first.
+       */
+      precision?: "cell";
+    };
 
 /** Display text for the target; the heading of the result card. */
 export function targetLabel(target: ScoreTarget): string {
@@ -94,5 +106,5 @@ export function resultHref(address: string, point?: LatLon): string {
     params.set(LAT_PARAM, String(point.lat));
     params.set(LON_PARAM, String(point.lon));
   }
-  return `/?${params}`;
+  return `${APP_PATH}?${params}`;
 }

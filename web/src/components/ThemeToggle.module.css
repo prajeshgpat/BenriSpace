@@ -1,0 +1,33 @@
+.button {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.button:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.icon {
+  width: 1.375rem;
+  height: 1.375rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A lit bulb in light mode; an unlit outline in dark mode. */
+.icon[data-lit="true"] .glass {
+  fill: #f5c518;
+  stroke: #8a6d00;
+}

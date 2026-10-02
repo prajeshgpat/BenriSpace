@@ -18,4 +18,7 @@ export const API_BASE_URL = resolveApiBaseUrl(
  * one-line edit.
  */
 export const BASEMAP_ORIGIN = "https://tiles.openfreemap.org";
-export const BASEMAP_STYLE_URL = `${BASEMAP_ORIGIN}/styles/liberty`;
+export const BASEMAP_STYLE_URLS = {
+  light: `${BASEMAP_ORIGIN}/styles/liberty`,
+  dark: `${BASEMAP_ORIGIN}/styles/dark`,
+} as const;

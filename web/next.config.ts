@@ -43,12 +43,41 @@ const securityHeaders = [
     : []),
 ];
 
+/**
+ * Query keys the app writes to the URL. Old shared links put them on `/`,
+ * which is now the static home page, so each one forwards to `/app`. Next
+ * keeps the original query string on a redirect whose destination has no
+ * query of its own, so the whole link survives.
+ */
+export const LEGACY_APP_QUERY_KEYS = [
+  "address",
+  "lat",
+  "lon",
+  "center",
+  "z",
+  "factors",
+  "importance",
+  "scope",
+] as const;
+
+export function legacyAppRedirects() {
+  return LEGACY_APP_QUERY_KEYS.map((key) => ({
+    source: "/",
+    has: [{ type: "query" as const, key }],
+    destination: "/app",
+    permanent: false,
+  }));
+}
+
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   // Pin tracing to this app so a lockfile elsewhere on the machine cannot
   // change what gets bundled.
   outputFileTracingRoot: __dirname,
+  async redirects() {
+    return legacyAppRedirects();
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

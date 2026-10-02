@@ -13,7 +13,6 @@ import {
   type DefaultWeights,
   type FactorSelection,
 } from "@/lib/map/selection";
-import type { TopScope } from "@/lib/map/url";
 import {
   CELL_LIMIT,
   bboxKey,
@@ -23,15 +22,14 @@ import {
 } from "@/lib/map/viewport";
 
 const TOP_LIMIT = 10;
-/** A zoomed-in view holds a neighbourhood, where 3 km would leave one result. */
-const VIEW_SCOPE_SEPARATION_KM = 1;
+/** A zoomed-in view holds a neighbourhood, where 2 mi would leave one result. */
+const VIEW_SEPARATION_MI = 0.6;
 
 interface MapDataInput {
   client: ApiClient;
   selection: FactorSelection;
-  scope: TopScope;
   viewport: Viewport | null;
-  /** The view the user chose, which "this view only" follows. */
+  /** The view the user chose, which the best-areas list follows. */
   topViewport: Viewport | null;
 }
 
@@ -39,7 +37,6 @@ interface MapDataInput {
 export function useMapData({
   client,
   selection,
-  scope,
   viewport,
   topViewport,
 }: MapDataInput) {
@@ -79,7 +76,7 @@ export function useMapData({
   });
 
   const viewBbox =
-    scope === "view" && topViewport ? roundBbox(topViewport.bbox) : undefined;
+    topViewport ? roundBbox(topViewport.bbox) : undefined;
   const topKey = noFactors
     ? null
     : `${viewBbox ? bboxKey(viewBbox) : "metro"}|${selectionKey}`;
@@ -91,7 +88,7 @@ export function useMapData({
         factors: factorsParam,
         weights,
         limit: TOP_LIMIT,
-        minSeparationKm: viewBbox ? VIEW_SCOPE_SEPARATION_KM : undefined,
+        minSeparationMi: viewBbox ? VIEW_SEPARATION_MI : undefined,
       },
       { signal },
     );

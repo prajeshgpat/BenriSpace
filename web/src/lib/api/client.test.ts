@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { FACTOR_KEYS } from "@/lib/score/factors";
+import { ALL_FACTOR_KEYS } from "@/lib/score/factors";
 import {
   GEO_ENTITY_ID,
   jsonResponse,
   liveExplanationBody,
   liveScoreBody,
+  makeAreaBody,
 } from "@/test/fixtures";
 
 import {
+  REVERSE_TIMEOUT_MS,
   SUGGEST_TIMEOUT_MS,
   createApiClient,
   normalizeSubScores,
@@ -66,7 +68,7 @@ describe("getScore", () => {
 
     const score = await client.getScore("350 5th Ave, New York, NY");
 
-    expect(Object.keys(score.subScores).sort()).toEqual([...FACTOR_KEYS].sort());
+    expect(Object.keys(score.subScores).sort()).toEqual([...ALL_FACTOR_KEYS].sort());
     expect(score.subScores.airport).toBeCloseTo(62.79, 2);
     expect(score.subScores.grocery).toBeNull();
     // Missing from the payload altogether, not just null.
@@ -239,7 +241,7 @@ describe("normalizeSubScores", () => {
   it("returns every factor as null when sub-scores are missing entirely", () => {
     const normalized = normalizeSubScores(undefined);
 
-    expect(Object.keys(normalized)).toHaveLength(FACTOR_KEYS.length);
+    expect(Object.keys(normalized)).toHaveLength(ALL_FACTOR_KEYS.length);
     expect(Object.values(normalized).every((value) => value === null)).toBe(true);
   });
 
@@ -457,14 +459,15 @@ describe("getMapTop", () => {
       factors: ["grocery"],
       weights: { grocery: 3 },
       limit: 10,
-      minSeparationKm: 1,
+      minSeparationMi: 0.6,
     });
 
     const url = new URL(String(fetchMock.mock.calls[0][0]));
     expect(url.pathname).toBe("/v1/map/top");
     expect(url.searchParams.get("bbox")).toBe("-74.05,40.68,-73.85,40.82");
     expect(url.searchParams.get("weights")).toBe("grocery:3");
-    expect(url.searchParams.get("minSeparationKm")).toBe("1");
+    expect(url.searchParams.get("minSeparationMi")).toBe("0.6");
+    expect(url.searchParams.has("minSeparationKm")).toBe(false);
     expect(top.results).toHaveLength(1);
     expect(top.results[0].subScores.grocery).toBe(99.7);
     expect(top.results[0].subScores.cafe).toBeNull();
@@ -480,5 +483,181 @@ describe("getMapTop", () => {
   it("rejects a body without results", async () => {
     const { client } = clientReturning(jsonResponse({ factors: [] }));
     expect((await rejection(client.getMapTop({}))).kind).toBe("invalid-response");
+  });
+});
+
+describe("reverseGeocode", () => {
+  const body = {
+    label: "9 Journal Square Concourse, Jersey City, NJ",
+    latitude: 40.7314,
+    longitude: -74.0635,
+  };
+
+  it("sends lat and lon and returns the label", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+
+    const result = await client.reverseGeocode({ lat: 40.7314, lon: -74.0635 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/reverse?lat=40.7314&lon=-74.0635`,
+    );
+    expect(result).toEqual(body);
+  });
+
+  it("passes a null or blank label through as null", async () => {
+    for (const label of [null, "  "]) {
+      const { client } = clientReturning(jsonResponse({ ...body, label }));
+      expect((await client.reverseGeocode({ lat: 1, lon: 2 })).label).toBeNull();
+    }
+  });
+
+  it("rejects a malformed body as invalid-response", async () => {
+    const { client } = clientReturning(jsonResponse({ label: 5 }));
+    const error = await rejection(client.reverseGeocode({ lat: 1, lon: 2 }));
+    expect(error.kind).toBe("invalid-response");
+  });
+
+  it("maps 422 out_of_coverage and 503 to rejections", async () => {
+    const out = clientReturning(
+      jsonResponse({ code: "out_of_coverage", message: "outside" }, 422),
+    );
+    expect((await rejection(out.client.reverseGeocode({ lat: 1, lon: 2 }))).kind).toBe(
+      "invalid-request",
+    );
+    const down = clientReturning(
+      jsonResponse({ code: "reverse_unavailable", message: "down" }, 503),
+    );
+    expect((await rejection(down.client.reverseGeocode({ lat: 1, lon: 2 }))).kind).toBe(
+      "server",
+    );
+  });
+
+  it("times out after REVERSE_TIMEOUT_MS and honours caller aborts", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const { client } = clientReturning(jsonResponse(body));
+    await client.reverseGeocode({ lat: 1, lon: 2 });
+    expect(timeoutSpy).toHaveBeenCalledWith(REVERSE_TIMEOUT_MS);
+    timeoutSpy.mockRestore();
+
+    const controller = new AbortController();
+    const { client: aborting } = clientReturning(async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    });
+    await expect(
+      aborting.reverseGeocode({ lat: 1, lon: 2 }, { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("parseScore school", () => {
+  const base = {
+    geoEntityId: "21c5d4bd-e66e-423b-8f4c-8e569604f187",
+    address: "a",
+    latitude: 1,
+    longitude: 2,
+    compositeScore: 50,
+    subScores: {},
+    weightsVersion: "v2",
+    computedAt: "2026-09-29T03:12:03Z",
+  };
+
+  it("omits school when absent or null", () => {
+    expect(parseScore(base).school).toBeUndefined();
+    expect(parseScore({ ...base, school: null }).school).toBeUndefined();
+  });
+
+  it("keeps the school object", () => {
+    const score = parseScore({
+      ...base,
+      school: { proximity: 60, ratingAvailable: false },
+    });
+    expect(score.school).toEqual({
+      proximity: 60,
+      ratingAvailable: false,
+      districtName: null,
+      source: null,
+    });
+  });
+});
+
+describe("getAreaByCoordinates", () => {
+  it("requests /area with lat and lon and parses the polygon", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(makeAreaBody()));
+
+    const result = await client.getAreaByCoordinates({ lat: 40.725, lon: -73.995 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/area?lat=40.725&lon=-73.995`);
+    expect(result.areaId).toBe(42);
+    expect(result.score.geoEntityId).toBe(GEO_ENTITY_ID);
+    expect(result.score.subScores.grocery).toBeNull();
+    expect(result.area.geometry.type).toBe("Polygon");
+    expect(result.area).toMatchObject({
+      areaSqMi: 0.35,
+      cellCount: 3,
+      boundedBy: ["Broadway", "Canal St", "Bowery", "Houston St"],
+    });
+    expect(result.explanation).toMatch(/strongest factor/);
+  });
+
+  it("accepts a MultiPolygon", async () => {
+    const ring = [[0, 0], [1, 0], [1, 1], [0, 0]];
+    const { client } = clientReturning(
+      jsonResponse(
+        makeAreaBody({
+          area: {
+            geometry: { type: "MultiPolygon", coordinates: [[ring], [ring]] },
+            areaSqMi: 1,
+            boundedBy: [],
+            cellCount: 2,
+          },
+        }),
+      ),
+    );
+
+    const result = await client.getAreaByCoordinates({ lat: 0, lon: 0 });
+
+    expect(result.area.geometry.type).toBe("MultiPolygon");
+  });
+
+  it.each([
+    ["an unknown geometry type", { type: "Point", coordinates: [0, 0] }],
+    ["an open ring", { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 1]]] }],
+    ["too few positions", { type: "Polygon", coordinates: [[[0, 0], [1, 1], [0, 0]]] }],
+    ["out-of-range coordinates", { type: "Polygon", coordinates: [[[0, 0], [200, 0], [1, 1], [0, 0]]] }],
+    ["no coordinates", { type: "Polygon" }],
+    ["an empty MultiPolygon", { type: "MultiPolygon", coordinates: [] }],
+  ])("rejects %s as an invalid response", async (_label, geometry) => {
+    const { client } = clientReturning(
+      jsonResponse(
+        makeAreaBody({
+          area: { geometry, areaSqMi: 1, boundedBy: [], cellCount: 1 },
+        }),
+      ),
+    );
+    expect((await rejection(client.getAreaByCoordinates({ lat: 0, lon: 0 }))).kind).toBe(
+      "invalid-response",
+    );
+  });
+
+  it("rejects a body missing the area or explanation", async () => {
+    const { client } = clientReturning(jsonResponse({ ...liveScoreBody, areaId: 1 }));
+    expect((await rejection(client.getAreaByCoordinates({ lat: 0, lon: 0 }))).kind).toBe(
+      "invalid-response",
+    );
+  });
+
+  it("maps a 404 to not-found", async () => {
+    const { client } = clientReturning(
+      jsonResponse({ code: "area_not_found", message: "none" }, 404),
+    );
+    const error = await rejection(client.getAreaByCoordinates({ lat: 0, lon: 0 }));
+    expect(error.kind).toBe("not-found");
+    expect(error.code).toBe("area_not_found");
+  });
+
+  it("maps a 500 to a server error", async () => {
+    const { client } = clientReturning(jsonResponse({ message: "boom" }, 500));
+    expect((await rejection(client.getAreaByCoordinates({ lat: 0, lon: 0 }))).kind).toBe("server");
   });
 });

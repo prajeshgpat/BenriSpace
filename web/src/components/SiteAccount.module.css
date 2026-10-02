@@ -1,0 +1,49 @@
+.account {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.settings {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.settings:hover,
+.settings[aria-current="page"] {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.icon {
+  width: 1.375rem;
+  height: 1.375rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.login {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.25rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.login:hover,
+.login[aria-current="page"] {
+  background: var(--surface-sunken);
+}

@@ -10,3 +10,8 @@ build/
 
 # Personal local-dev launcher
 /scripts/dev.sh
+
+# Area-polygon prototype artifacts
+data/prototype/
+data/cache/
+data/areas/

@@ -1,0 +1,7 @@
+[
+  {"leaid": "3600001", "fips": 36, "grade_edfacts": 99, "race": 99, "lep": 99, "math_test_pct_prof_midpt": 60.0, "read_test_pct_prof_midpt": 70.0},
+  {"leaid": "3600001", "fips": 36, "grade_edfacts": 99, "race": 1, "lep": 99, "math_test_pct_prof_midpt": 10.0, "read_test_pct_prof_midpt": 10.0},
+  {"leaid": "3600002", "fips": 36, "grade_edfacts": 99, "race": 99, "math_test_pct_prof_midpt": -3, "read_test_pct_prof_midpt": 40.0},
+  {"leaid": "3600003", "fips": 36, "grade_edfacts": 99, "race": 99, "math_test_pct_prof_midpt": -3, "read_test_pct_prof_midpt": -3},
+  {"leaid": 900001, "fips": 9, "grade_edfacts": 99, "race": 99, "math_test_pct_prof_midpt": 80.0, "read_test_pct_prof_midpt": 80.0}
+]
