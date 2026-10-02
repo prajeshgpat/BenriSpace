@@ -231,3 +231,14 @@ def test_cli_dry_run_on_cached_sample(tmp_path):
     assert [ft["id"] for ft in gj["features"]] == list(range(1, metrics["face_count"] + 1))
     assert (out / "areas_preview.png").stat().st_size > 1000
     assert metrics.get("faces_over_water", 0) == 0
+
+
+def test_render_preview_is_skipped_without_matplotlib(monkeypatch, tmp_path):
+    import sys
+
+    from ingestion.areas.build import render_preview
+
+    monkeypatch.setitem(sys.modules, "matplotlib", None)  # simulates "not installed"
+    out = tmp_path / "preview.png"
+    assert render_preview([], out) is False
+    assert not out.exists()

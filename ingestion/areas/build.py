@@ -128,8 +128,13 @@ def to_geojson(numbered: Numbered) -> dict:
     }
 
 
-def render_preview(numbered: Numbered, path: Path, street_pts_ll=None) -> None:
-    import matplotlib
+def render_preview(numbered: Numbered, path: Path, street_pts_ll=None) -> bool:
+    """Writes a PNG preview; returns False (and writes nothing) when the optional
+    matplotlib (the `geo` extra) is not installed."""
+    try:
+        import matplotlib
+    except ImportError:
+        return False
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -149,6 +154,7 @@ def render_preview(numbered: Numbered, path: Path, street_pts_ll=None) -> None:
     ax.set_title(f"{len(numbered)} areas")
     fig.savefig(path)
     plt.close(fig)
+    return True
 
 
 # ----------------------------------------------------------------------- DB
