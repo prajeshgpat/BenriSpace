@@ -13,11 +13,14 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { useLatest } from "@/hooks/useLatest";
-import type { Bbox } from "@/lib/api/types";
-import { BASEMAP_STYLE_URL } from "@/lib/config";
-import { CELL_OPACITY, FILL_COLOR_EXPRESSION } from "@/lib/map/colors";
+import type { AreaGeometry, Bbox } from "@/lib/api/types";
+import { BASEMAP_STYLE_URLS } from "@/lib/config";
+import { AREA_STYLE, CELL_OPACITY, FILL_COLOR_EXPRESSION } from "@/lib/map/colors";
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
+import { tuneDarkStyle } from "@/lib/map/darkStyle";
+import { overlayAnchorId } from "@/lib/map/overlayAnchor";
 import { METRO_BBOX, type MapView } from "@/lib/map/viewport";
+import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
 
@@ -31,6 +34,21 @@ const FILL_LAYER = "cells-fill";
 const OUTLINE_LAYER = "cells-outline";
 const HIGHLIGHT_CASING_LAYER = "cells-highlight-casing";
 const HIGHLIGHT_LAYER = "cells-highlight";
+const AREA_SOURCE_ID = "area";
+const AREA_FILL_LAYER = "area-fill";
+const AREA_CASING_LAYER = "area-outline-casing";
+const AREA_LINE_LAYER = "area-outline";
+
+const EMPTY_AREA = { type: "FeatureCollection", features: [] } as never;
+
+function areaData(geometry: AreaGeometry | null) {
+  return geometry
+    ? ({
+        type: "FeatureCollection",
+        features: [{ type: "Feature", properties: {}, geometry }],
+      } as never)
+    : EMPTY_AREA;
+}
 
 export interface Viewport {
   /** True when the user moved the map, false for jumps the app made itself. */
@@ -75,6 +93,9 @@ interface MapCanvasProps {
   markers: readonly MarkerSpec[];
   activeMarkerId: string | null;
   highlightGeohash: string | null;
+  /** The secondary-road polygon to outline; while shown it replaces the cell highlight. */
+  areaGeometry?: AreaGeometry | null;
+  theme: ResolvedTheme;
   pin: PinSpec | null;
   flyRequest: FlyRequest | null;
   onViewportChange: (viewport: Viewport) => void;
@@ -98,11 +119,24 @@ function readViewport(map: MaplibreMap, user: boolean): Viewport {
   };
 }
 
-function addCellLayers(map: MaplibreMap) {
+/**
+ * Loads the basemap for a theme. Light uses the stock style untouched; dark is
+ * recoloured after fetching (tuneDarkStyle falls back to the stock style on
+ * any problem).
+ */
+function loadBasemap(map: MaplibreMap, theme: ResolvedTheme) {
+  map.setStyle(BASEMAP_STYLE_URLS[theme], {
+    // diff:false makes MapLibre rebuild the style, which is what fires style.load.
+    diff: false,
+    ...(theme === "dark"
+      ? { transformStyle: (_previous, next) => tuneDarkStyle(next) }
+      : {}),
+  });
+}
+
+function addCellLayers(map: MaplibreMap, theme: ResolvedTheme) {
   // Under the basemap's labels, so place names stay readable over the colors.
-  const firstLabel = map
-    .getStyle()
-    .layers.find((layer) => layer.type === "symbol");
+  const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
 
   map.addSource(SOURCE_ID, { type: "geojson", data: EMPTY_CELLS });
   map.addLayer(
@@ -112,7 +146,7 @@ function addCellLayers(map: MaplibreMap) {
       source: SOURCE_ID,
       paint: {
         "fill-color": FILL_COLOR_EXPRESSION as never,
-        "fill-opacity": CELL_OPACITY,
+        "fill-opacity": CELL_OPACITY[theme],
         // Adjacent cells would otherwise show hairline seams.
         "fill-antialias": false,
       },
@@ -151,12 +185,50 @@ function addCellLayers(map: MaplibreMap) {
   });
 }
 
+function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme) {
+  const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
+  const style = AREA_STYLE[theme];
+
+  map.addSource(AREA_SOURCE_ID, { type: "geojson", data: EMPTY_AREA });
+  map.addLayer(
+    {
+      id: AREA_FILL_LAYER,
+      type: "fill",
+      source: AREA_SOURCE_ID,
+      paint: { "fill-color": style.line, "fill-opacity": style.fillOpacity },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: AREA_CASING_LAYER,
+      type: "line",
+      source: AREA_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: { "line-color": style.casing, "line-width": 5, "line-opacity": 0.9 },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: AREA_LINE_LAYER,
+      type: "line",
+      source: AREA_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: { "line-color": style.line, "line-width": 2.5 },
+    },
+    firstLabel?.id,
+  );
+}
+
 export function MapCanvas({
   initialView,
   cells,
   markers,
   activeMarkerId,
   highlightGeohash,
+  areaGeometry = null,
+  theme,
   pin,
   flyRequest,
   onViewportChange,
@@ -175,6 +247,15 @@ export function MapCanvas({
     onUnavailable,
   });
   const initial = useRef(initialView);
+  // The overlay is re-added after every basemap swap, so it reads the newest
+  // data and theme from refs instead of capturing the first render's.
+  const latest = useLatest({
+    cells,
+    highlightGeohash: areaGeometry ? null : highlightGeohash,
+    areaGeometry,
+    theme,
+  });
+  const styleTheme = useRef(theme);
 
   useEffect(() => {
     const element = container.current;
@@ -185,8 +266,10 @@ export function MapCanvas({
       const start = initial.current;
       map = new MaplibreMap({
         container: element,
-        // One light basemap in both themes: the cell colors are tuned to read over it.
-        style: BASEMAP_STYLE_URL,
+        // A dark start is loaded right after construction, to be recoloured.
+        ...(styleTheme.current === "light"
+          ? { style: BASEMAP_STYLE_URLS.light }
+          : {}),
         ...(start
           ? { center: [start.lon, start.lat], zoom: start.zoom }
           : {
@@ -208,6 +291,7 @@ export function MapCanvas({
       return;
     }
     mapRef.current = map;
+    if (styleTheme.current === "dark") loadBasemap(map, "dark");
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
@@ -226,8 +310,25 @@ export function MapCanvas({
       }, VIEWPORT_DEBOUNCE_MS);
     });
 
+    // Fires for the first style and again after every setStyle: a new basemap
+    // arrives without our layers, so they are put back on top of it.
+    map.on("style.load", () => {
+      addCellLayers(map, styleTheme.current);
+      addAreaLayers(map, styleTheme.current);
+      (map.getSource(AREA_SOURCE_ID) as GeoJSONSource).setData(
+        areaData(latest.current.areaGeometry),
+      );
+      (map.getSource(SOURCE_ID) as GeoJSONSource).setData(latest.current.cells);
+      const filter = [
+        "==",
+        ["get", "geohash"],
+        latest.current.highlightGeohash ?? "",
+      ] as never;
+      map.setFilter(HIGHLIGHT_CASING_LAYER, filter);
+      map.setFilter(HIGHLIGHT_LAYER, filter);
+    });
+
     map.on("load", () => {
-      addCellLayers(map);
       map.on("click", FILL_LAYER, (event) => {
         const feature = event.features?.[0];
         if (!feature) return;
@@ -254,7 +355,14 @@ export function MapCanvas({
       map.remove();
       mapRef.current = null;
     };
-  }, [callbacks]);
+  }, [callbacks, latest]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map || styleTheme.current === theme) return;
+    styleTheme.current = theme;
+    loadBasemap(map, theme);
+  }, [theme, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -265,10 +373,20 @@ export function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
-    const filter = ["==", ["get", "geohash"], highlightGeohash ?? ""] as never;
+    // The polygon replaces the rectangle while it is shown.
+    const shown = areaGeometry ? null : highlightGeohash;
+    const filter = ["==", ["get", "geohash"], shown ?? ""] as never;
     map.setFilter(HIGHLIGHT_CASING_LAYER, filter);
     map.setFilter(HIGHLIGHT_LAYER, filter);
-  }, [highlightGeohash, ready]);
+  }, [highlightGeohash, areaGeometry, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource(AREA_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
+      areaData(areaGeometry),
+    );
+  }, [areaGeometry, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

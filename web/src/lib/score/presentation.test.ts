@@ -76,8 +76,9 @@ describe("buildFactorSections", () => {
       grocery: "Grocery stores",
       gasStation: "Gas stations",
       convenienceStore: "Convenience stores",
-      emergencyCorridor: "Emergency routes",
-      trailPopularity: "Trails",
+      emergencyCorridor: "Noise corridor",
+      restaurant: "Restaurants",
+      bar: "Bars & pubs",
     });
   });
 
@@ -110,7 +111,7 @@ describe("buildFactorSections", () => {
   });
 
   it("explains the direction of every inverted factor", () => {
-    for (const key of ["gasStation", "convenienceStore", "road", "emergencyCorridor"] as const) {
+    for (const key of ["gasStation", "convenienceStore", "road"] as const) {
       expect(FACTORS[key].description).toMatch(/^Higher means/);
     }
   });
@@ -119,18 +120,18 @@ describe("buildFactorSections", () => {
 describe("summarizeCoverage", () => {
   it("reports full coverage", () => {
     expect(summarizeCoverage(fullSubScores)).toMatchObject({
-      available: 11,
-      total: 11,
+      available: 12,
+      total: 12,
       isComplete: true,
-      summary: "Based on all 11 factors.",
+      summary: "Based on all 12 factors.",
     });
   });
 
   it("flags a composite built from partial data", () => {
     const coverage = summarizeCoverage({ ...emptySubScores, airport: 62.79 });
 
-    expect(coverage).toMatchObject({ available: 1, total: 11, isComplete: false });
-    expect(coverage.summary).toMatch(/^Based on 1 of 11 factors\./);
+    expect(coverage).toMatchObject({ available: 1, total: 12, isComplete: false });
+    expect(coverage.summary).toMatch(/^Based on 1 of 12 factors\./);
   });
 
   it("counts a zero score as available data", () => {

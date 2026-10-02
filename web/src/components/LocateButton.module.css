@@ -1,4 +1,4 @@
-.panel,
+.field,
 .map {
   display: inline-flex;
   align-items: center;
@@ -12,10 +12,15 @@
   cursor: pointer;
 }
 
-.panel {
-  min-height: 2.75rem;
-  padding: 0 1rem;
-  border-radius: var(--radius-md);
+/* Sits inside the search box, on its right edge. */
+.field {
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .map {
@@ -30,23 +35,27 @@
   border-color: rgba(0, 0, 0, 0.25);
 }
 
-.panel:hover:not(:disabled),
+.field:hover:not(:disabled),
 .map:hover:not(:disabled) {
   background: var(--surface-sunken);
+}
+
+.field:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .map:hover:not(:disabled) {
   background: #f0f0f0;
 }
 
-.panel:disabled,
+.field:disabled,
 .map:disabled {
   cursor: default;
 }
 
-.panel:disabled:not([aria-busy]) {
+.field:disabled:not([aria-busy]) {
   color: var(--text-subtle);
-  border-style: dashed;
+  opacity: 0.6;
 }
 
 .icon {

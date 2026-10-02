@@ -8,9 +8,9 @@
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  height: var(--header-height);
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+  min-height: var(--header-height);
   padding: 0 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--page);
@@ -34,12 +34,29 @@
   color: var(--accent);
 }
 
-.region {
-  padding: 0.125rem 0.625rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
+/* The wordmark gives way to the logo mark on phones to leave room for the tabs. */
+.name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* On a phone the tabs get their own row so none of them is pushed off-screen. */
+.navSlot {
+  order: 3;
+  flex: 1 0 100%;
+  min-width: 0;
+}
+
+.tools {
+  display: flex;
+  margin-left: auto;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .content {
@@ -51,6 +68,22 @@
 
 @media (min-width: 40rem) {
   .header {
+    flex-wrap: nowrap;
+    height: var(--header-height);
     padding-inline: 1.5rem;
   }
+
+  .navSlot {
+    order: 0;
+    flex: 0 1 auto;
+  }
+
+  .name {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
 }
+

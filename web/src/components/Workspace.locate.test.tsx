@@ -112,14 +112,13 @@ function setup(search = "", respond?: (url: string) => Response) {
   return { fetchMock };
 }
 
+const locateButtons = () =>
+  screen.getAllByRole("button", { name: /use my current location|locating/i });
+/** The button inside the search box, on its right edge. */
 const panelButton = () =>
-  screen
-    .getAllByRole("button", { name: /use my current location|locating/i })
-    .find((el) => el.textContent?.trim())!;
+  locateButtons().find((el) => screen.getByRole("search").contains(el))!;
 const mapButton = () =>
-  screen
-    .getAllByRole("button", { name: /use my current location|locating/i })
-    .find((el) => !el.textContent?.trim())!;
+  locateButtons().find((el) => !screen.getByRole("search").contains(el))!;
 const scoreCalls = (fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) =>
   fetchMock.mock.calls.filter(([url]) => String(url).includes("/score?"));
 
@@ -129,6 +128,7 @@ beforeEach(() => {
   setSecureContext(true);
   installGeolocation(positionAt(MANHATTAN));
   navigation.search = "";
+  window.history.replaceState(null, "", "/app");
   pushState = vi
     .spyOn(window.history, "pushState")
     .mockImplementation((_d, _u, url) => setSearch(url));
@@ -150,9 +150,9 @@ describe("Workspace: use my current location", () => {
     expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 
-  it("offers a labelled button in the panel and a named one on the map", () => {
+  it("offers a named button inside the search box and another on the map", () => {
     setup();
-    expect(panelButton()).toHaveTextContent("Use my current location");
+    expect(panelButton()).toHaveAccessibleName("Use my current location");
     expect(panelButton()).toHaveAttribute("type", "button");
     expect(mapButton()).toHaveAccessibleName("Use my current location");
   });
@@ -173,7 +173,7 @@ describe("Workspace: use my current location", () => {
       expect(pushState).toHaveBeenCalledWith(
         null,
         "",
-        "/?address=Your+location&lat=40.7492&lon=-73.985",
+        "/app?address=Your+location&lat=40.7492&lon=-73.985",
       ),
     );
     expect(
@@ -208,14 +208,14 @@ describe("Workspace: use my current location", () => {
     await user.click(panelButton());
 
     const button = panelButton();
-    expect(button).toHaveTextContent("Locating…");
+    expect(button).toHaveAccessibleName("Locating…");
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
     expect(mapButton()).toBeDisabled();
 
     act(() => resolve());
     await waitFor(() => expect(panelButton()).toBeEnabled());
-    expect(panelButton()).toHaveTextContent("Use my current location");
+    expect(panelButton()).toHaveAccessibleName("Use my current location");
     expect(getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 
@@ -312,7 +312,7 @@ describe("Workspace: use my current location", () => {
 
     await user.type(screen.getByRole("combobox", { name: "Address" }), "350 5th Ave");
     await user.click(screen.getByRole("button", { name: "Get score" }));
-    expect(pushState).toHaveBeenCalledWith(null, "", "/?address=350+5th+Ave");
+    expect(pushState).toHaveBeenCalledWith(null, "", "/app?address=350+5th+Ave");
     expect(within(document.body).getByTestId("map")).toBeInTheDocument();
   });
 });

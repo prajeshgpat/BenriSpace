@@ -9,7 +9,6 @@ import {
   metroLabel,
   strongestFactors,
 } from "@/lib/map/presentation";
-import type { TopScope } from "@/lib/map/url";
 import { roundScore } from "@/lib/score/presentation";
 import type { ResourceStatus } from "@/hooks/useResource";
 
@@ -21,25 +20,16 @@ interface BestAreasProps {
   error: ApiError | null;
   /** In display order. */
   selectedFactors: readonly FactorKey[];
-  scope: TopScope;
-  onScopeChange: (scope: TopScope) => void;
   activeGeohash: string | null;
   onSelect: (result: MapTopResult) => void;
   onRetry: () => void;
 }
-
-const SCOPES: ReadonlyArray<{ value: TopScope; label: string }> = [
-  { value: "metro", label: "Whole metro" },
-  { value: "view", label: "This view only" },
-];
 
 export function BestAreas({
   status,
   results,
   error,
   selectedFactors,
-  scope,
-  onScopeChange,
   activeGeohash,
   onSelect,
   onRetry,
@@ -53,22 +43,6 @@ export function BestAreas({
         Best areas
       </h2>
 
-      <fieldset className={styles.scope}>
-        <legend className="sr-only">Where to look</legend>
-        {SCOPES.map(({ value, label }) => (
-          <label key={value} className={styles.scopeOption}>
-            <input
-              type="radio"
-              name={`${id}-scope`}
-              value={value}
-              checked={scope === value}
-              onChange={() => onScopeChange(value)}
-            />
-            <span>{label}</span>
-          </label>
-        ))}
-      </fieldset>
-
       {noFactors ? (
         <p className={styles.message}>
           Select at least one factor to see the best areas.
@@ -79,9 +53,7 @@ export function BestAreas({
         <p className={styles.message}>Finding the best areas…</p>
       ) : results.length === 0 ? (
         <p className={styles.message}>
-          {scope === "view"
-            ? "No scored areas in this view. Zoom out or switch to the whole metro."
-            : "No scored areas found for these factors."}
+          No scored areas in this view. Zoom out or move the map.
         </p>
       ) : (
         <>

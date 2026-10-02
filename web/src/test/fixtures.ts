@@ -1,5 +1,5 @@
 import type { ApiClient } from "@/lib/api/client";
-import type { Explanation, Score, SubScores } from "@/lib/api/types";
+import type { AreaScore, Explanation, Score, SubScores } from "@/lib/api/types";
 
 export const GEO_ENTITY_ID = "21c5d4bd-e66e-423b-8f4c-8e569604f187";
 
@@ -37,6 +37,9 @@ export const emptySubScores: SubScores = {
   grocery: null,
   gym: null,
   cafe: null,
+  restaurant: null,
+  bar: null,
+  premiumRetail: null,
   gasStation: null,
   convenienceStore: null,
   transit: null,
@@ -51,6 +54,9 @@ export const fullSubScores: SubScores = {
   grocery: 91.4,
   gym: 72,
   cafe: 88.6,
+  restaurant: 80,
+  bar: 55,
+  premiumRetail: 70,
   gasStation: 40,
   convenienceStore: 35.2,
   transit: 97,
@@ -96,10 +102,41 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getScore: unexpected("getScore"),
     getScoreByCoordinates: unexpected("getScoreByCoordinates"),
+    getAreaByCoordinates: unexpected("getAreaByCoordinates"),
     getScoreExplanation: unexpected("getScoreExplanation"),
     suggestAddresses: unexpected("suggestAddresses"),
+    reverseGeocode: unexpected("reverseGeocode"),
     getMapCells: unexpected("getMapCells"),
     getMapTop: unexpected("getMapTop"),
     ...overrides,
   };
+}
+
+export const AREA_RING: [number, number][] = [
+  [-74.0, 40.72],
+  [-73.99, 40.72],
+  [-73.99, 40.73],
+  [-74.0, 40.73],
+  [-74.0, 40.72],
+];
+
+export function makeAreaScore(overrides: Partial<AreaScore> = {}): AreaScore {
+  return {
+    score: makeScore(),
+    areaId: 42,
+    area: {
+      geometry: { type: "Polygon", coordinates: [AREA_RING] },
+      areaSqMi: 0.35,
+      boundedBy: ["Broadway", "Canal St", "Bowery", "Houston St"],
+      cellCount: 3,
+    },
+    explanation: "This area's strongest factor is transit.",
+    ...overrides,
+  };
+}
+
+/** The wire shape of an `AreaScoreResponse`. */
+export function makeAreaBody(overrides: Record<string, unknown> = {}) {
+  const { score, area, areaId, explanation } = makeAreaScore();
+  return { ...score, areaId, area, explanation, ...overrides };
 }

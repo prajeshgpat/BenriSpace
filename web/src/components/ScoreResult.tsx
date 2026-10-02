@@ -1,5 +1,5 @@
 import type { ExplanationState } from "@/hooks/useScoreLookup";
-import type { Score } from "@/lib/api/types";
+import type { AreaInfo, Score, SchoolInfo } from "@/lib/api/types";
 import {
   SCORE_MAX,
   bandLabel,
@@ -11,28 +11,81 @@ import {
   type FactorRow,
 } from "@/lib/score/presentation";
 
+import {
+  GREATSCHOOLS_DISTRICTS_URL,
+  GREATSCHOOLS_LINK_LABEL,
+} from "@/lib/schoolLinks";
+
+import { formatArea } from "@/lib/units";
+
 import { CopyLinkButton } from "./CopyLinkButton";
 import styles from "./ScoreResult.module.css";
 
 interface ScoreResultProps {
   address: string;
+  /** A street address looked up for a clicked point, shown instead of coordinates. */
+  readableAddress?: string | null;
   score: Score;
+  /** Present when the score is for a secondary-road area rather than a grid square. */
+  area?: AreaInfo | null;
   explanation: ExplanationState;
 }
 
-export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
+/** "Area bounded by Broadway, Canal St and Bowery"; null when no roads are named. */
+export function areaLabel(boundedBy: readonly string[]): string | null {
+  if (boundedBy.length === 0) return null;
+  const head = boundedBy.slice(0, -1);
+  const roads =
+    head.length === 0
+      ? boundedBy[0]
+      : `${head.join(", ")} and ${boundedBy[boundedBy.length - 1]}`;
+  return `Area bounded by ${roads}`;
+}
+
+/** Cell footprint in miles, shown so the average is not mistaken for a point score. */
+export function areaNote(cellCount: number): string {
+  return cellCount === 1
+    ? "Scores blend 1 grid square (about 0.6 × 0.4 mi), so this area's score is an average."
+    : `Scores blend ${cellCount} grid squares (about 0.6 × 0.4 mi each), so this area's score is an average.`;
+}
+
+export function ScoreResult({
+  address,
+  readableAddress = null,
+  score,
+  area = null,
+  explanation,
+}: ScoreResultProps) {
   const sections = buildFactorSections(score.subScores);
   const coverage = summarizeCoverage(score.subScores);
   const computedOn = formatComputedAt(score.computedAt);
+  const boundedLabel = area ? areaLabel(area.boundedBy) : null;
 
   return (
-    <article className={styles.card} aria-labelledby="result-heading">
+    <article
+      className={styles.card}
+      aria-labelledby="result-heading"
+      aria-describedby={boundedLabel ? "area-label" : undefined}
+    >
       <header className={styles.header}>
         <p className={styles.eyebrow}>Convenience score</p>
         <h2 id="result-heading" className={styles.address}>
           {address}
         </h2>
-        <p className={styles.location}>{describeScoredLocation(score)}</p>
+        {area ? (
+          <>
+            <p id="area-label" className={styles.location}>
+              {boundedLabel ?? describeScoredLocation(score, readableAddress)}
+            </p>
+            <p className={styles.note} data-testid="area-note">
+              About {formatArea(area.areaSqMi)}. {areaNote(area.cellCount)}
+            </p>
+          </>
+        ) : (
+          <p className={styles.location}>
+            {describeScoredLocation(score, readableAddress)}
+          </p>
+        )}
       </header>
 
       <div className={styles.summary}>
@@ -73,11 +126,18 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
             <h4 className={styles.groupHeading}>{section.title}</h4>
             <ul className={styles.factors}>
               {section.rows.map((row) => (
-                <FactorItem key={row.key} row={row} />
+                <FactorItem
+                  key={row.key}
+                  row={row}
+                  school={row.key === "school" ? score.school : null}
+                />
               ))}
             </ul>
           </div>
         ))}
+        <p className={styles.note} data-testid="underlying-note">
+          {UNDERLYING_NOTE}
+        </p>
       </details>
 
       <footer className={styles.footer}>
@@ -96,6 +156,9 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
     </article>
   );
 }
+
+export const UNDERLYING_NOTE =
+  "Also counted in the overall score: premium retail and running route popularity (Whole Foods, Starbucks, Target and nearby running routes).";
 
 const RING_RADIUS = 52;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -152,7 +215,42 @@ function ExplanationText({ explanation }: { explanation: ExplanationState }) {
   }
 }
 
-function FactorItem({ row }: { row: FactorRow }) {
+function SchoolDetail({ school }: { school: SchoolInfo }) {
+  const { proximity, ratingAvailable, districtName, source } = school;
+  return (
+    <div className={styles.schoolDetail} data-testid="school-detail">
+      {ratingAvailable ? (
+        <p className={styles.schoolSource}>
+          {[districtName, source ? `Rating source: ${source}` : null]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : (
+        <p className={styles.schoolSource}>
+          {proximity !== null && proximity !== undefined
+            ? `Proximity ${Math.round(proximity)} · school rating unavailable here`
+            : "School rating unavailable here"}
+        </p>
+      )}
+      <a
+        className={styles.schoolLink}
+        href={GREATSCHOOLS_DISTRICTS_URL}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {GREATSCHOOLS_LINK_LABEL}
+      </a>
+    </div>
+  );
+}
+
+function FactorItem({
+  row,
+  school,
+}: {
+  row: FactorRow;
+  school?: SchoolInfo | null;
+}) {
   const hasData = row.value !== null;
 
   return (
@@ -178,6 +276,7 @@ function FactorItem({ row }: { row: FactorRow }) {
         ) : null}
       </div>
       <p className={styles.factorDescription}>{row.description}</p>
+      {school ? <SchoolDetail school={school} /> : null}
     </li>
   );
 }

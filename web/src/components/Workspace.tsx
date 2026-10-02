@@ -15,7 +15,9 @@ import {
 
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useMapData } from "@/hooks/useMapData";
+import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
+import { useTheme } from "@/hooks/useTheme";
 import {
   ADDRESS_PARAM,
   formatLatLon,
@@ -35,6 +37,7 @@ import {
   YOUR_LOCATION_LABEL,
   isInCoverage,
 } from "@/lib/geolocation";
+import { needsReadableAddress } from "@/lib/reverseTarget";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import {
   explorerHref,
@@ -44,7 +47,7 @@ import {
   PLACE_ZOOM,
 } from "@/lib/map/url";
 import { bandLabel, roundScore } from "@/lib/score/presentation";
-import { EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
+import { APP_PATH, EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { ErrorNotice } from "./ErrorNotice";
@@ -161,19 +164,31 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // that the page owns it and only writes to it.
   const [initial] = useState(() => parseExplorerParams(params));
   const rawAddress = params.get(ADDRESS_PARAM);
-  const { target, error: urlError } = resolveTarget(params);
-  const address = target ? targetLabel(target) : null;
+  const { target: urlTarget, error: urlError } = resolveTarget(params);
+  const [picked, setPicked] = useState<Picked | null>(null);
+  // The URL only carries lat/lon, so a best-areas pick is re-marked as
+  // cell-based here; a shared link or reload resolves the area instead.
+  const target: ScoreTarget | null =
+    urlTarget?.kind === "coordinates" &&
+    picked?.kind === "top" &&
+    picked.key === targetKey(urlTarget)
+      ? { ...urlTarget, precision: "cell" }
+      : urlTarget;
+  // A clicked point is labelled with coordinates until its street address is looked up.
+  const readableAddress = useReverseGeocode(
+    needsReadableAddress(target) ? { lat: target.lat, lon: target.lon } : null,
+    client,
+  ).label;
+  const address = readableAddress ?? (target ? targetLabel(target) : null);
   const placeKey = target ? targetKey(target) : null;
 
   const { state, retry } = useScoreLookup(target, client);
 
   const [selection, setSelection] = useState(initial.selection);
-  const [scope, setScope] = useState(initial.scope);
   const [viewport, setViewport] = useState<Viewport | null>(null);
-  // "This view only" follows what the user is looking at, not the app's own
+  // The best-areas list follows what the user is looking at, not the app's own
   // fly-to moves, which would otherwise re-rank the list under their cursor.
   const [topViewport, setTopViewport] = useState<Viewport | null>(null);
-  const [picked, setPicked] = useState<Picked | null>(null);
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
 
@@ -186,7 +201,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     };
   });
   // Until the map moves, or the URL asked for a view, there is no view worth
-  // writing down: the metro overview is what `/` already means.
+  // writing down: the metro overview is what `/app` already means.
   const [viewShared, setViewShared] = useState(start.pinned);
 
   const panelRef = useRef<HTMLElement>(null);
@@ -196,7 +211,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const { noFactors, cells, top, features, range, topResults } = useMapData({
     client,
     selection,
-    scope,
     viewport,
     topViewport,
   });
@@ -253,13 +267,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     target,
     view: urlView,
     selection,
-    scope,
   });
   // A rejected address in the URL has no state of its own to write back.
   const preserveUrl = target === null && rawAddress !== null;
   useEffect(() => {
     if (preserveUrl) return;
-    const next = query ? `/?${query}` : "/";
+    const next = query ? `${APP_PATH}?${query}` : APP_PATH;
     if (window.location.pathname + window.location.search !== next) {
       window.history.replaceState(null, "", next);
     }
@@ -280,7 +293,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     window.history.pushState(
       null,
       "",
-      explorerHref({ target: next, view: urlView, selection, scope }),
+      explorerHref({ target: next, view: urlView, selection }),
     );
   }
 
@@ -306,6 +319,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   }
 
   const locator = useCurrentLocation(selectCurrentLocation);
+  const { theme } = useTheme();
   const locating = locator.state.status === "locating";
   const locateNoteId = "locate-note";
 
@@ -339,6 +353,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       lat: result.latitude,
       lon: result.longitude,
       label: areaTitle(result),
+      // The ranked square is the unit the list is scored on; stay cell-based.
+      precision: "cell",
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "top", geohash: result.geohash, key: targetKey(next) });
@@ -393,15 +409,17 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           onSearch={handleSearch}
           onSelectSuggestion={handleSelectSuggestion}
           suggestClient={client}
+          endAdornment={
+            <LocateButton
+              variant="field"
+              locating={locating}
+              disabled={locator.unsupported !== null}
+              describedBy={locator.unsupported ? locateNoteId : undefined}
+              onClick={locator.locate}
+            />
+          }
         />
         <div className={styles.locate}>
-          <LocateButton
-            variant="panel"
-            locating={locating}
-            disabled={locator.unsupported !== null}
-            describedBy={locator.unsupported ? locateNoteId : undefined}
-            onClick={locator.locate}
-          />
           {locator.unsupported ? (
             <p id={locateNoteId} className={styles.locateNote}>
               {locator.unsupported}
@@ -445,8 +463,10 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           ) : null}
           {state.status === "success" ? (
             <ScoreResult
-              address={state.address}
+              address={readableAddress ?? state.address}
+              readableAddress={readableAddress}
               score={state.score}
+              area={state.area}
               explanation={state.explanation}
             />
           ) : null}
@@ -462,8 +482,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           results={topResults}
           error={top.error}
           selectedFactors={selection.factors}
-          scope={scope}
-          onScopeChange={setScope}
           activeGeohash={activeTop?.geohash ?? null}
           onSelect={selectTop}
           onRetry={top.retry}
@@ -491,6 +509,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         markers={markers}
         activeMarkerId={activeTop?.geohash ?? null}
         highlightGeohash={highlightGeohash}
+        areaGeometry={state.status === "success" ? (state.area?.geometry ?? null) : null}
+        theme={theme}
         pin={target ? point : null}
         flyRequest={flyRequest}
         onViewportChange={(next) => {
@@ -542,15 +562,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
 function Welcome({ onExample }: { onExample: (address: string) => void }) {
   return (
-    <section className={styles.welcome} aria-labelledby="welcome-heading">
-      <h2 id="welcome-heading" className={styles.welcomeHeading}>
-        How convenient is that address?
-      </h2>
+    <section className={styles.welcome} aria-label="Get started">
       <p className={styles.welcomeText}>
-        Search for an address in the New York metro area, or click anywhere on
-        the map, to see a score out of 100 for groceries, transit, schools,
-        trails and more. The map colors show where the factors you pick below
-        score best.
+        Search an address or click the map to see its score.{" "}
+        <Link href="/" prefetch={false}>
+          How scores work
+        </Link>
       </p>
       <p className={styles.examples}>
         <span className={styles.examplesLabel}>Try</span>

@@ -1,18 +1,24 @@
-import { FACTOR_KEYS } from "@/lib/score/factors";
+import { ALL_FACTOR_KEYS } from "@/lib/score/factors";
 
 import { ApiError } from "./errors";
 import type {
+  AreaGeometry,
+  AreaInfo,
+  AreaScore,
   Explanation,
+  Position,
   FactorKey,
   MapCells,
   MapCellsQuery,
   MapTop,
   MapTopQuery,
   MapTopResult,
+  ReverseGeocode,
   Score,
   ScoreQuery,
   Suggestion,
   SubScores,
+  SchoolInfo,
 } from "./types";
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
@@ -37,16 +43,28 @@ export interface Coordinates {
 /** Autocomplete is a nicety; give up quickly rather than hold the UI. */
 export const SUGGEST_TIMEOUT_MS = 10_000;
 
+/** A readable address is decoration; give up quickly rather than hold the UI. */
+export const REVERSE_TIMEOUT_MS = 8_000;
+
 export interface ApiClient {
   getScore(address: string, options?: RequestOptions): Promise<Score>;
   getScoreByCoordinates(
     coordinates: Coordinates,
     options?: RequestOptions,
   ): Promise<Score>;
+  /** Rejects with a `not-found` ApiError when no area polygon contains the point. */
+  getAreaByCoordinates(
+    coordinates: Coordinates,
+    options?: RequestOptions,
+  ): Promise<AreaScore>;
   suggestAddresses(
     query: string,
     options?: RequestOptions & { limit?: number },
   ): Promise<Suggestion[]>;
+  reverseGeocode(
+    coordinates: Coordinates,
+    options?: RequestOptions,
+  ): Promise<ReverseGeocode>;
   getMapCells(query: MapCellsQuery, options?: RequestOptions): Promise<MapCells>;
   getMapTop(query: MapTopQuery, options?: RequestOptions): Promise<MapTop>;
   getScoreExplanation(
@@ -76,11 +94,25 @@ function invalidResponse(what: string): ApiError {
 export function normalizeSubScores(raw: unknown): SubScores {
   const source = isObject(raw) ? raw : {};
   return Object.fromEntries(
-    FACTOR_KEYS.map((key) => {
+    ALL_FACTOR_KEYS.map((key) => {
       const value = source[key];
       return [key, isFiniteNumber(value) ? value : null];
     }),
   ) as SubScores;
+}
+
+function parseSchool(raw: unknown): { school?: SchoolInfo } {
+  if (!isObject(raw) || typeof raw.ratingAvailable !== "boolean") return {};
+  const text = (value: unknown) =>
+    typeof value === "string" && value.trim() !== "" ? value : null;
+  return {
+    school: {
+      proximity: isFiniteNumber(raw.proximity) ? raw.proximity : null,
+      ratingAvailable: raw.ratingAvailable,
+      districtName: text(raw.districtName),
+      source: text(raw.source),
+    },
+  };
 }
 
 export function parseScore(body: unknown): Score {
@@ -105,6 +137,78 @@ export function parseScore(body: unknown): Score {
     subScores: normalizeSubScores(body.subScores),
     weightsVersion: body.weightsVersion,
     computedAt: body.computedAt,
+    ...parseSchool(body.school),
+  };
+}
+
+function isPosition(value: unknown): value is Position {
+  return (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    isFiniteNumber(value[0]) &&
+    isFiniteNumber(value[1]) &&
+    Math.abs(value[0]) <= 180 &&
+    Math.abs(value[1]) <= 90
+  );
+}
+
+/** A linear ring: at least four positions, closed. */
+function isRing(value: unknown): value is Position[] {
+  if (!Array.isArray(value) || value.length < 4 || !value.every(isPosition)) {
+    return false;
+  }
+  const first = value[0];
+  const last = value[value.length - 1];
+  return first[0] === last[0] && first[1] === last[1];
+}
+
+function isPolygonRings(value: unknown): value is Position[][] {
+  return Array.isArray(value) && value.length > 0 && value.every(isRing);
+}
+
+function parseGeometry(raw: unknown): AreaGeometry {
+  if (isObject(raw) && Array.isArray(raw.coordinates)) {
+    if (raw.type === "Polygon" && isPolygonRings(raw.coordinates)) {
+      return { type: "Polygon", coordinates: raw.coordinates };
+    }
+    if (
+      raw.type === "MultiPolygon" &&
+      raw.coordinates.length > 0 &&
+      raw.coordinates.every(isPolygonRings)
+    ) {
+      return {
+        type: "MultiPolygon",
+        coordinates: raw.coordinates as Position[][][],
+      };
+    }
+  }
+  throw invalidResponse("area geometry");
+}
+
+export function parseAreaScore(body: unknown): AreaScore {
+  if (
+    !isObject(body) ||
+    !isFiniteNumber(body.areaId) ||
+    !isObject(body.area) ||
+    !isFiniteNumber(body.area.areaSqMi) ||
+    !isFiniteNumber(body.area.cellCount) ||
+    typeof body.explanation !== "string"
+  ) {
+    throw invalidResponse("area");
+  }
+  const area: AreaInfo = {
+    geometry: parseGeometry(body.area.geometry),
+    areaSqMi: body.area.areaSqMi,
+    boundedBy: Array.isArray(body.area.boundedBy)
+      ? body.area.boundedBy.filter(isNonEmptyString)
+      : [],
+    cellCount: Math.max(1, Math.round(body.area.cellCount)),
+  };
+  return {
+    score: parseScore(body),
+    areaId: body.areaId,
+    area,
+    explanation: body.explanation,
   };
 }
 
@@ -132,7 +236,7 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-const FACTOR_KEY_SET: ReadonlySet<string> = new Set(FACTOR_KEYS);
+const FACTOR_KEY_SET: ReadonlySet<string> = new Set(ALL_FACTOR_KEYS);
 
 function isFactorKey(value: unknown): value is FactorKey {
   return typeof value === "string" && FACTOR_KEY_SET.has(value);
@@ -161,6 +265,23 @@ export function parseSuggestions(body: unknown): Suggestion[] {
       ? [{ label: item.label, latitude: item.latitude, longitude: item.longitude }]
       : [],
   );
+}
+
+export function parseReverseGeocode(body: unknown): ReverseGeocode {
+  if (
+    !isObject(body) ||
+    !isFiniteNumber(body.latitude) ||
+    !isFiniteNumber(body.longitude) ||
+    (body.label !== null && typeof body.label !== "string")
+  ) {
+    throw invalidResponse("reverse geocode");
+  }
+  // An empty string is as useless as null; normalise so callers test one thing.
+  return {
+    label: body.label === null || body.label.trim() === "" ? null : body.label,
+    latitude: body.latitude,
+    longitude: body.longitude,
+  };
 }
 
 export function parseMapCells(body: unknown): MapCells {
@@ -319,6 +440,11 @@ export function createApiClient({
       return parseScore(await getJson(`/score?${params}`, options));
     },
 
+    async getAreaByCoordinates({ lat, lon }, options) {
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      return parseAreaScore(await getJson(`/area?${params}`, options));
+    },
+
     async getScoreExplanation(geoEntityId, options) {
       const path = `/score/${encodeURIComponent(geoEntityId)}/explanation`;
       return parseExplanation(await getJson(path, options));
@@ -334,6 +460,16 @@ export function createApiClient({
       );
     },
 
+    async reverseGeocode({ lat, lon }, options) {
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      return parseReverseGeocode(
+        await getJson(`/reverse?${params}`, {
+          timeoutMs: REVERSE_TIMEOUT_MS,
+          ...options,
+        }),
+      );
+    },
+
     async getMapCells(query, options) {
       const params = mapParams(query);
       params.set("precision", String(query.precision));
@@ -344,8 +480,8 @@ export function createApiClient({
     async getMapTop(query, options) {
       const params = mapParams(query);
       if (query.limit) params.set("limit", String(query.limit));
-      if (query.minSeparationKm !== undefined) {
-        params.set("minSeparationKm", String(query.minSeparationKm));
+      if (query.minSeparationMi !== undefined) {
+        params.set("minSeparationMi", String(query.minSeparationMi));
       }
       return parseMapTop(await getJson(`/map/top?${params}`, options));
     },

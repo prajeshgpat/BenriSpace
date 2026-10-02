@@ -6,6 +6,7 @@ import {
 } from "@/lib/address";
 import type { FactorKey } from "@/lib/api/types";
 import { FACTOR_KEYS } from "@/lib/score/factors";
+import { APP_PATH } from "@/lib/site";
 
 import {
   createSelection,
@@ -15,8 +16,6 @@ import {
 } from "./selection";
 import type { MapView } from "./viewport";
 
-export type TopScope = "metro" | "view";
-
 /** The state of the whole page; every part of it can be shared as a URL. */
 export interface ExplorerUrlState {
   /** The place being scored, from `address`, or `lat` and `lon`. */
@@ -25,7 +24,6 @@ export interface ExplorerUrlState {
   center: LatLon | null;
   zoom: number | null;
   selection: FactorSelection;
-  scope: TopScope;
 }
 
 const MIN_ZOOM = 3;
@@ -96,7 +94,6 @@ export function parseExplorerParams(
       parseFactors(params.get("factors")) ?? FACTOR_KEYS,
       parseImportance(params.get("importance")),
     ),
-    scope: params.get("scope") === "view" ? "view" : "metro",
   };
 }
 
@@ -122,7 +119,6 @@ export interface ExplorerUrlInput {
   /** Left out until the map has something worth restoring. */
   view: MapView | null;
   selection: FactorSelection;
-  scope: TopScope;
 }
 
 function formatCentre({ lat, lon }: LatLon): string {
@@ -134,7 +130,6 @@ export function serializeExplorerParams({
   target,
   view,
   selection,
-  scope,
 }: ExplorerUrlInput): string {
   const params = new URLSearchParams();
   if (target?.kind === "address") {
@@ -159,13 +154,12 @@ export function serializeExplorerParams({
   if (importance.length > 0) {
     params.set("importance", importance.map(([k, v]) => `${k}:${v}`).join(","));
   }
-  if (scope === "view") params.set("scope", "view");
   return params.toString();
 }
 
 export function explorerHref(input: ExplorerUrlInput): string {
   const query = serializeExplorerParams(input);
-  return query ? `/?${query}` : "/";
+  return query ? `${APP_PATH}?${query}` : APP_PATH;
 }
 
 /**

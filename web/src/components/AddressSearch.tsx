@@ -17,7 +17,10 @@ import {
 } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import type { Suggestion } from "@/lib/api/types";
+import { APP_PATH } from "@/lib/site";
 import { describeCount, optionId } from "@/lib/suggest/combobox";
+
+import type { ReactNode } from "react";
 
 import styles from "./AddressSearch.module.css";
 
@@ -35,6 +38,8 @@ interface AddressSearchProps {
    */
   onSelectSuggestion?: (suggestion: Suggestion) => void;
   suggestClient?: Pick<ApiClient, "suggestAddresses">;
+  /** Shown inside the box on its right edge, e.g. a locate button. */
+  endAdornment?: ReactNode;
 }
 
 export function AddressSearch({
@@ -43,6 +48,7 @@ export function AddressSearch({
   onSearch,
   onSelectSuggestion,
   suggestClient,
+  endAdornment,
 }: AddressSearchProps) {
   const id = useId();
   const inputId = `${id}-input`;
@@ -133,7 +139,7 @@ export function AddressSearch({
     <form
       className={styles.form}
       role="search"
-      action="/"
+      action={APP_PATH}
       method="get"
       noValidate
       onSubmit={handleSubmit}
@@ -174,9 +180,13 @@ export function AddressSearch({
                     activeIndex >= 0 ? optionId(listboxId, activeIndex) : undefined,
                 }
               : {})}
+            data-adorned={endAdornment ? "true" : undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? `${errorId} ${hintId}` : hintId}
           />
+          {endAdornment ? (
+            <div className={styles.adornment}>{endAdornment}</div>
+          ) : null}
           {autocomplete ? (
             <ul
               id={listboxId}

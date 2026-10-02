@@ -16,6 +16,8 @@ export type Score = Omit<Schemas["ScoreResponse"], "subScores"> & {
   subScores: SubScores;
 };
 
+export type SchoolInfo = NonNullable<Schemas["SchoolInfo"]>;
+
 export type Explanation = Schemas["ExplanationResponse"];
 
 export type ApiErrorBody = Schemas["Error"];
@@ -25,6 +27,9 @@ export type ScoreQuery = NonNullable<
 >;
 
 export type Suggestion = Schemas["Suggestion"];
+
+/** `label` is null when the point has no usable address. */
+export type ReverseGeocode = Schemas["ReverseResponse"];
 
 export interface MapCells {
   precision: number;
@@ -64,5 +69,31 @@ export interface MapTopQuery {
   factors?: readonly FactorKey[];
   weights?: Readonly<Partial<Record<FactorKey, number>>>;
   limit?: number;
-  minSeparationKm?: number;
+  /** Miles. The API rejects requests that send both units, so only this is sent. */
+  minSeparationMi?: number;
+}
+
+/** GeoJSON position `[lon, lat]`. */
+export type Position = readonly [number, number];
+
+export type AreaGeometry =
+  | { type: "Polygon"; coordinates: Position[][] }
+  | { type: "MultiPolygon"; coordinates: Position[][][] };
+
+export interface AreaInfo {
+  geometry: AreaGeometry;
+  areaSqMi: number;
+  /** Up to four road names that form most of the boundary. */
+  boundedBy: string[];
+  /** Grid cells blended into the area's score. */
+  cellCount: number;
+}
+
+/** A score for the secondary-road polygon around a point. */
+export interface AreaScore {
+  score: Score;
+  areaId: number;
+  area: AreaInfo;
+  /** Plain-language "why this score", inline: no second request is needed. */
+  explanation: string;
 }

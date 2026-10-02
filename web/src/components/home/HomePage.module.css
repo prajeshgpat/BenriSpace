@@ -1,0 +1,289 @@
+.main {
+  display: grid;
+  gap: 2.5rem;
+  align-content: start;
+  width: 100%;
+  max-width: 60rem;
+  flex: 1;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.hero {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem 0 0.5rem;
+}
+
+.eyebrow {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.title {
+  max-width: 22ch;
+  font-size: clamp(2rem, 6vw, 3rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.lead {
+  max-width: 40rem;
+  color: var(--text-secondary);
+  font-size: 1.0625rem;
+  text-wrap: pretty;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.primary:hover {
+  background: var(--accent-hover);
+}
+
+.secondary {
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+}
+
+.secondary:hover {
+  background: var(--surface-sunken);
+}
+
+.tryRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.tryLabel {
+  color: var(--text-secondary);
+}
+
+.example {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--link);
+}
+
+.section,
+.closing {
+  display: grid;
+  gap: 1rem;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.intro {
+  max-width: 44rem;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+.steps {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.step {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-secondary);
+  counter-increment: step;
+}
+
+.stepTitle {
+  color: var(--text);
+  font-size: 1.0625rem;
+  font-weight: 650;
+}
+
+.stepTitle::before {
+  content: counter(step) ". ";
+  color: var(--text-secondary);
+}
+
+.points {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.point {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.point dt {
+  font-weight: 650;
+}
+
+.point dd {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+.factors {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.factor {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: 0.9375rem;
+}
+
+.factorName {
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.factorTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.factorTags span {
+  padding: 0.125rem 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+
+.factorTags .negative {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.weight {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.weightTrack {
+  display: block;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--meter-track);
+  overflow: hidden;
+}
+
+.weightFill {
+  display: block;
+  height: 100%;
+  background: var(--meter-fill);
+}
+
+.caveat {
+  color: var(--text-secondary);
+}
+
+.legend {
+  height: 1rem;
+  max-width: 28rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+.legendScale {
+  display: flex;
+  justify-content: space-between;
+  max-width: 28rem;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.list {
+  display: grid;
+  gap: 0.625rem;
+  padding-left: 1.25rem;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.list strong {
+  color: var(--text);
+}
+
+.closing {
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+@media (min-width: 40rem) {
+  .main {
+    padding-inline: 1.5rem;
+  }
+
+  .steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .factors {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 64rem) {
+  .steps {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

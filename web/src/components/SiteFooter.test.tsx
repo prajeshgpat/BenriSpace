@@ -24,6 +24,8 @@ describe("SiteFooter", () => {
       "NYC Open Data",
       "MTA",
       "NJ Transit",
+      "NCES",
+      "Education Data Portal",
     ]) {
       expect(within(footer).getByRole("link", { name })).toBeInTheDocument();
     }

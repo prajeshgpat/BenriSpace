@@ -28,7 +28,7 @@ function Harness({
 }
 
 describe("FactorControls", () => {
-  it("shows a checkbox for each of the 11 factors, grouped like the score card", () => {
+  it("shows a checkbox for each of the toggleable factors, grouped like the score card", () => {
     render(<Harness />);
 
     expect(screen.getAllByRole("checkbox")).toHaveLength(FACTOR_KEYS.length);
@@ -36,7 +36,7 @@ describe("FactorControls", () => {
       expect(screen.getByRole("group", { name })).toBeInTheDocument();
     }
     const amenities = screen.getByRole("group", { name: "Daily amenities" });
-    expect(within(amenities).getAllByRole("checkbox")).toHaveLength(3);
+    expect(within(amenities).getAllByRole("checkbox")).toHaveLength(5);
   });
 
   it("toggles a factor", async () => {
@@ -48,7 +48,7 @@ describe("FactorControls", () => {
 
     expect(screen.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
     expect(changes.at(-1)?.factors).not.toContain("cafe");
-    expect(screen.getByText("10 of 11 on")).toBeInTheDocument();
+    expect(screen.getByText(`${FACTOR_KEYS.length - 1} of ${FACTOR_KEYS.length} on`)).toBeInTheDocument();
   });
 
   it("selects none and all", async () => {
@@ -62,7 +62,7 @@ describe("FactorControls", () => {
     expect(screen.getByRole("button", { name: "Select none" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Select all" }));
-    expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(11);
+    expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(FACTOR_KEYS.length);
   });
 
   it("applies a preset and marks it pressed", async () => {

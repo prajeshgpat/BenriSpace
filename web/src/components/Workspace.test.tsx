@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 import { ApiError } from "@/lib/api/errors";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
-import { emptySubScores, jsonResponse, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
+import { emptySubScores, jsonResponse, makeAreaBody, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
 import { Workspace } from "./Workspace";
@@ -115,24 +115,42 @@ const liveApi: Responder = (url) =>
     ? jsonResponse(liveExplanationBody)
     : jsonResponse(liveScoreBody);
 
-/** The score endpoints speak HTTP to a fetch mock; the map endpoints are stubbed. */
+const noArea: Responder = () =>
+  jsonResponse({ code: "area_not_found", message: "No area" }, 404);
+
+/**
+ * The score endpoints speak HTTP to a fetch mock; the map endpoints are
+ * stubbed. `/area` has its own mock (404 unless a test says otherwise), so the
+ * score-call assertions below count only score and explanation requests.
+ */
 function setup(
   search = "",
   respond: Responder = liveApi,
   overrides: Partial<ApiClient> = {},
+  respondArea: Responder = noArea,
 ) {
   navigation.search = search;
+  const areaMock = vi.fn<typeof fetch>(async (input) => respondArea(String(input)));
   const fetchMock = vi.fn<typeof fetch>(async (input) => respond(String(input)));
+  const routed: typeof fetch = (input, init) =>
+    String(input).includes("/area?") ? areaMock(input, init) : fetchMock(input, init);
   const getMapCells = vi.fn<ApiClient["getMapCells"]>(async () => cellsResponse());
   const getMapTop = vi.fn<ApiClient["getMapTop"]>(async () => topResponse());
   const client: ApiClient = {
-    ...createApiClient({ baseUrl: "http://api.test/v1", fetch: fetchMock }),
+    ...createApiClient({ baseUrl: "http://api.test/v1", fetch: routed }),
     getMapCells,
     getMapTop,
+    // No street address unless a test asks for one; the card keeps its coordinates.
+    reverseGeocode: vi.fn(async ({ lat, lon }) => ({
+      label: null,
+      latitude: lat,
+      longitude: lon,
+    })),
     ...overrides,
   };
   return {
     fetchMock,
+    areaMock,
     client,
     getMapCells,
     getMapTop,
@@ -157,6 +175,8 @@ const suggestionBody = {
 
 beforeEach(() => {
   navigation.search = "";
+  // The workspace lives at /app; the history spies below stop it moving.
+  window.history.replaceState(null, "", "/app");
   pushState = vi
     .spyOn(window.history, "pushState")
     .mockImplementation((_data, _unused, url) => setSearch(url));
@@ -170,7 +190,7 @@ describe("Workspace: scoring an address", () => {
     const { fetchMock } = setup("", liveApi);
 
     expect(
-      screen.getByRole("heading", { name: "How convenient is that address?" }),
+      screen.getByText("Search an address or click the map to see its score."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /close result/i })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("");
@@ -184,7 +204,7 @@ describe("Workspace: scoring an address", () => {
     await user.type(screen.getByRole("combobox", { name: "Address" }), "  350 5th Ave,  New York ");
     await user.click(screen.getByRole("button", { name: "Get score" }));
 
-    expect(pushState).toHaveBeenCalledWith(null, "", "/?address=350+5th+Ave%2C+New+York");
+    expect(pushState).toHaveBeenCalledWith(null, "", "/app?address=350+5th+Ave%2C+New+York");
   });
 
   it("validates before navigating and points the field at the message", async () => {
@@ -230,7 +250,7 @@ describe("Workspace: scoring an address", () => {
       await screen.findByRole("heading", { level: 2, name: "350 5th Ave, New York, NY" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("composite-score")).toHaveTextContent("63");
-    expect(screen.getAllByText("No data")).toHaveLength(10);
+    expect(screen.getAllByText("No data")).toHaveLength(11);
     expect(
       await screen.findByText(/strongest factor is airport drive time/),
     ).toBeInTheDocument();
@@ -315,14 +335,14 @@ describe("Workspace: scoring an address", () => {
     setup("", liveApi);
     const link = screen.getByRole("link", { name: "350 5th Ave, New York, NY" });
 
-    expect(link).toHaveAttribute("href", "/?address=350+5th+Ave%2C+New+York%2C+NY");
+    expect(link).toHaveAttribute("href", "/app?address=350+5th+Ave%2C+New+York%2C+NY");
 
     await user.click(link);
 
     expect(pushState).toHaveBeenCalledWith(
       null,
       "",
-      "/?address=350+5th+Ave%2C+New+York%2C+NY",
+      "/app?address=350+5th+Ave%2C+New+York%2C+NY",
     );
   });
   describe("autocomplete", () => {
@@ -341,7 +361,7 @@ describe("Workspace: scoring an address", () => {
       expect(pushState).toHaveBeenCalledWith(
         null,
         "",
-        "/?address=350+5th+Avenue%2C+New+York%2C+NY&lat=40.7484&lon=-73.9857",
+        "/app?address=350+5th+Avenue%2C+New+York%2C+NY&lat=40.7484&lon=-73.9857",
       );
       expect(input).toHaveValue("350 5th Avenue, New York, NY");
       expect(screen.queryByRole("option", { name: /5th/ })).not.toBeInTheDocument();
@@ -393,7 +413,7 @@ describe("Workspace: scoring an address", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       await user.keyboard("{Enter}");
 
-      expect(pushState).toHaveBeenCalledWith(null, "", "/?address=350+5th+Ave");
+      expect(pushState).toHaveBeenCalledWith(null, "", "/app?address=350+5th+Ave");
     });
 
     it("does not look anything up when the field is filled from the URL", async () => {
@@ -458,10 +478,11 @@ describe("Workspace: the map and its controls", () => {
 
     await waitFor(() => expect(getMapCells).toHaveBeenCalledTimes(2));
     const factors = getMapCells.mock.calls[1][0].factors ?? [];
-    expect(factors).toHaveLength(10);
+    expect(factors).toHaveLength(11);
     expect(factors).not.toContain("cafe");
-    await waitFor(() => expect(getMapTop).toHaveBeenCalledTimes(2));
-    expect(getMapTop.mock.calls[1][0].factors).toEqual(factors);
+    await waitFor(() =>
+      expect(getMapTop.mock.lastCall?.[0].factors).toEqual(factors),
+    );
   });
 
   it("applies a preset", async () => {
@@ -508,16 +529,15 @@ describe("Workspace: the map and its controls", () => {
     );
   });
 
-  it("restores factors, importance and scope from the URL", async () => {
+  it("restores factors and importance from the URL", async () => {
     const { getMapTop } = setup(
-      "factors=grocery%2Ctransit&importance=transit%3Alow&scope=view",
+      "factors=grocery%2Ctransit&importance=transit%3Alow",
     );
 
     expect(
       screen.getByRole("checkbox", { name: /Grocery stores/ }),
     ).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: "This view only" })).toBeChecked();
     await mapReady();
     sendViewport();
     await waitFor(() => expect(getMapTop).toHaveBeenCalled());
@@ -557,7 +577,7 @@ describe("Workspace: the map and its controls", () => {
     expect(replaceState).not.toHaveBeenCalled();
   });
 
-  it("mirrors the view, factors and scope in the URL once the user moves the map", async () => {
+  it("mirrors the view and factors in the URL once the user moves the map", async () => {
     const user = userEvent.setup();
     setup();
     await mapReady();
@@ -566,7 +586,7 @@ describe("Workspace: the map and its controls", () => {
 
     await waitFor(() => {
       const url = String(replaceState.mock.calls.at(-1)?.[2]);
-      expect(url).toContain("/?center=40.7000%2C-74.0000&z=11");
+      expect(url).toContain("/app?center=40.7000%2C-74.0000&z=11");
       expect(url).toContain("factors=grocery%2Cschool");
     });
   });
@@ -583,27 +603,33 @@ describe("Workspace: the map and its controls", () => {
     });
   });
 
-  it("limits best areas to the viewport on request, and follows only the user's own moves", async () => {
-    const user = userEvent.setup();
+  it("ranks best areas for the view, and follows only the user's own moves", async () => {
     const { getMapTop } = setup();
     await mapReady();
     sendViewport();
-    await waitFor(() => expect(getMapTop).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole("radio", { name: "This view only" }));
-
-    await waitFor(() => expect(getMapTop).toHaveBeenCalledTimes(2));
-    expect(getMapTop.mock.calls[1][0]).toMatchObject({
-      bbox: [-74.1, 40.6, -73.9, 40.8],
-      minSeparationKm: 1,
-    });
+    await waitFor(() =>
+      expect(getMapTop).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          bbox: [-74.1, 40.6, -73.9, 40.8],
+          minSeparationMi: 0.6,
+        }),
+        expect.anything(),
+      ),
+    );
+    const calls = getMapTop.mock.calls.length;
 
     sendViewport({ user: false, bbox: [-73.9, 40.7, -73.8, 40.8] as Bbox });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(getMapTop).toHaveBeenCalledTimes(2);
+    expect(getMapTop).toHaveBeenCalledTimes(calls);
 
     sendViewport({ user: true, bbox: [-73.9, 40.7, -73.8, 40.8] as Bbox });
-    await waitFor(() => expect(getMapTop).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(getMapTop).toHaveBeenLastCalledWith(
+        expect.objectContaining({ bbox: [-73.9, 40.7, -73.8, 40.8] }),
+        expect.anything(),
+      ),
+    );
   });
 
   it("passes every returned cell to the map as a polygon and shows the real range", async () => {
@@ -799,7 +825,7 @@ describe("Workspace: choosing a place on the map", () => {
     expect(pushState).toHaveBeenCalledWith(
       null,
       "",
-      "/?address=Area+near+40.755%2C+-73.985&lat=40.7546&lon=-73.985",
+      "/app?address=Area+near+40.755%2C+-73.985&lat=40.7546&lon=-73.985",
     );
     expect(await screen.findByTestId("composite-score")).toHaveTextContent("63");
     expect(String(fetchMock.mock.calls[0][0])).toBe(
@@ -844,7 +870,7 @@ describe("Workspace: choosing a place on the map", () => {
       }),
     );
 
-    expect(pushState).toHaveBeenCalledWith(null, "", "/?lat=40.7&lon=-74");
+    expect(pushState).toHaveBeenCalledWith(null, "", "/app?lat=40.7&lon=-74");
     expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
     expect(String(fetchMock.mock.calls[0][0])).toBe(
       "http://api.test/v1/score?lat=40.7&lon=-74",
@@ -855,6 +881,42 @@ describe("Workspace: choosing a place on the map", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "40.7000, -74.0000" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a street address, not coordinates, for a clicked point", async () => {
+    const reverseGeocode = vi.fn<ApiClient["reverseGeocode"]>(
+      async ({ lat, lon }) => ({
+        label: "14A Rock Street, Jersey City, NJ",
+        latitude: lat,
+        longitude: lon,
+      }),
+    );
+    setup("", liveApi, { reverseGeocode });
+    await mapReady();
+
+    act(() =>
+      map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7276, lon: -74.062 }),
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "14A Rock Street, Jersey City, NJ",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Scored for the area around 14A Rock Street, Jersey City, NJ"),
+    ).toBeInTheDocument();
+    expect(reverseGeocode).toHaveBeenCalledWith(
+      { lat: 40.7276, lon: -74.062 },
+      expect.anything(),
+    );
+  });
+
+  it("does not look up an address for a typed one", async () => {
+    const { client } = setup("address=350+5th+Ave");
+    await screen.findByTestId("composite-score");
+    expect(client.reverseGeocode).not.toHaveBeenCalled();
   });
 
   it("leaves the selected score alone when the map filters change", async () => {
@@ -882,10 +944,10 @@ describe("Workspace: choosing a place on the map", () => {
 
     await user.click(screen.getByRole("button", { name: /close result/i }));
 
-    expect(pushState).toHaveBeenCalledWith(null, "", "/?factors=transit");
+    expect(pushState).toHaveBeenCalledWith(null, "", "/app?factors=transit");
     expect(screen.queryByTestId("composite-score")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "How convenient is that address?" }),
+      screen.getByText("Search an address or click the map to see its score."),
     ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Public transit/ })).toBeChecked();
     expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("");
@@ -925,5 +987,66 @@ describe("Workspace: choosing a place on the map", () => {
     expect(screen.getByText(/can.t be shown in this browser/)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Address" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Rank 1/ })).toBeInTheDocument();
+  });
+});
+
+describe("area polygon", () => {
+  const areaApi: Responder = () => jsonResponse(makeAreaBody());
+
+  it("passes the polygon to the map for a clicked point and suppresses nothing else", async () => {
+    const { fetchMock, areaMock } = setup("", liveApi, {}, areaApi);
+    await mapReady();
+    expect(map().areaGeometry ?? null).toBeNull();
+
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
+
+    expect(
+      await screen.findByText("Area bounded by Broadway, Canal St, Bowery and Houston St"),
+    ).toBeInTheDocument();
+    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+    expect(map().highlightGeohash).toBe("dr5ru7");
+    expect(String(areaMock.mock.calls[0][0])).toBe("http://api.test/v1/area?lat=40.7&lon=-74");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the rectangle when there is no area", async () => {
+    setup();
+    await mapReady();
+
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
+
+    expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
+    expect(map().areaGeometry ?? null).toBeNull();
+    expect(map().highlightGeohash).toBe("dr5ru7");
+    expect(screen.queryByTestId("area-note")).not.toBeInTheDocument();
+  });
+
+  it("re-resolves the area for a shared coordinates URL", async () => {
+    setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
+    expect(await screen.findByTestId("area-note")).toBeInTheDocument();
+    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+  });
+
+  it("keeps a best-areas pick cell-based, with no area request", async () => {
+    const user = userEvent.setup();
+    const { areaMock } = setup("", liveApi, {}, areaApi);
+    await mapReady();
+
+    await user.click(await screen.findByRole("button", { name: /Rank 1/ }));
+
+    expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
+    expect(areaMock).not.toHaveBeenCalled();
+    expect(map().areaGeometry ?? null).toBeNull();
+    expect(map().highlightGeohash).toBe("dr5ru7");
+  });
+
+  it("clears the polygon when the result is closed", async () => {
+    const user = userEvent.setup();
+    setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
+    await screen.findByTestId("area-note");
+
+    await user.click(screen.getByRole("button", { name: "Close result" }));
+
+    expect(map().areaGeometry ?? null).toBeNull();
   });
 });

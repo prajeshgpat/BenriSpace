@@ -31,7 +31,6 @@ function renderList(
   props: Partial<React.ComponentProps<typeof BestAreas>> = {},
 ) {
   const onSelect = vi.fn();
-  const onScopeChange = vi.fn();
   const onRetry = vi.fn();
   render(
     <BestAreas
@@ -39,15 +38,13 @@ function renderList(
       results={RESULTS}
       error={null}
       selectedFactors={["grocery", "transit"]}
-      scope="metro"
-      onScopeChange={onScopeChange}
       activeGeohash={null}
       onSelect={onSelect}
       onRetry={onRetry}
       {...props}
     />,
   );
-  return { onSelect, onScopeChange, onRetry };
+  return { onSelect, onRetry };
 }
 
 describe("BestAreas", () => {
@@ -74,8 +71,6 @@ describe("BestAreas", () => {
     const user = userEvent.setup();
     const { onSelect } = renderList();
 
-    // The radio group is a single tab stop, then the first area.
-    await user.tab();
     await user.tab();
     const [first] = screen.getAllByRole("button", { name: /Rank 1/ });
     expect(first).toHaveFocus();
@@ -98,14 +93,9 @@ describe("BestAreas", () => {
     );
   });
 
-  it("switches scope with radios", async () => {
-    const user = userEvent.setup();
-    const { onScopeChange } = renderList();
-
-    expect(screen.getByRole("radio", { name: "Whole metro" })).toBeChecked();
-    await user.click(screen.getByRole("radio", { name: "This view only" }));
-
-    expect(onScopeChange).toHaveBeenCalledWith("view");
+  it("has no scope choice: the list always follows the view", () => {
+    renderList();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
   it("says so when nothing is selected, without a list", () => {
@@ -119,8 +109,8 @@ describe("BestAreas", () => {
     expect(screen.getByText("Finding the best areas…")).toBeInTheDocument();
   });
 
-  it("shows an empty state that depends on scope", () => {
-    renderList({ results: [], scope: "view" });
+  it("shows an empty state for the current view", () => {
+    renderList({ results: [] });
     expect(
       screen.getByText(/No scored areas in this view/),
     ).toBeInTheDocument();

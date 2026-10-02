@@ -1,7 +1,7 @@
 import styles from "./LocateButton.module.css";
 
 interface LocateButtonProps {
-  variant: "panel" | "map";
+  variant: "field" | "map";
   locating: boolean;
   disabled?: boolean;
   describedBy?: string;
@@ -24,8 +24,8 @@ export function LocateButton({
       disabled={disabled || locating}
       aria-busy={locating || undefined}
       aria-describedby={describedBy}
-      aria-label={variant === "map" ? label : undefined}
-      title={variant === "map" ? label : undefined}
+      aria-label={label}
+      title={label}
     >
       <svg
         className={styles.icon}
@@ -38,7 +38,6 @@ export function LocateButton({
         <circle className={styles.dot} cx="12" cy="12" r="1.75" />
         <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
       </svg>
-      {variant === "panel" ? <span>{label}</span> : null}
     </button>
   );
 }

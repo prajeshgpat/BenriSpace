@@ -34,7 +34,7 @@ describe("resultHref", () => {
     const address = "350 5th Ave, New York, NY #2 & more";
     const href = resultHref(address);
 
-    expect(href.startsWith("/?address=")).toBe(true);
+    expect(href.startsWith("/app?address=")).toBe(true);
     expect(new URL(href, "https://benrispace.com").searchParams.get("address")).toBe(
       address,
     );
