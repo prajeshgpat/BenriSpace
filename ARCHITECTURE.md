@@ -1,7 +1,7 @@
 # BenriSpace — Architecture
 
 BenriSpace scores NYC-metro locations on how convenient daily life is there
-(groceries, transit, schools, trails, road noise, airports…). Scores are
+(groceries, transit, schools, trails, noise corridor, airports…). Scores are
 **precomputed in batch** and served read-only, so live traffic never touches a
 rate-limited third-party API.
 
@@ -59,11 +59,11 @@ flowchart LR
   grid["grid_generation<br/>64,320 geohash6 cells"]
 
   subgraph jobs["Ingestion jobs · run in parallel · one source query per metro area"]
-    poi["osm_poi<br/>groceries · gyms · cafes · gas · convenience<br/>source: OSM Overpass"]
-    roads["osm_roads<br/>congestion · corridor noise<br/>source: OSM Overpass"]
-    trails["trails<br/>running paths<br/>source: OSM Overpass + optional Strava"]
+    poi["osm_poi<br/>groceries · gyms · cafes · restaurants · bars<br/>gas · convenience · Whole Foods/Starbucks/Target<br/>source: OSM Overpass"]
+    roads["osm_roads<br/>congestion · corridor noise<br/>fire/hospital/police locations<br/>source: OSM Overpass"]
+    trails["trails<br/>running route popularity (underlying)<br/>source: OSM Overpass + optional Strava enrichment (not configured)"]
     transit["gtfs_transit<br/>stops by agency<br/>source: MTA · LIRR · Metro-North feeds"]
-    schools["schools<br/>count · distance · attendance<br/>source: NYC Open Data"]
+    schools["schools<br/>count · distance · district rating<br/>source: NCES + EDFacts (Urban Institute)"]
     airports["airports<br/>drive time<br/>JFK · LGA · EWR hardcoded"]
   end
 

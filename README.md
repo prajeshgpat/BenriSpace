@@ -4,13 +4,15 @@
 
 *Benri* (便利) means "convenient". BenriSpace scores any address in the New York metro area on how convenient daily life is there, and shows where the convenient places are on a map.
 
-Each location gets a 0–100 score built from 11 factors: grocery, gym, cafe, gas station, convenience store, transit, school, road access, emergency corridor, airport, and trail popularity.
+Each location gets a 0–100 score built from 14 factors: grocery, gym, cafe, restaurant, bar, gas station, convenience store, transit, school, road access, noise corridor, airport, and two underlying signals, premium retail and running route popularity. The website lets you toggle the 12 others; the two underlying signals always count toward the overall score. "Noise corridor" (API key `emergencyCorridor`) means main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely (a rough proxy, weight 0.75). Running route popularity is built from mapped running trails in OpenStreetMap; Strava segment popularity is an optional enrichment that is not configured today.
 
 ## Using the website
 
-- **One split-screen page.** The map fills the right side (stacked under a search bar on phones); the left panel holds search, results and filters.
+- **Home (`/`).** A static explainer: what the app does, how a score is built, each factor with its weight and caveats, how to read the map, and the data sources.
+- **The app (`/app`).** One split-screen page. The map fills the right side (stacked under a search bar on phones); the left panel holds search, results and filters. Shared links live here, e.g. `/app?address=...`; old links with those parameters on `/` and `/map` redirect to `/app`.
+- **Navigation.** Tabs Home, App, API (`/docs`) and Pricing, plus a gear, Login and a lightbulb button.
 - **Score an address.** Type an address and pick a suggestion (or press Enter). The map flies there and the panel shows the overall score, each factor's sub-score, and a plain-language explanation. Clicking a map cell or a Best-areas entry scores that spot too.
-- **Explore the map.** Cells are coloured by score. Toggle factors on and off, pick a preset (Daily errands, Family, Commuter, Quiet), or set how much each factor matters. The **Best areas** list ranks the strongest spots for the factors you chose.
+- **Explore the map.** Cells are coloured by score. Toggle the 12 user-facing factors on and off (premium retail and running route popularity are underlying and not toggleable), pick a preset (Daily errands, Family, Commuter, Quiet), or set how much each factor matters. The **Best areas** list ranks the strongest spots for the factors you chose.
 - **No area scores 100 on everything.** Scores are relative within each metro area, so pick one or two factors to see where each is at its maximum.
 
 Coverage: NYC, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County, CT.
