@@ -5,8 +5,15 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, type MouseEvent } from "react";
 
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
-import { ADDRESS_PARAM, resultHref, validateAddress } from "@/lib/address";
+import {
+  ADDRESS_PARAM,
+  resolveTarget,
+  resultHref,
+  targetKey,
+  targetLabel,
+} from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
+import type { Suggestion } from "@/lib/api/types";
 import { API_BASE_URL } from "@/lib/config";
 import { bandLabel, roundScore } from "@/lib/score/presentation";
 import { EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
@@ -47,13 +54,12 @@ interface ScoreExplorerProps {
 }
 
 export function ScoreExplorer({ client = defaultClient }: ScoreExplorerProps) {
-  const rawAddress = useSearchParams().get(ADDRESS_PARAM);
+  const params = useSearchParams();
+  const rawAddress = params.get(ADDRESS_PARAM);
+  const { target, error: urlError } = resolveTarget(params);
+  const address = target ? targetLabel(target) : null;
 
-  const validation = rawAddress === null ? null : validateAddress(rawAddress);
-  const address = validation?.ok ? validation.value : null;
-  const urlError = validation && !validation.ok ? validation.message : null;
-
-  const { state, retry } = useScoreLookup(address, client);
+  const { state, retry } = useScoreLookup(target, client);
 
   // Deliberately runs after every commit: on a direct load of a result URL
   // Next hydrates its own <title> after this component's first effect and
@@ -62,8 +68,9 @@ export function ScoreExplorer({ client = defaultClient }: ScoreExplorerProps) {
     document.title = address ? resultTitle(address) : SITE_TITLE;
   });
 
-  function handleSearch(next: string) {
-    if (next === address) {
+  function navigate(href: string) {
+    const next = resolveTarget(new URLSearchParams(href.slice(href.indexOf("?"))));
+    if (next.target && target && targetKey(next.target) === targetKey(target)) {
       retry();
       return;
     }
@@ -71,16 +78,23 @@ export function ScoreExplorer({ client = defaultClient }: ScoreExplorerProps) {
     // nothing to fetch from the Next.js server. Native pushState keeps
     // useSearchParams in sync without an RSC round trip, and without the
     // router moving focus to the top of the page.
-    window.history.pushState(null, "", resultHref(next));
+    window.history.pushState(null, "", href);
   }
+
+  const handleSearch = (next: string) => navigate(resultHref(next));
+
+  const handleSelectSuggestion = ({ label, latitude, longitude }: Suggestion) =>
+    navigate(resultHref(label, { lat: latitude, lon: longitude }));
 
   return (
     <>
       <div className={styles.search}>
         <AddressSearch
-          initialValue={rawAddress ?? ""}
+          initialValue={rawAddress ?? (address ?? "")}
           initialError={urlError}
           onSearch={handleSearch}
+          onSelectSuggestion={handleSelectSuggestion}
+          suggestClient={client}
         />
         <p className={styles.examples}>
           <span className={styles.examplesLabel}>Try</span>

@@ -14,7 +14,14 @@
   gap: 0.5rem;
 }
 
+.field {
+  position: relative;
+  flex: none;
+  min-width: 0;
+}
+
 .input {
+  width: 100%;
   flex: none;
   min-width: 0;
   height: 3rem;
@@ -63,12 +70,61 @@
   font-weight: 500;
 }
 
+.listbox {
+  position: absolute;
+  inset: calc(100% + 0.25rem) 0 auto;
+  z-index: 20;
+  max-height: min(20rem, 50dvh);
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.listbox[hidden] {
+  display: none;
+}
+
+.option {
+  display: grid;
+  gap: 0.0625rem;
+  padding: 0.625rem 0.875rem 0.625rem calc(0.875rem - 3px);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+
+.option + .option {
+  border-top: 1px solid var(--border);
+}
+
+.option:hover,
+.option[data-active] {
+  background: var(--surface-sunken);
+}
+
+/* A bar as well as a fill, so the active option does not rely on colour. */
+.option[data-active] {
+  border-left-color: var(--accent);
+}
+
+.optionPrimary {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.optionSecondary {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
 @media (min-width: 30rem) {
   .row {
     flex-direction: row;
   }
 
-  .input {
+  .field {
     flex: 1;
   }
 }

@@ -3,40 +3,9 @@
   flex-direction: column;
   width: 100%;
   max-width: var(--content-width);
-  min-height: 100dvh;
+  flex: 1;
   margin: 0 auto;
   padding: 0 1rem;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.25rem 0;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 1.0625rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.mark {
-  width: 1.5rem;
-  height: 1.5rem;
-  color: var(--accent);
-}
-
-.region {
-  padding: 0.125rem 0.625rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
 }
 
 .main {
@@ -65,13 +34,6 @@
   color: var(--text-secondary);
   font-size: 1.0625rem;
   text-wrap: pretty;
-}
-
-.footer {
-  padding: 1.25rem 0 2rem;
-  border-top: 1px solid var(--border);
-  color: var(--text-subtle);
-  font-size: 0.8125rem;
 }
 
 @media (min-width: 40rem) {

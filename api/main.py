@@ -22,7 +22,7 @@ the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
 
 from uuid import UUID
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -35,27 +35,40 @@ from api.lookup import (
     nearest_geo_entity,
     sub_scores_from_score_row,
 )
+from api.mapdata import (
+    InvalidMapRequest,
+    build_cells_response,
+    find_top,
+    parse_bbox,
+    parse_score_spec,
+)
 from api.schemas import (
     AnchorPoint,
     Error,
     ExplanationResponse,
+    MapCellsResponse,
+    MapTopResponse,
     RankedAddress,
     ScoreResponse,
+    SuggestResponse,
     TriangulateRequest,
     TriangulateResponse,
 )
+from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, normalize_query
+from api.suggest import suggest as suggest_addresses
 from api.triangulate import anchor_to_circle, rank_candidates
-from common.config import CORS_ALLOWED_ORIGINS
+from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
 from common.db import (
     get_connection,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
     get_latest_score,
+    get_map_cells,
     iter_latest_scored_geo_entities,
 )
 from common.geo import encode as geohash_encode
 
-app = FastAPI(title="BenriSpace API", version="0.3.1")
+app = FastAPI(title="BenriSpace API", version="0.4.0")
 
 # The frontend is a separate origin (benrispace.com / localhost:3000) from
 # the API (api.benrispace.com / localhost:8000), so browsers need CORS.
@@ -201,3 +214,84 @@ def triangulate(body: TriangulateRequest):
         for r in ranked
     ]
     return TriangulateResponse(results=results)
+
+
+CACHE_CONTROL_5_MIN = "public, max-age=300"
+
+
+@app.get(
+    "/v1/suggest",
+    response_model=SuggestResponse,
+    responses={400: {"model": Error}, 503: {"model": Error}},
+)
+def suggest(
+    response: Response,
+    q: str = Query(max_length=200, description="Text typed so far. At least 3 characters."),
+    limit: int = Query(default=5, ge=1, le=10),
+):
+    q = normalize_query(q)
+    if len(q) < MIN_QUERY_LENGTH:
+        return _error(
+            400, "invalid_request", f"q must be at least {MIN_QUERY_LENGTH} characters."
+        )
+    try:
+        suggestions = suggest_addresses(q, limit)
+    except SuggestUnavailable:
+        return _error(503, "suggest_unavailable", "Address suggestions are temporarily unavailable.")
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return SuggestResponse(suggestions=suggestions)
+
+
+@app.get(
+    "/v1/map/cells",
+    response_model=MapCellsResponse,
+    responses={400: {"model": Error}},
+)
+def get_map_cells_route(
+    response: Response,
+    bbox: str = Query(description="Viewport as minLon,minLat,maxLon,maxLat."),
+    precision: int = Query(default=6, json_schema_extra={"enum": [5, 6]}),
+    factors: str | None = Query(default=None),
+    weights: str | None = Query(default=None),
+    limit: int = Query(default=8000, ge=1, le=20000),
+):
+    if precision not in (5, 6):
+        return _error(400, "invalid_request", "precision must be 5 or 6.")
+    try:
+        parsed_bbox = parse_bbox(bbox)
+        spec = parse_score_spec(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
+
+    with get_connection() as conn:
+        # limit + 1 rows reveals whether the viewport held more than `limit`.
+        rows = get_map_cells(
+            conn, spec.columns_weights, SCORING_WEIGHTS_VERSION, parsed_bbox, precision, limit + 1
+        )
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return build_cells_response(rows, spec, precision, limit)
+
+
+@app.get(
+    "/v1/map/top",
+    response_model=MapTopResponse,
+    responses={400: {"model": Error}},
+)
+def get_map_top(
+    response: Response,
+    bbox: str | None = Query(default=None),
+    factors: str | None = Query(default=None),
+    weights: str | None = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=50),
+    min_separation_km: float = Query(default=3.0, ge=0, le=50, alias="minSeparationKm"),
+):
+    try:
+        parsed_bbox = parse_bbox(bbox) if bbox is not None else None
+        spec = parse_score_spec(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
+
+    with get_connection() as conn:
+        result = find_top(conn, spec, parsed_bbox, limit, min_separation_km)
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return result

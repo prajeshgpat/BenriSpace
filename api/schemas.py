@@ -91,3 +91,40 @@ class RankedAddress(CamelModel):
 
 class TriangulateResponse(CamelModel):
     results: list[RankedAddress]
+
+
+class Suggestion(CamelModel):
+    label: str
+    latitude: float
+    longitude: float
+
+
+class SuggestResponse(CamelModel):
+    suggestions: list[Suggestion]
+
+
+class MapCellsResponse(CamelModel):
+    precision: int
+    factors: list[str]
+    weights: dict[str, float]
+    weights_version: str
+    count: int
+    truncated: bool
+    geohashes: list[str]
+    scores: list[float]
+
+
+class MapTopResult(CamelModel):
+    geohash: str
+    latitude: float
+    longitude: float
+    score: float
+    metro_area: str
+    sub_scores: SubScores
+
+
+class MapTopResponse(CamelModel):
+    factors: list[str]
+    weights: dict[str, float]
+    weights_version: str
+    results: list[MapTopResult]

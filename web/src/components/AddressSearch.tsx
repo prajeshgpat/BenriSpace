@@ -1,12 +1,23 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 
+import { useAddressSuggestions } from "@/hooks/useAddressSuggestions";
 import {
   ADDRESS_MAX_LENGTH,
   ADDRESS_PARAM,
   validateAddress,
 } from "@/lib/address";
+import type { ApiClient } from "@/lib/api/client";
+import type { Suggestion } from "@/lib/api/types";
+import { describeCount, optionId } from "@/lib/suggest/combobox";
 
 import styles from "./AddressSearch.module.css";
 
@@ -18,21 +29,36 @@ interface AddressSearchProps {
    * back to a native GET submission to the same URL shape.
    */
   onSearch?: (address: string) => void;
+  /**
+   * Enables autocomplete. A chosen suggestion already carries coordinates, so
+   * it bypasses geocoding.
+   */
+  onSelectSuggestion?: (suggestion: Suggestion) => void;
+  suggestClient?: Pick<ApiClient, "suggestAddresses">;
 }
 
 export function AddressSearch({
   initialValue = "",
   initialError = null,
   onSearch,
+  onSelectSuggestion,
+  suggestClient,
 }: AddressSearchProps) {
   const id = useId();
   const inputId = `${id}-input`;
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
+  const listboxId = `${id}-listbox`;
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initialValue);
   const [error, setError] = useState<string | null>(initialError);
+
+  const autocomplete = Boolean(onSelectSuggestion && suggestClient);
+  const suggestions = useAddressSuggestions(autocomplete ? suggestClient! : null);
+  const { state, open } = suggestions;
+  const { reset } = suggestions;
+  const activeIndex = open ? state.activeIndex : -1;
 
   // The URL owns the searched address. When it changes underneath the form
   // (back/forward, an example link) resync during render rather than
@@ -43,6 +69,10 @@ export function AddressSearch({
     setValue(initialValue);
     setError(initialError);
   }
+
+  // A value that arrives from outside the field is never a reason to look up
+  // suggestions, and any lookup still pending is for text that is gone.
+  useEffect(() => reset(), [initialValue, reset]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     if (!onSearch) return;
@@ -55,7 +85,48 @@ export function AddressSearch({
       return;
     }
     setError(null);
+    reset();
     onSearch(result.value);
+  }
+
+  function select(suggestion: Suggestion) {
+    setValue(suggestion.label);
+    setError(null);
+    reset();
+    onSelectSuggestion?.(suggestion);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (!autocomplete || event.nativeEvent.isComposing) return;
+
+    switch (event.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        if (state.suggestions.length === 0) return;
+        event.preventDefault();
+        suggestions.navigate(event.key);
+        break;
+      case "Home":
+      case "End":
+        if (!open) return;
+        event.preventDefault();
+        suggestions.navigate(event.key);
+        break;
+      case "Enter":
+        if (open && activeIndex >= 0) {
+          event.preventDefault();
+          select(state.suggestions[activeIndex]);
+        }
+        break;
+      case "Escape":
+        if (!open) return;
+        event.preventDefault();
+        suggestions.dismiss();
+        break;
+      case "Tab":
+        suggestions.dismiss();
+        break;
+    }
   }
 
   return (
@@ -71,31 +142,70 @@ export function AddressSearch({
         Address
       </label>
       <div className={styles.row}>
-        <input
-          ref={inputRef}
-          id={inputId}
-          className={styles.input}
-          type="text"
-          name={ADDRESS_PARAM}
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value);
-            if (error) setError(null);
-          }}
-          placeholder="350 5th Ave, New York, NY"
-          maxLength={ADDRESS_MAX_LENGTH}
-          autoComplete="off"
-          autoCapitalize="words"
-          spellCheck={false}
-          enterKeyHint="search"
-          required
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? `${errorId} ${hintId}` : hintId}
-        />
+        <div className={styles.field}>
+          <input
+            ref={inputRef}
+            id={inputId}
+            className={styles.input}
+            type="text"
+            name={ADDRESS_PARAM}
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+              if (error) setError(null);
+              if (autocomplete) suggestions.handleInput(event.target.value);
+            }}
+            onKeyDown={handleKeyDown}
+            onBlur={autocomplete ? suggestions.dismiss : undefined}
+            placeholder="350 5th Ave, New York, NY"
+            maxLength={ADDRESS_MAX_LENGTH}
+            autoComplete="off"
+            autoCapitalize="words"
+            spellCheck={false}
+            enterKeyHint="search"
+            required
+            {...(autocomplete
+              ? {
+                  role: "combobox",
+                  "aria-autocomplete": "list" as const,
+                  "aria-expanded": open,
+                  "aria-controls": listboxId,
+                  "aria-activedescendant":
+                    activeIndex >= 0 ? optionId(listboxId, activeIndex) : undefined,
+                }
+              : {})}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? `${errorId} ${hintId}` : hintId}
+          />
+          {autocomplete ? (
+            <ul
+              id={listboxId}
+              className={styles.listbox}
+              role="listbox"
+              aria-label="Address suggestions"
+              hidden={!open}
+            >
+              {state.suggestions.map((suggestion, index) => (
+                <SuggestionOption
+                  key={`${suggestion.label}:${suggestion.latitude},${suggestion.longitude}`}
+                  id={optionId(listboxId, index)}
+                  suggestion={suggestion}
+                  active={index === activeIndex}
+                  onSelect={select}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </div>
         <button className={styles.button} type="submit">
           Get score
         </button>
       </div>
+      {autocomplete ? (
+        <p className="sr-only" role="status">
+          {open ? describeCount(state.suggestions.length) : ""}
+        </p>
+      ) : null}
       {error ? (
         <p id={errorId} className={styles.error} role="alert">
           {error}
@@ -106,5 +216,35 @@ export function AddressSearch({
         York City.
       </p>
     </form>
+  );
+}
+
+interface SuggestionOptionProps {
+  id: string;
+  suggestion: Suggestion;
+  active: boolean;
+  onSelect: (suggestion: Suggestion) => void;
+}
+
+function SuggestionOption({ id, suggestion, active, onSelect }: SuggestionOptionProps) {
+  const comma = suggestion.label.indexOf(",");
+  const primary = comma === -1 ? suggestion.label : suggestion.label.slice(0, comma);
+  const secondary = comma === -1 ? "" : suggestion.label.slice(comma + 1).trim();
+
+  return (
+    <li
+      id={id}
+      className={styles.option}
+      role="option"
+      aria-selected={active}
+      data-active={active || undefined}
+      // Keeps focus in the input so a click does not blur and close the list
+      // before the click registers.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => onSelect(suggestion)}
+    >
+      <span className={styles.optionPrimary}>{primary}</span>
+      {secondary ? <span className={styles.optionSecondary}>{secondary}</span> : null}
+    </li>
   );
 }

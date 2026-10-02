@@ -10,3 +10,12 @@ export function resolveApiBaseUrl(value: string | undefined): string {
 export const API_BASE_URL = resolveApiBaseUrl(
   process.env.NEXT_PUBLIC_API_BASE_URL,
 );
+
+/**
+ * Every host the map needs lives here: the style JSON, vector tiles, glyphs
+ * and sprites are all served from this one origin. next.config.ts builds the
+ * Content-Security-Policy from it, so changing the basemap provider is a
+ * one-line edit.
+ */
+export const BASEMAP_ORIGIN = "https://tiles.openfreemap.org";
+export const BASEMAP_STYLE_URL = `${BASEMAP_ORIGIN}/styles/liberty`;

@@ -1,3 +1,4 @@
+import type { ApiClient } from "@/lib/api/client";
 import type { Explanation, Score, SubScores } from "@/lib/api/types";
 
 export const GEO_ENTITY_ID = "21c5d4bd-e66e-423b-8f4c-8e569604f187";
@@ -85,4 +86,20 @@ export function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/** An ApiClient whose methods all reject, so a test only stubs what it exercises. */
+export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
+  const unexpected = (name: string) => async () => {
+    throw new Error(`Unexpected call to ${name}`);
+  };
+  return {
+    getScore: unexpected("getScore"),
+    getScoreByCoordinates: unexpected("getScoreByCoordinates"),
+    getScoreExplanation: unexpected("getScoreExplanation"),
+    suggestAddresses: unexpected("suggestAddresses"),
+    getMapCells: unexpected("getMapCells"),
+    getMapTop: unexpected("getMapTop"),
+    ...overrides,
+  };
 }

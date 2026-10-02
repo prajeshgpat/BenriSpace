@@ -55,6 +55,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Address autocomplete for the search box.
+         * @description Returns up to `limit` place suggestions for a partially typed address, restricted to the covered metro area. Proxies a third-party geocoder (Photon, OpenStreetMap data) so the browser never talks to it directly and the provider can be swapped without a frontend change. Pass a suggestion's coordinates straight to `GET /score?lat=&lon=` — that skips geocoding entirely.
+         */
+        get: operations["suggestAddresses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/map/cells": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Composite score per grid cell inside a map viewport.
+         * @description Recomputes a composite score for every grid cell in `bbox` from the stored per-factor sub-scores, using only the factors you enable. It is a weighted average of precomputed numbers, not a recomputation from raw data, so it is cheap enough to call as the user toggles filters. Cells are returned as two parallel arrays (geohash cells and their scores) to keep the payload small. Zoomed out, request `precision=5` to get ~5 km cells (the average of the finer cells) instead of ~1 km cells.
+         */
+        get: operations["getMapCells"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/map/top": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The best-scoring, well-separated areas for a set of factors.
+         * @description Answers "where should I look?". Ranks cells by the same composite as `/map/cells`, then greedily keeps the best ones that are at least `minSeparationKm` apart, so you get distinct neighborhoods instead of ten adjacent cells in the same block. Scores are relative within each metro area, so no location scores 100 on *every* factor together; narrowing `factors` to one or two shows where each is at its maximum.
+         */
+        get: operations["getMapTop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -141,6 +201,58 @@ export interface components {
         };
         TriangulateResponse: {
             results: components["schemas"]["RankedAddress"][];
+        };
+        /**
+         * @description A scoring factor. Same keys as `SubScores`.
+         * @enum {string}
+         */
+        FactorKey: "grocery" | "gym" | "cafe" | "gasStation" | "convenienceStore" | "transit" | "school" | "road" | "emergencyCorridor" | "airport" | "trailPopularity";
+        Suggestion: {
+            /** @example 350 5th Avenue, New York, NY */
+            label: string;
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+        };
+        SuggestResponse: {
+            suggestions: components["schemas"]["Suggestion"][];
+        };
+        MapCellsResponse: {
+            precision: number;
+            /** @description The factors actually used. */
+            factors: components["schemas"]["FactorKey"][];
+            /** @description The weight applied to each used factor. */
+            weights: {
+                [key: string]: number;
+            };
+            weightsVersion: string;
+            count: number;
+            /** @description True when the viewport held more cells than `limit`; zoom in or raise the limit. */
+            truncated: boolean;
+            geohashes: string[];
+            /** @description Composite score 0-100 for `geohashes[i]`; same length as `geohashes`. */
+            scores: number[];
+        };
+        MapTopResult: {
+            geohash: string;
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            /** @description Composite for the requested factors/weights. */
+            score: number;
+            /** @example nyc */
+            metroArea: string;
+            subScores: components["schemas"]["SubScores"];
+        };
+        MapTopResponse: {
+            factors: components["schemas"]["FactorKey"][];
+            weights: {
+                [key: string]: number;
+            };
+            weightsVersion: string;
+            results: components["schemas"]["MapTopResult"][];
         };
     };
     responses: {
@@ -302,6 +414,133 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    suggestAddresses: {
+        parameters: {
+            query: {
+                /** @description Text typed so far. At least 3 characters. */
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Zero or more suggestions, best match first. */
+            200: {
+                headers: {
+                    /** @description Suggestions are cacheable for a few minutes. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestResponse"];
+                };
+            };
+            /** @description Missing or too-short `q`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The geocoding provider is unavailable. Clients should degrade quietly to plain-text search rather than show an error. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMapCells: {
+        parameters: {
+            query: {
+                /** @description Viewport as `minLon,minLat,maxLon,maxLat`. */
+                bbox: string;
+                /** @description Geohash length of the returned cells. 6 ≈ 1.2 km × 0.6 km, 5 ≈ 4.9 km × 4.9 km. */
+                precision?: 5 | 6;
+                /** @description Comma-separated factors to include (see `FactorKey`). Omit for all eleven. At least one is required if present. */
+                factors?: string;
+                /** @description Optional `factor:weight` overrides, e.g. `transit:2,cafe:0.5`. Weights must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use the default hand-tuned weight. Overrides for factors not in `factors` are ignored. */
+                weights?: string;
+                /** @description Maximum cells returned; `truncated` is true when more existed. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scores for the cells in the viewport. */
+            200: {
+                headers: {
+                    /** @description Scores only change when the weekly refresh runs. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapCellsResponse"];
+                };
+            };
+            /** @description Invalid bbox, unknown factor, or malformed weights. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMapTop: {
+        parameters: {
+            query?: {
+                /** @description Restrict to a viewport (`minLon,minLat,maxLon,maxLat`). Omit for the whole covered area. */
+                bbox?: string;
+                /** @description Same as `/map/cells`. */
+                factors?: string;
+                /** @description Same as `/map/cells`. */
+                weights?: string;
+                limit?: number;
+                /** @description Minimum distance between returned areas. */
+                minSeparationKm?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Best areas first. */
+            200: {
+                headers: {
+                    /** @description Scores only change when the weekly refresh runs. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapTopResponse"];
+                };
+            };
+            /** @description Invalid bbox, unknown factor, or malformed weights. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
 }

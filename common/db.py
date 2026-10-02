@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from common.config import DATABASE_URL
+from scoring.engine import CATEGORY_SPECS
 
 # feature_store columns typed `jsonb` in schema.sql -- values for these
 # must be wrapped with Jsonb() before binding, or psycopg's default list/
@@ -248,3 +249,133 @@ def iter_latest_scored_geo_entities(conn: psycopg.Connection) -> Iterator[dict]:
     with conn.cursor() as cur:
         cur.execute(sql)
         yield from cur
+
+
+# --- Map queries (GET /map/cells, GET /map/top). The composite is a weighted
+# average of the STORED sub-scores, computed in SQL so a viewport of tens of
+# thousands of cells never crosses the wire as raw rows. Semantics match
+# scoring.engine.compute_composite: only non-null sub-scores contribute, to
+# both numerator and denominator; a row with every selected factor null has
+# no composite (NULL) and is dropped.
+
+MAP_SCORE_COLUMNS = frozenset(spec.score_column for spec in CATEGORY_SPECS)
+
+# (min_lon, min_lat, max_lon, max_lat)
+MapBbox = tuple[float, float, float, float]
+
+_BBOX_WHERE = "and ge.latitude between %s and %s and ge.longitude between %s and %s"
+
+
+def build_composite_sql(columns_weights: list[tuple[str, float]]) -> tuple[str, list[float]]:
+    """SQL expression (alias `s` = scores) and its bound params, in text order.
+    Column names come only from the scoring.engine whitelist; weights are
+    bound parameters."""
+    if not columns_weights:
+        raise ValueError("at least one factor is required")
+    unknown = {col for col, _ in columns_weights} - MAP_SCORE_COLUMNS
+    if unknown:
+        raise ValueError(f"not a scores column: {sorted(unknown)}")
+    numerator = " + ".join(f"coalesce(s.{col}, 0) * %s::float8" for col, _ in columns_weights)
+    denominator = " + ".join(
+        f"(case when s.{col} is null then 0 else %s::float8 end)" for col, _ in columns_weights
+    )
+    weights = [float(w) for _, w in columns_weights]
+    return f"(({numerator}) / nullif({denominator}, 0))", weights + weights
+
+
+def _bbox_params(bbox: MapBbox | None) -> list[float]:
+    if bbox is None:
+        return []
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return [min_lat, max_lat, min_lon, max_lon]
+
+
+def build_map_cells_sql(
+    columns_weights: list[tuple[str, float]],
+    weights_version: str,
+    bbox: MapBbox,
+    precision: int,
+    limit: int,
+) -> tuple[str, list]:
+    expr, expr_params = build_composite_sql(columns_weights)
+    params: list = [*expr_params, weights_version, *_bbox_params(bbox)]
+    if precision == 6:
+        sql = f"""
+            select geohash, score from (
+                select ge.geohash as geohash, {expr} as score
+                from scores s join geo_entities ge on ge.id = s.geo_entity_id
+                where s.weights_version = %s {_BBOX_WHERE}
+            ) t
+            where score is not null
+            order by geohash
+            limit %s
+        """
+    elif precision == 5:
+        sql = f"""
+            select g5 as geohash, avg(score) as score from (
+                select left(ge.geohash, 5) as g5, {expr} as score
+                from scores s join geo_entities ge on ge.id = s.geo_entity_id
+                where s.weights_version = %s {_BBOX_WHERE}
+            ) t
+            where score is not null
+            group by g5
+            order by g5
+            limit %s
+        """
+    else:
+        raise ValueError("precision must be 5 or 6")
+    params.append(limit)
+    return sql, params
+
+
+def build_map_top_sql(
+    columns_weights: list[tuple[str, float]],
+    weights_version: str,
+    bbox: MapBbox | None,
+    pool: int,
+) -> tuple[str, list]:
+    expr, expr_params = build_composite_sql(columns_weights)
+    sub_score_columns = ", ".join(f"s.{spec.score_column}" for spec in CATEGORY_SPECS)
+    bbox_sql = _BBOX_WHERE if bbox is not None else ""
+    sql = f"""
+        select * from (
+            select ge.geohash, ge.latitude, ge.longitude, ge.metro_area,
+                   {sub_score_columns}, {expr} as score
+            from scores s join geo_entities ge on ge.id = s.geo_entity_id
+            where s.weights_version = %s {bbox_sql}
+        ) t
+        where score is not null
+        order by score desc, geohash
+        limit %s
+    """
+    return sql, [*expr_params, weights_version, *_bbox_params(bbox), pool]
+
+
+def get_map_cells(
+    conn: psycopg.Connection,
+    columns_weights: list[tuple[str, float]],
+    weights_version: str,
+    bbox: MapBbox,
+    precision: int,
+    limit: int,
+) -> list[dict]:
+    """Up to `limit` rows of {geohash, score}, ordered by geohash."""
+    sql, params = build_map_cells_sql(columns_weights, weights_version, bbox, precision, limit)
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return list(cur)
+
+
+def get_map_top_candidates(
+    conn: psycopg.Connection,
+    columns_weights: list[tuple[str, float]],
+    weights_version: str,
+    bbox: MapBbox | None,
+    pool: int,
+) -> list[dict]:
+    """The `pool` highest-composite cells (with identity and all sub-score
+    columns), best first."""
+    sql, params = build_map_top_sql(columns_weights, weights_version, bbox, pool)
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return list(cur)

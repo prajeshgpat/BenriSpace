@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: BenriSpace API
-  version: "0.3.1"
+  version: "0.4.0"
   description: >
     Phase 0 contract, plus the Phase 4 auth/rate-limit addition (non-breaking:
     new security requirement + new 401/429 responses, no existing fields
@@ -147,6 +147,195 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+
+  /suggest:
+    get:
+      summary: Address autocomplete for the search box.
+      description: >
+        Returns up to `limit` place suggestions for a partially typed address,
+        restricted to the covered metro area. Proxies a third-party geocoder
+        (Photon, OpenStreetMap data) so the browser never talks to it directly
+        and the provider can be swapped without a frontend change. Pass a
+        suggestion's coordinates straight to `GET /score?lat=&lon=` — that
+        skips geocoding entirely.
+      operationId: suggestAddresses
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Text typed so far. At least 3 characters.
+          schema:
+            type: string
+            minLength: 3
+            maxLength: 200
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 5
+      responses:
+        "200":
+          description: Zero or more suggestions, best match first.
+          headers:
+            Cache-Control:
+              description: Suggestions are cacheable for a few minutes.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestResponse"
+        "400":
+          description: Missing or too-short `q`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: >
+            The geocoding provider is unavailable. Clients should degrade
+            quietly to plain-text search rather than show an error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /map/cells:
+    get:
+      summary: Composite score per grid cell inside a map viewport.
+      description: >
+        Recomputes a composite score for every grid cell in `bbox` from the
+        stored per-factor sub-scores, using only the factors you enable. It is
+        a weighted average of precomputed numbers, not a recomputation from
+        raw data, so it is cheap enough to call as the user toggles filters.
+        Cells are returned as two parallel arrays (geohash cells and their
+        scores) to keep the payload small. Zoomed out, request `precision=5`
+        to get ~5 km cells (the average of the finer cells) instead of ~1 km
+        cells.
+      operationId: getMapCells
+      parameters:
+        - name: bbox
+          in: query
+          required: true
+          description: Viewport as `minLon,minLat,maxLon,maxLat`.
+          schema:
+            type: string
+            example: "-74.05,40.68,-73.85,40.82"
+        - name: precision
+          in: query
+          description: Geohash length of the returned cells. 6 ≈ 1.2 km × 0.6 km, 5 ≈ 4.9 km × 4.9 km.
+          schema:
+            type: integer
+            enum: [5, 6]
+            default: 6
+        - name: factors
+          in: query
+          description: >
+            Comma-separated factors to include (see `FactorKey`). Omit for all
+            eleven. At least one is required if present.
+          schema:
+            type: string
+            example: "grocery,transit,trailPopularity"
+        - name: weights
+          in: query
+          description: >
+            Optional `factor:weight` overrides, e.g. `transit:2,cafe:0.5`.
+            Weights must be greater than 0 (to drop a factor, leave it out of
+            `factors`). Factors without an override use the default
+            hand-tuned weight. Overrides for factors not in `factors` are
+            ignored.
+          schema:
+            type: string
+            example: "transit:2,cafe:0.5"
+        - name: limit
+          in: query
+          description: Maximum cells returned; `truncated` is true when more existed.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20000
+            default: 8000
+      responses:
+        "200":
+          description: Scores for the cells in the viewport.
+          headers:
+            Cache-Control:
+              description: Scores only change when the weekly refresh runs.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapCellsResponse"
+        "400":
+          description: Invalid bbox, unknown factor, or malformed weights.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /map/top:
+    get:
+      summary: The best-scoring, well-separated areas for a set of factors.
+      description: >
+        Answers "where should I look?". Ranks cells by the same composite as
+        `/map/cells`, then greedily keeps the best ones that are at least
+        `minSeparationKm` apart, so you get distinct neighborhoods instead of
+        ten adjacent cells in the same block. Scores are relative within each
+        metro area, so no location scores 100 on *every* factor together;
+        narrowing `factors` to one or two shows where each is at its maximum.
+      operationId: getMapTop
+      parameters:
+        - name: bbox
+          in: query
+          description: Restrict to a viewport (`minLon,minLat,maxLon,maxLat`). Omit for the whole covered area.
+          schema:
+            type: string
+        - name: factors
+          in: query
+          description: Same as `/map/cells`.
+          schema:
+            type: string
+        - name: weights
+          in: query
+          description: Same as `/map/cells`.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: minSeparationKm
+          in: query
+          description: Minimum distance between returned areas.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 50
+            default: 3
+      responses:
+        "200":
+          description: Best areas first.
+          headers:
+            Cache-Control:
+              description: Scores only change when the weekly refresh runs.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapTopResponse"
+        "400":
+          description: Invalid bbox, unknown factor, or malformed weights.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
 components:
   securitySchemes:
@@ -351,3 +540,115 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RankedAddress"
+
+    FactorKey:
+      type: string
+      description: A scoring factor. Same keys as `SubScores`.
+      enum:
+        - grocery
+        - gym
+        - cafe
+        - gasStation
+        - convenienceStore
+        - transit
+        - school
+        - road
+        - emergencyCorridor
+        - airport
+        - trailPopularity
+
+    Suggestion:
+      type: object
+      required: [label, latitude, longitude]
+      properties:
+        label:
+          type: string
+          example: "350 5th Avenue, New York, NY"
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    SuggestResponse:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Suggestion"
+
+    MapCellsResponse:
+      type: object
+      required: [precision, factors, weights, weightsVersion, count, truncated, geohashes, scores]
+      properties:
+        precision:
+          type: integer
+        factors:
+          type: array
+          description: The factors actually used.
+          items:
+            $ref: "#/components/schemas/FactorKey"
+        weights:
+          type: object
+          description: The weight applied to each used factor.
+          additionalProperties:
+            type: number
+        weightsVersion:
+          type: string
+        count:
+          type: integer
+        truncated:
+          type: boolean
+          description: True when the viewport held more cells than `limit`; zoom in or raise the limit.
+        geohashes:
+          type: array
+          items:
+            type: string
+        scores:
+          type: array
+          description: Composite score 0-100 for `geohashes[i]`; same length as `geohashes`.
+          items:
+            type: number
+
+    MapTopResult:
+      type: object
+      required: [geohash, latitude, longitude, score, metroArea, subScores]
+      properties:
+        geohash:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        score:
+          type: number
+          description: Composite for the requested factors/weights.
+        metroArea:
+          type: string
+          example: nyc
+        subScores:
+          $ref: "#/components/schemas/SubScores"
+
+    MapTopResponse:
+      type: object
+      required: [factors, weights, weightsVersion, results]
+      properties:
+        factors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FactorKey"
+        weights:
+          type: object
+          additionalProperties:
+            type: number
+        weightsVersion:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/MapTopResult"

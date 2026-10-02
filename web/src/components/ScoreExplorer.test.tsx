@@ -24,6 +24,16 @@ function renderExplorer(search: string, respond: Responder) {
   return { fetchMock, client, ...render(<ScoreExplorer client={client} />) };
 }
 
+const lookupStatus = () =>
+  screen.getAllByRole("status").find((el) => el.textContent !== "")!;
+
+const suggestionBody = {
+  suggestions: [
+    { label: "350 5th Avenue, New York, NY", latitude: 40.7484, longitude: -73.9857 },
+    { label: "350 5th Street, Brooklyn, NY", latitude: 40.67, longitude: -73.98 },
+  ],
+};
+
 const liveApi: Responder = (url) =>
   url.includes("/explanation")
     ? jsonResponse(liveExplanationBody)
@@ -39,7 +49,7 @@ describe("ScoreExplorer", () => {
     const { fetchMock } = renderExplorer("", liveApi);
 
     expect(screen.getByRole("heading", { name: /what you.ll see/i })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -47,7 +57,7 @@ describe("ScoreExplorer", () => {
     const user = userEvent.setup();
     renderExplorer("", liveApi);
 
-    await user.type(screen.getByRole("textbox", { name: "Address" }), "  350 5th Ave,  New York ");
+    await user.type(screen.getByRole("combobox", { name: "Address" }), "  350 5th Ave,  New York ");
     await user.click(screen.getByRole("button", { name: "Get score" }));
 
     expect(pushState).toHaveBeenCalledWith(null, "", "/?address=350+5th+Ave%2C+New+York");
@@ -59,7 +69,7 @@ describe("ScoreExplorer", () => {
 
     await user.click(screen.getByRole("button", { name: "Get score" }));
 
-    const input = screen.getByRole("textbox", { name: "Address" });
+    const input = screen.getByRole("combobox", { name: "Address" });
     expect(screen.getByRole("alert")).toHaveTextContent("Enter an address to score.");
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAccessibleDescription(/Enter an address to score\./);
@@ -85,10 +95,10 @@ describe("ScoreExplorer", () => {
     );
 
     expect(screen.getByTestId("result-skeleton")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(lookupStatus()).toHaveTextContent(
       "Scoring 350 5th Ave, New York, NY…",
     );
-    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue(
+    expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue(
       "350 5th Ave, New York, NY",
     );
 
@@ -100,7 +110,7 @@ describe("ScoreExplorer", () => {
     expect(
       await screen.findByText(/strongest factor is airport drive time/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(lookupStatus()).toHaveTextContent(
       "350 5th Ave, New York, NY scores 63 out of 100, Good.",
     );
     expect(document.title).toBe("350 5th Ave, New York, NY · BenriSpace");
@@ -165,13 +175,13 @@ describe("ScoreExplorer", () => {
 
   it("resyncs the field when the URL address changes underneath it", async () => {
     const { client, rerender } = renderExplorer("address=350+5th+Ave", liveApi);
-    const input = screen.getByRole("textbox", { name: "Address" });
+    const input = screen.getByRole("combobox", { name: "Address" });
     expect(input).toHaveValue("350 5th Ave");
 
     navigation.search = "address=Hoboken+Terminal";
     rerender(<ScoreExplorer client={client} />);
 
-    expect(screen.getByRole("textbox", { name: "Address" })).toBe(input);
+    expect(screen.getByRole("combobox", { name: "Address" })).toBe(input);
     expect(input).toHaveValue("Hoboken Terminal");
     await screen.findByRole("heading", { level: 2, name: "Hoboken Terminal" });
   });
@@ -190,5 +200,83 @@ describe("ScoreExplorer", () => {
       "",
       "/?address=350+5th+Ave%2C+New+York%2C+NY",
     );
+  });
+  describe("autocomplete", () => {
+    const withSuggestions: Responder = (url) =>
+      url.includes("/suggest") ? jsonResponse(suggestionBody) : liveApi(url);
+
+    it("selecting a suggestion navigates by coordinates, skipping geocoding", async () => {
+      const user = userEvent.setup();
+      renderExplorer("", withSuggestions);
+      const input = screen.getByRole("combobox", { name: "Address" });
+
+      await user.type(input, "350 5th");
+      const option = await screen.findByRole("option", { name: /350 5th Avenue/ });
+      await user.click(option);
+
+      expect(pushState).toHaveBeenCalledWith(
+        null,
+        "",
+        "/?address=350+5th+Avenue%2C+New+York%2C+NY&lat=40.7484&lon=-73.9857",
+      );
+      expect(input).toHaveValue("350 5th Avenue, New York, NY");
+      expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    });
+
+    it("scores a shared coordinate URL without geocoding", async () => {
+      const { fetchMock } = renderExplorer(
+        "address=350+5th+Avenue%2C+New+York%2C+NY&lat=40.7484&lon=-73.9857",
+        withSuggestions,
+      );
+
+      expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
+      const urls = fetchMock.mock.calls.map(([url]) => String(url));
+      expect(urls).toContain("http://api.test/v1/score?lat=40.7484&lon=-73.9857");
+      expect(urls.some((url) => url.includes("address="))).toBe(false);
+      expect(urls.some((url) => url.includes("/suggest"))).toBe(false);
+      expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue(
+        "350 5th Avenue, New York, NY",
+      );
+      expect(
+        screen.getByRole("heading", { level: 2, name: "350 5th Avenue, New York, NY" }),
+      ).toBeInTheDocument();
+    });
+
+    it("labels a coordinate-only URL with the coordinates", async () => {
+      renderExplorer("lat=40.7484&lon=-73.9857", withSuggestions);
+      expect(
+        await screen.findByRole("heading", { level: 2, name: "40.7484, -73.9857" }),
+      ).toBeInTheDocument();
+    });
+
+    it("falls back to the address when the coordinates are invalid", async () => {
+      const { fetchMock } = renderExplorer("address=350+5th+Ave&lat=999&lon=abc", liveApi);
+      await screen.findByTestId("composite-score");
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/score?address=350+5th+Ave");
+    });
+
+    it("still searches typed text with Enter when suggestions fail", async () => {
+      const user = userEvent.setup();
+      renderExplorer("", (url) =>
+        url.includes("/suggest")
+          ? jsonResponse({ code: "suggest_unavailable", message: "down" }, 503)
+          : liveApi(url),
+      );
+      const input = screen.getByRole("combobox", { name: "Address" });
+
+      await user.type(input, "350 5th Ave");
+      await waitFor(() => expect(screen.queryByRole("option")).not.toBeInTheDocument());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await user.keyboard("{Enter}");
+
+      expect(pushState).toHaveBeenCalledWith(null, "", "/?address=350+5th+Ave");
+    });
+
+    it("does not look anything up when the field is filled from the URL", async () => {
+      const { fetchMock } = renderExplorer("address=350+5th+Ave", withSuggestions);
+      await screen.findByTestId("composite-score");
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/suggest"))).toBe(false);
+    });
   });
 });

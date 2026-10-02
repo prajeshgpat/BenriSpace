@@ -1,0 +1,159 @@
+.explorer {
+  display: flex;
+  flex: 1;
+  flex-direction: column-reverse;
+  min-height: 0;
+}
+
+.panel {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sheetToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0 1rem;
+  border: 0;
+  background: none;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sheetSummary {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.chevron {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(180deg);
+  transition: transform 150ms ease;
+}
+
+.chevron[data-open] {
+  transform: none;
+}
+
+.panelBody {
+  display: grid;
+  gap: 1.5rem;
+  max-height: 42dvh;
+  padding: 0.25rem 1rem 1.25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panelBody[hidden] {
+  display: none;
+}
+
+.mapArea {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 12rem;
+}
+
+.overlay {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 2;
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  max-width: calc(100% - 4rem);
+  pointer-events: none;
+}
+
+.overlay > *,
+.notices > * {
+  pointer-events: auto;
+}
+
+.notices {
+  display: grid;
+  justify-items: start;
+  gap: 0.375rem;
+  pointer-events: none;
+}
+
+.notice {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 0.8125rem;
+}
+
+.noticeError {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+  max-width: 20rem;
+  border-color: var(--danger);
+}
+
+.noticeButton {
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.unavailable {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 2rem 1rem;
+  background: var(--surface-sunken);
+  text-align: center;
+}
+
+.unavailable p {
+  max-width: 28rem;
+  color: var(--text-secondary);
+}
+
+@media (min-width: 48rem) {
+  .explorer {
+    flex-direction: row;
+  }
+
+  .panel {
+    width: 24rem;
+    border-top: 0;
+    border-right: 1px solid var(--border);
+  }
+
+  .panelBody {
+    flex: 1;
+    max-height: none;
+    padding-top: 1rem;
+  }
+
+  .mapArea {
+    min-width: 0;
+  }
+}

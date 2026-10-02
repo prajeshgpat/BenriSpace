@@ -1,0 +1,76 @@
+.wrapper {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+.marker {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: #111111;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* MapLibre positions markers with an inline transform, so emphasis cannot use one. */
+.marker[data-active="true"] {
+  z-index: 2;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 3px #111111,
+    0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.map :global(.maplibregl-popup-content) {
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.map :global(.maplibregl-popup-close-button) {
+  width: 2rem;
+  height: 2rem;
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+}
+
+.map :global(.maplibregl-popup-anchor-top .maplibregl-popup-tip),
+.map :global(.maplibregl-popup-anchor-top-left .maplibregl-popup-tip),
+.map :global(.maplibregl-popup-anchor-top-right .maplibregl-popup-tip) {
+  border-bottom-color: var(--surface);
+}
+
+.map :global(.maplibregl-popup-anchor-bottom .maplibregl-popup-tip),
+.map :global(.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip),
+.map :global(.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip) {
+  border-top-color: var(--surface);
+}
+
+.map :global(.maplibregl-popup-anchor-left .maplibregl-popup-tip) {
+  border-right-color: var(--surface);
+}
+
+.map :global(.maplibregl-popup-anchor-right .maplibregl-popup-tip) {
+  border-left-color: var(--surface);
+}
+
+.map :global(.maplibregl-ctrl-attrib) {
+  font-size: 0.6875rem;
+}
