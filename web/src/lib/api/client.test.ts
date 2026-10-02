@@ -8,7 +8,12 @@ import {
   liveScoreBody,
 } from "@/test/fixtures";
 
-import { createApiClient, normalizeSubScores, parseScore } from "./client";
+import {
+  SUGGEST_TIMEOUT_MS,
+  createApiClient,
+  normalizeSubScores,
+  parseScore,
+} from "./client";
 import { ApiError } from "./errors";
 
 const BASE_URL = "http://api.test/v1";
@@ -315,13 +320,13 @@ describe("suggestAddresses", () => {
     expect((await rejection(client.suggestAddresses("350 5th"))).kind).toBe("invalid-response");
   });
 
-  it("uses a short timeout of its own, not the client-wide one", async () => {
+  it("uses a timeout of its own, not the client-wide one", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const { client } = clientReturning(jsonResponse({ suggestions: [] }));
 
     await client.suggestAddresses("350 5th");
 
-    expect(timeout).toHaveBeenCalledWith(5_000);
+    expect(timeout).toHaveBeenCalledWith(SUGGEST_TIMEOUT_MS);
   });
 
   it("propagates a caller abort untouched", async () => {

@@ -1,59 +1,67 @@
+import {
+  formatLatLon,
+  resolveTarget,
+  type LatLon,
+  type ScoreTarget,
+} from "@/lib/address";
 import type { FactorKey } from "@/lib/api/types";
 import { FACTOR_KEYS } from "@/lib/score/factors";
 
 import {
-  ALL_FACTORS,
   createSelection,
   isAllSelected,
   type FactorSelection,
   type ImportanceOverrides,
 } from "./selection";
-import { viewParams, type MapView } from "./viewport";
+import type { MapView } from "./viewport";
 
 export type TopScope = "metro" | "view";
 
-export interface MapUrlState {
-  /** `null` means "fit the covered metro". */
-  view: MapView | null;
+/** The state of the whole page; every part of it can be shared as a URL. */
+export interface ExplorerUrlState {
+  /** The place being scored, from `address`, or `lat` and `lon`. */
+  target: ScoreTarget | null;
+  /** A centre the user panned to (`center`), when it differs from the target. */
+  center: LatLon | null;
+  zoom: number | null;
   selection: FactorSelection;
   scope: TopScope;
 }
 
-export const DEFAULT_MAP_STATE: MapUrlState = {
-  view: null,
-  selection: ALL_FACTORS,
-  scope: "metro",
-};
-
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 19;
+/** Zoom for a scored place with no zoom in the URL: a few blocks across. */
+export const PLACE_ZOOM = 14;
+const DEFAULT_CENTER_ZOOM = 12;
 
 const isFactorKey = (value: string): value is FactorKey =>
   (FACTOR_KEYS as readonly string[]).includes(value);
 
-function number(raw: string | null): number | null {
-  if (raw === null || raw.trim() === "") return null;
+function number(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw.trim() === "") return null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
 
-function parseView(params: URLSearchParams): MapView | null {
-  const lat = number(params.get("lat"));
-  const lon = number(params.get("lon"));
+function parseCenter(raw: string | null): LatLon | null {
+  const [lat, lon, ...rest] = (raw ?? "").split(",").map(number);
   if (
+    rest.length > 0 ||
     lat === null ||
+    lat === undefined ||
     lon === null ||
+    lon === undefined ||
     Math.abs(lat) > 90 ||
     Math.abs(lon) > 180
   ) {
     return null;
   }
-  const zoom = number(params.get("z"));
-  return {
-    lat,
-    lon,
-    zoom: Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom ?? 12)),
-  };
+  return { lat, lon };
+}
+
+function parseZoom(raw: string | null): number | null {
+  const zoom = number(raw);
+  return zoom === null ? null : Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
 function parseFactors(raw: string | null): FactorKey[] | null {
@@ -75,26 +83,73 @@ function parseImportance(raw: string | null): ImportanceOverrides {
 }
 
 /** Unknown or malformed values fall back to defaults instead of erroring. */
-export function parseMapParams(params: URLSearchParams): MapUrlState {
-  const factors = parseFactors(params.get("factors"));
+export function parseExplorerParams(
+  params: URLSearchParams,
+): ExplorerUrlState & { targetError: string | null } {
+  const { target, error } = resolveTarget(params);
   return {
-    view: parseView(params),
+    target,
+    targetError: error,
+    center: parseCenter(params.get("center")),
+    zoom: parseZoom(params.get("z")),
     selection: createSelection(
-      factors ?? FACTOR_KEYS,
+      parseFactors(params.get("factors")) ?? FACTOR_KEYS,
       parseImportance(params.get("importance")),
     ),
     scope: params.get("scope") === "view" ? "view" : "metro",
   };
 }
 
+/** Where the map should open: the URL's view, else the scored place. */
+export function initialView(
+  state: Pick<ExplorerUrlState, "target" | "center" | "zoom">,
+): MapView | null {
+  if (state.center) {
+    return { ...state.center, zoom: state.zoom ?? DEFAULT_CENTER_ZOOM };
+  }
+  if (state.target?.kind === "coordinates") {
+    return {
+      lat: state.target.lat,
+      lon: state.target.lon,
+      zoom: state.zoom ?? PLACE_ZOOM,
+    };
+  }
+  return null;
+}
+
+export interface ExplorerUrlInput {
+  target: ScoreTarget | null;
+  /** Left out until the map has something worth restoring. */
+  view: MapView | null;
+  selection: FactorSelection;
+  scope: TopScope;
+}
+
+function formatCentre({ lat, lon }: LatLon): string {
+  return `${lat.toFixed(4)},${lon.toFixed(4)}`;
+}
+
 /** Defaults are omitted so the shared URL stays short. */
-export function serializeMapParams({
+export function serializeExplorerParams({
+  target,
   view,
   selection,
   scope,
-}: MapUrlState): string {
+}: ExplorerUrlInput): string {
   const params = new URLSearchParams();
-  if (view) viewParams(view).forEach((value, key) => params.set(key, value));
+  if (target?.kind === "address") {
+    params.set("address", target.address);
+  } else if (target) {
+    if (target.label !== formatLatLon(target)) params.set("address", target.label);
+    params.set("lat", String(target.lat));
+    params.set("lon", String(target.lon));
+  }
+  if (view) {
+    const centre = formatCentre(view);
+    const atTarget = target?.kind === "coordinates" && centre === formatCentre(target);
+    if (!atTarget) params.set("center", centre);
+    params.set("z", String(Math.round(view.zoom * 100) / 100));
+  }
   if (selection.factors.length === 0) {
     params.set("factors", "none");
   } else if (!isAllSelected(selection)) {
@@ -105,5 +160,30 @@ export function serializeMapParams({
     params.set("importance", importance.map(([k, v]) => `${k}:${v}`).join(","));
   }
   if (scope === "view") params.set("scope", "view");
+  return params.toString();
+}
+
+export function explorerHref(input: ExplorerUrlInput): string {
+  const query = serializeExplorerParams(input);
+  return query ? `/?${query}` : "/";
+}
+
+/**
+ * The old `/map` page used `lat` and `lon` for the view centre; on the
+ * single page they select a place, so the redirect renames them. Everything
+ * else carries over unchanged.
+ */
+export function legacyMapQuery(
+  source: Record<string, string | string[] | undefined>,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(source)) {
+    const first = Array.isArray(value) ? value[0] : value;
+    if (first !== undefined) params.set(key, first);
+  }
+  const centre = parseCenter(`${params.get("lat")},${params.get("lon")}`);
+  params.delete("lat");
+  params.delete("lon");
+  if (centre && !params.has("center")) params.set("center", formatCentre(centre));
   return params.toString();
 }

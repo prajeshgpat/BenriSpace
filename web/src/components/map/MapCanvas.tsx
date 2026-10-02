@@ -7,12 +7,10 @@ import {
   Map as MaplibreMap,
   Marker,
   NavigationControl,
-  Popup,
   setWorkerUrl,
   type GeoJSONSource,
 } from "maplibre-gl";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 
 import { useLatest } from "@/hooks/useLatest";
 import type { Bbox } from "@/lib/api/types";
@@ -60,14 +58,15 @@ export interface MarkerSpec {
 export interface FlyRequest {
   lat: number;
   lon: number;
+  /** The map never zooms out to reach the place; defaults to a neighbourhood. */
+  zoom?: number;
   /** Changes on every request so the same place can be targeted twice. */
   nonce: number;
 }
 
-export interface PopupSpec {
+export interface PinSpec {
   lat: number;
   lon: number;
-  children: ReactNode;
 }
 
 interface MapCanvasProps {
@@ -76,12 +75,11 @@ interface MapCanvasProps {
   markers: readonly MarkerSpec[];
   activeMarkerId: string | null;
   highlightGeohash: string | null;
-  popup: PopupSpec | null;
+  pin: PinSpec | null;
   flyRequest: FlyRequest | null;
   onViewportChange: (viewport: Viewport) => void;
   onCellClick: (cell: CellClick) => void;
   onMarkerClick: (id: string) => void;
-  onPopupClose: () => void;
   onUnavailable: () => void;
 }
 
@@ -159,12 +157,11 @@ export function MapCanvas({
   markers,
   activeMarkerId,
   highlightGeohash,
-  popup,
+  pin,
   flyRequest,
   onViewportChange,
   onCellClick,
   onMarkerClick,
-  onPopupClose,
   onUnavailable,
 }: MapCanvasProps) {
   const container = useRef<HTMLDivElement>(null);
@@ -175,7 +172,6 @@ export function MapCanvas({
     onViewportChange,
     onCellClick,
     onMarkerClick,
-    onPopupClose,
     onUnavailable,
   });
   const initial = useRef(initialView);
@@ -279,7 +275,7 @@ export function MapCanvas({
     if (!map || !flyRequest) return;
     const target = {
       center: [flyRequest.lon, flyRequest.lat] as [number, number],
-      zoom: Math.max(map.getZoom(), FOCUS_ZOOM),
+      zoom: Math.max(map.getZoom(), flyRequest.zoom ?? FOCUS_ZOOM),
     };
     // Motion is a courtesy, not information: skip it when asked to.
     if (prefersReducedMotion()) map.jumpTo(target);
@@ -317,46 +313,27 @@ export function MapCanvas({
     });
   }, [activeMarkerId, markers, ready]);
 
-  const popupRef = useRef<Popup | null>(null);
-  const [popupElement] = useState(() =>
-    typeof document === "undefined" ? null : document.createElement("div"),
-  );
-
+  const pinLat = pin?.lat;
+  const pinLon = pin?.lon;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !popupElement) return;
-    if (!popup) {
-      popupRef.current?.remove();
-      popupRef.current = null;
-      return;
-    }
-    if (!popupRef.current) {
-      const instance = new Popup({
-        closeButton: true,
-        closeOnClick: false,
-        focusAfterOpen: false,
-        maxWidth: "20rem",
-        offset: 14,
-      }).setDOMContent(popupElement);
-      instance.on("close", () => callbacks.current.onPopupClose());
-      popupRef.current = instance;
-    }
-    popupRef.current.setLngLat([popup.lon, popup.lat]).addTo(map);
-  }, [callbacks, popup, popupElement, ready]);
-
-  useEffect(() => {
+    if (!map || pinLat === undefined || pinLon === undefined) return;
+    // MapLibre owns the element's transform, so the drawn pin is a child.
+    const element = document.createElement("div");
+    element.className = styles.pinAnchor;
+    element.setAttribute("aria-hidden", "true");
+    element.appendChild(document.createElement("div")).className = styles.pin;
+    const marker = new Marker({ element, anchor: "bottom" })
+      .setLngLat([pinLon, pinLat])
+      .addTo(map);
     return () => {
-      popupRef.current?.remove();
-      popupRef.current = null;
+      marker.remove();
     };
-  }, []);
+  }, [pinLat, pinLon, ready]);
 
   return (
     <div className={styles.wrapper}>
       <div ref={container} className={styles.map} />
-      {popup && popupElement
-        ? createPortal(popup.children, popupElement)
-        : null}
     </div>
   );
 }

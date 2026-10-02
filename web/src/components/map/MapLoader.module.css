@@ -1,6 +1,0 @@
-.placeholder {
-  display: grid;
-  flex: 1;
-  place-items: center;
-  color: var(--text-secondary);
-}
