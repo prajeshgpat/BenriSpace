@@ -4,49 +4,28 @@
   min-height: 100dvh;
 }
 
-.shell[data-fill] {
-  height: 100dvh;
-  min-height: 36rem;
-}
-
 .header {
-  flex: none;
-  border-bottom: 1px solid var(--border);
-}
-
-.headerInner {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 0.5rem 1.25rem;
-  width: 100%;
-  max-width: var(--content-width);
-  margin: 0 auto;
-  padding: 0.5rem 1rem;
-}
-
-.shell[data-fill] .headerInner {
-  max-width: none;
+  justify-content: space-between;
+  gap: 1rem;
+  height: var(--header-height);
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--page);
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  min-height: 2.75rem;
   color: var(--text);
   font-size: 1.0625rem;
   font-weight: 650;
   letter-spacing: -0.01em;
   text-decoration: none;
-}
-
-/* On the narrowest screens the nav needs the room; the name stays for screen readers. */
-.wordmark {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .mark {
@@ -55,38 +34,7 @@
   color: var(--accent);
 }
 
-.nav {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-left: auto;
-}
-
-.navLink {
-  display: inline-flex;
-  white-space: nowrap;
-  align-items: center;
-  min-height: 2.75rem;
-  padding: 0 0.625rem;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.navLink:hover {
-  color: var(--text);
-}
-
-.navLink[aria-current="page"] {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-  font-weight: 650;
-}
-
 .region {
-  display: none;
   padding: 0.125rem 0.625rem;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -101,32 +49,8 @@
   min-height: 0;
 }
 
-@media (min-width: 30rem) {
-  .wordmark {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip-path: none;
-  }
-}
-
 @media (min-width: 40rem) {
-  .headerInner {
+  .header {
     padding-inline: 1.5rem;
-  }
-
-  .nav {
-    margin-left: 1rem;
-  }
-
-  .navLink {
-    padding-inline: 0.75rem;
-    font-size: 0.9375rem;
-  }
-
-  .region {
-    display: inline-block;
-    margin-left: auto;
   }
 }

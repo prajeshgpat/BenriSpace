@@ -35,7 +35,7 @@ export interface Coordinates {
 }
 
 /** Autocomplete is a nicety; give up quickly rather than hold the UI. */
-export const SUGGEST_TIMEOUT_MS = 5_000;
+export const SUGGEST_TIMEOUT_MS = 10_000;
 
 export interface ApiClient {
   getScore(address: string, options?: RequestOptions): Promise<Score>;

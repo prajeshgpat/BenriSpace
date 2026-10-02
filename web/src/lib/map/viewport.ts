@@ -46,16 +46,3 @@ export function roundBbox(bbox: Bbox, decimals = 3): Bbox {
 export function bboxKey(bbox: Bbox): string {
   return bbox.join(",");
 }
-
-/** The `lat`, `lon` and `z` URL parameters for a view; shared by every map link. */
-export function viewParams(view: MapView): URLSearchParams {
-  return new URLSearchParams({
-    lat: view.lat.toFixed(4),
-    lon: view.lon.toFixed(4),
-    z: String(Math.round(view.zoom * 100) / 100),
-  });
-}
-
-export function mapHref(view: MapView): string {
-  return `/map?${viewParams(view)}`;
-}

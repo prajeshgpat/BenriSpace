@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -70,7 +70,7 @@ describe("BestAreas", () => {
     expect(screen.getAllByRole("listitem")[1]).not.toHaveTextContent("Cafes");
   });
 
-  it("is operable by keyboard and reports the expanded state", async () => {
+  it("is operable by keyboard and reports the pressed state", async () => {
     const user = userEvent.setup();
     const { onSelect } = renderList();
 
@@ -82,21 +82,20 @@ describe("BestAreas", () => {
     await user.keyboard("{Enter}");
 
     expect(onSelect).toHaveBeenCalledWith(RESULTS[0]);
-    expect(first).toHaveAttribute("aria-expanded", "false");
+    expect(first).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("shows the breakdown and a full-result link for the active area", () => {
+  it("marks the active area as pressed", () => {
     renderList({ activeGeohash: "dr5ru7" });
 
-    const item = screen.getAllByRole("listitem")[0];
     expect(screen.getByRole("button", { name: /Rank 1/ })).toHaveAttribute(
-      "aria-expanded",
+      "aria-pressed",
       "true",
     );
-    expect(within(item).getByText("Grocery stores")).toBeInTheDocument();
-    expect(
-      within(item).getByRole("link", { name: "Full breakdown" }),
-    ).toHaveAttribute("href", "/?lat=40.7546&lon=-73.985");
+    expect(screen.getByRole("button", { name: /Rank 2/ })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("switches scope with radios", async () => {

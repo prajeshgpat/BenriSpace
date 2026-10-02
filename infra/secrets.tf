@@ -11,3 +11,16 @@ resource "aws_ssm_parameter" "database_url" {
   value_wo         = "placeholder-set-me-with-aws-ssm-put-parameter"
   value_wo_version = 1
 }
+
+# Optional: LocationIQ key for address autocomplete. Without a real value the
+# API falls back to the slower keyless Photon service. Set it out-of-band:
+#   aws ssm put-parameter --name /<project>/<env>/locationiq_api_key \
+#     --type SecureString --overwrite --value-from-file <file>
+resource "aws_ssm_parameter" "locationiq_api_key" {
+  name        = "/${var.project}/${var.environment}/locationiq_api_key"
+  description = "LocationIQ API key for address autocomplete. Value is managed outside Terraform."
+  type        = "SecureString"
+
+  value_wo         = "placeholder-set-me-with-aws-ssm-put-parameter"
+  value_wo_version = 1
+}

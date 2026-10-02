@@ -1,7 +1,7 @@
 .card {
   display: grid;
-  gap: 1.5rem;
-  padding: 1.25rem;
+  gap: 1.25rem;
+  padding: 1rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -38,14 +38,14 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 1rem 1.5rem;
+  gap: 0.75rem 1.25rem;
 }
 
 .ring {
   position: relative;
   flex: none;
-  width: 8.5rem;
-  height: 8.5rem;
+  width: 6.5rem;
+  height: 6.5rem;
 }
 
 .ring svg {
@@ -80,7 +80,7 @@
 }
 
 .ringValue {
-  font-size: 3rem;
+  font-size: 2.25rem;
   font-weight: 650;
   letter-spacing: -0.04em;
 }
@@ -95,7 +95,7 @@
   display: grid;
   flex: 1;
   gap: 0.25rem;
-  min-width: 12rem;
+  min-width: 9rem;
 }
 
 .band {
@@ -238,23 +238,6 @@
   gap: 0.5rem 1rem;
 }
 
-.mapLink {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.75rem;
-  padding: 0 1rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  color: var(--text);
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.mapLink:hover {
-  background: var(--surface-sunken);
-}
-
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -263,10 +246,41 @@
   font-size: 0.8125rem;
 }
 
-@media (min-width: 40rem) {
-  .card {
-    padding: 2rem;
-  }
+.breakdown {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.breakdownSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2.75rem;
+  list-style: none;
+  cursor: pointer;
+}
+
+.breakdownSummary::-webkit-details-marker {
+  display: none;
+}
+
+.chevron {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(180deg);
+  transition: transform 150ms ease;
+}
+
+.breakdown[open] .chevron {
+  transform: none;
 }
 
 /* Backgrounds are dropped in forced-colors mode; keep the meters visible. */

@@ -15,6 +15,9 @@ DATABASE_URL = os.environ.get(
     "postgresql://benrispace:benrispace@localhost:5432/benrispace",
 )
 
+# Read directly from the environment at call time by api/suggest.py (so Lambda can
+# inject it from SSM before import and tests can unset it); listed here for discovery.
+LOCATIONIQ_API_KEY = os.environ.get("LOCATIONIQ_API_KEY")
 NJ_TRANSIT_API_KEY = os.environ.get("NJ_TRANSIT_API_KEY")
 NJ_TRANSIT_API_USERNAME = os.environ.get("NJ_TRANSIT_API_USERNAME")
 

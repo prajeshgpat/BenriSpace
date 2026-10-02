@@ -23,6 +23,7 @@
   --radius-md: 12px;
   --radius-lg: 20px;
   --content-width: 46rem;
+  --header-height: 3.25rem;
 }
 
 @media (prefers-color-scheme: dark) {

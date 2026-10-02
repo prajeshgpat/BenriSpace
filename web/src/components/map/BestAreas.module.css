@@ -148,11 +148,3 @@
   border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
-
-.details {
-  padding: 0.25rem 0.75rem 0.75rem 3.125rem;
-}
-
-.details[hidden] {
-  display: none;
-}

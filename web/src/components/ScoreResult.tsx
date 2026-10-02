@@ -1,8 +1,5 @@
-import Link from "next/link";
-
 import type { ExplanationState } from "@/hooks/useScoreLookup";
 import type { Score } from "@/lib/api/types";
-import { mapHref } from "@/lib/map/viewport";
 import {
   SCORE_MAX,
   bandLabel,
@@ -53,10 +50,20 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
         <ExplanationText explanation={explanation} />
       </section>
 
-      <section className={styles.section} aria-labelledby="factors-heading">
-        <h3 id="factors-heading" className={styles.sectionHeading}>
-          Factor breakdown
-        </h3>
+      <details className={styles.breakdown}>
+        <summary className={styles.breakdownSummary}>
+          <h3 id="factors-heading" className={styles.sectionHeading}>
+            Factor breakdown
+          </h3>
+          <svg
+            className={styles.chevron}
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M6 14l6-6 6 6" />
+          </svg>
+        </summary>
         <p className={styles.note}>
           Each factor is scored from 0 to {SCORE_MAX} relative to the rest of
           the metro area. Higher is always better.
@@ -71,7 +78,7 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
             </ul>
           </div>
         ))}
-      </section>
+      </details>
 
       <footer className={styles.footer}>
         <p className={styles.meta}>
@@ -83,25 +90,12 @@ export function ScoreResult({ address, score, explanation }: ScoreResultProps) {
           ) : null}
         </p>
         <div className={styles.actions}>
-          <Link
-            className={styles.mapLink}
-            href={mapHref({
-              lat: score.latitude,
-              lon: score.longitude,
-              zoom: RESULT_MAP_ZOOM,
-            })}
-            prefetch={false}
-          >
-            View on map
-          </Link>
           <CopyLinkButton />
         </div>
       </footer>
     </article>
   );
 }
-
-const RESULT_MAP_ZOOM = 13;
 
 const RING_RADIUS = 52;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;

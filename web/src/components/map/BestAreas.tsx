@@ -10,11 +10,9 @@ import {
   strongestFactors,
 } from "@/lib/map/presentation";
 import type { TopScope } from "@/lib/map/url";
-import { FACTORS } from "@/lib/score/factors";
 import { roundScore } from "@/lib/score/presentation";
 import type { ResourceStatus } from "@/hooks/useResource";
 
-import { AreaDetails } from "./AreaDetails";
 import styles from "./BestAreas.module.css";
 
 interface BestAreasProps {
@@ -145,7 +143,6 @@ function AreaItem({
   active,
   onSelect,
 }: AreaItemProps) {
-  const detailsId = useId();
   const item = useRef<HTMLLIElement>(null);
   // A marker click can select an entry that is scrolled out of the panel.
   useEffect(() => {
@@ -158,8 +155,7 @@ function AreaItem({
       <button
         type="button"
         className={styles.itemButton}
-        aria-expanded={active}
-        aria-controls={detailsId}
+        aria-pressed={active}
         onClick={() => onSelect(result)}
       >
         <span className={styles.rank} aria-hidden="true">
@@ -187,21 +183,6 @@ function AreaItem({
           <span className="sr-only"> out of 100</span>
         </span>
       </button>
-      <div id={detailsId} hidden={!active} className={styles.details}>
-        {active ? (
-          <AreaDetails
-            score={result.score}
-            basis={`${selectedFactors.length} selected ${selectedFactors.length === 1 ? "factor" : "factors"}`}
-            rows={selectedFactors.map((key) => ({
-              key,
-              label: FACTORS[key].label,
-              value: result.subScores[key],
-            }))}
-            lat={result.latitude}
-            lon={result.longitude}
-          />
-        ) : null}
-      </div>
     </li>
   );
 }

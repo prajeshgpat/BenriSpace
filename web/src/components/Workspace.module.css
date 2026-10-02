@@ -1,0 +1,246 @@
+.workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* On a phone the map stays in view above the panel; nothing overlays it. */
+.mapArea {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex: none;
+  order: -1;
+  height: 42dvh;
+  min-height: 15rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.panel {
+  /* Contains the visually hidden live regions so they cannot extend the page. */
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+  padding: 1rem 1rem 0;
+  background: var(--page);
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.credits {
+  margin: auto -1rem 0;
+}
+
+.search {
+  display: grid;
+  gap: 0.875rem;
+  /* Keeps it clear of the sticky map when scrolled into view on a phone. */
+  scroll-margin-top: calc(42dvh + 0.5rem);
+}
+
+.placeholder {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.overlay {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 2;
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  max-width: calc(100% - 4rem);
+  pointer-events: none;
+}
+
+.overlay > * {
+  pointer-events: auto;
+}
+
+.unavailable {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.unavailable p {
+  max-width: 28rem;
+  color: var(--text-secondary);
+}
+
+.welcome {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.welcomeHeading {
+  font-size: 1.25rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.welcomeText {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  text-wrap: pretty;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.examplesLabel {
+  color: var(--text-secondary);
+}
+
+.example {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.125rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 120ms ease;
+}
+
+.example:hover {
+  border-color: var(--border-strong);
+}
+
+.result {
+  position: relative;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 0.375rem;
+  min-height: 2.75rem;
+  padding: 0 0.5rem;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* On a finished card the button shares the eyebrow's row instead of adding one. */
+.result[data-state="success"] .close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  min-height: 2.5rem;
+}
+
+.close:hover {
+  color: var(--text);
+}
+
+.close svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.controls {
+  display: grid;
+  gap: 1.5rem;
+  padding-bottom: 1.25rem;
+}
+
+@media (min-width: 56.25rem) {
+  .workspace {
+    flex: none;
+    flex-direction: row;
+    height: calc(100dvh - var(--header-height));
+  }
+
+  .mapArea {
+    position: relative;
+    order: 2;
+    flex: 1;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    border-bottom: 0;
+  }
+
+  .panel {
+    flex: none;
+    order: 1;
+    width: clamp(23.75rem, 30vw, 27.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 1.25rem;
+    border-right: 1px solid var(--border);
+  }
+
+  .search {
+    scroll-margin-top: 0;
+  }
+
+  .controls {
+    flex: 1;
+    align-content: start;
+  }
+}
+
+.locate {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}
+
+.locateNote {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.locateError {
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Below MapLibre's zoom buttons, which sit 10px from the corner. */
+.mapLocate {
+  position: absolute;
+  top: 4.875rem;
+  right: 0.25rem;
+  z-index: 2;
+}
+
+@media (min-width: 40rem) and (pointer: fine) {
+  .mapLocate {
+    right: 0.625rem;
+  }
+}

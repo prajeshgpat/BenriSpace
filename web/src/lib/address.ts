@@ -96,12 +96,3 @@ export function resultHref(address: string, point?: LatLon): string {
   }
   return `/?${params}`;
 }
-
-export function coordinatesHref(point: LatLon, label?: string): string {
-  const params = new URLSearchParams({
-    [LAT_PARAM]: String(point.lat),
-    [LON_PARAM]: String(point.lon),
-  });
-  if (label) params.set(ADDRESS_PARAM, label);
-  return `/?${params}`;
-}

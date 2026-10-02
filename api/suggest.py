@@ -1,12 +1,16 @@
-"""GET /v1/suggest: address autocomplete via Photon (https://photon.komoot.io).
+"""GET /v1/suggest: address autocomplete.
 
-Photon, not Nominatim: the OSM Nominatim usage policy forbids autocomplete,
-Photon explicitly permits it. It is a shared free service, so requests carry
-an identifying User-Agent (same pattern as api/geocoding.py), results are
-cached in-process, and one keystroke never fans out into more than one call.
+Primary provider is LocationIQ when LOCATIONIQ_API_KEY is set (fast, keyed,
+autocomplete permitted); Photon (https://photon.komoot.io) is the keyless
+fallback. Not Nominatim: its usage policy forbids autocomplete. Both are
+OpenStreetMap-based and are normalised to the same feature shape so one
+cleanup pipeline serves both. Results are cached in-process and one keystroke
+never fans out into more than one provider call.
 """
 
+import logging
 import math
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -15,13 +19,21 @@ from dataclasses import dataclass
 
 import httpx
 
+import common.config  # noqa: F401  (loads .env so LOCATIONIQ_API_KEY works in local runs)
 from api.geocoding import USER_AGENT
 from api.schemas import Suggestion
 from common.coverage import metro_center, union_bbox
 from common.geo import haversine_m
 
 PHOTON_URL = "https://photon.komoot.io/api/"
-PROVIDER_TIMEOUT_S = 3.0
+PROVIDER_TIMEOUT_S = 8.0
+LOCATIONIQ_URL = "https://api.locationiq.com/v1/autocomplete"
+LOCATIONIQ_TIMEOUT_S = 3.0
+LOCATIONIQ_KEY_ENV = "LOCATIONIQ_API_KEY"
+LOCATIONIQ_MAX_LIMIT = 20
+LOCALITY_FIELDS = ("city", "town", "village", "hamlet", "suburb")
+
+logger = logging.getLogger(__name__)
 MIN_QUERY_LENGTH = 3
 
 # Photon returns many near-duplicates (e.g. six POIs at one street address), so
@@ -194,6 +206,77 @@ def fetch_photon_features(q: str, limit: int) -> list:
     return features
 
 
+def locationiq_to_features(results: object) -> list[dict]:
+    """LocationIQ autocomplete results -> Photon-shaped GeoJSON features, so
+    clean_suggestions handles both providers."""
+    if not isinstance(results, list):
+        raise SuggestUnavailable("unexpected LocationIQ payload")
+    features = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        address = item.get("address")
+        address = address if isinstance(address, dict) else {}
+        try:
+            lon, lat = float(item["lon"]), float(item["lat"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        locality = next((address[f] for f in LOCALITY_FIELDS if address.get(f)), None)
+        features.append(
+            {
+                "geometry": {"coordinates": [lon, lat]},
+                "properties": {
+                    "name": address.get("name"),
+                    "housenumber": address.get("house_number"),
+                    "street": address.get("road"),
+                    "city": locality,
+                    "state": address.get("state"),
+                    "osm_key": item.get("class"),
+                    "type": item.get("type"),
+                },
+            }
+        )
+    return features
+
+
+def fetch_locationiq_features(api_key: str, q: str, limit: int) -> list[dict]:
+    min_lon, min_lat, max_lon, max_lat = union_bbox()
+    params = {
+        "key": api_key,
+        "q": q,
+        "limit": min(max(limit * OVERFETCH_FACTOR, OVERFETCH_MIN), LOCATIONIQ_MAX_LIMIT),
+        "viewbox": f"{min_lon},{max_lat},{max_lon},{min_lat}",
+        "bounded": 1,
+        "countrycodes": "us",
+        "dedupe": 1,
+        "normalizecity": 1,
+    }
+    # Never put the exception text in the message: httpx includes the request
+    # URL, and the key is in its query string.
+    try:
+        with httpx.Client(timeout=LOCATIONIQ_TIMEOUT_S) as client:
+            resp = client.get(LOCATIONIQ_URL, params=params, headers={"User-Agent": USER_AGENT})
+        if resp.status_code == 404:  # LocationIQ's "no matches"
+            return []
+        resp.raise_for_status()
+        payload = resp.json()
+    except httpx.HTTPStatusError as exc:
+        raise SuggestUnavailable(f"LocationIQ HTTP {exc.response.status_code}") from None
+    except (httpx.HTTPError, ValueError) as exc:
+        raise SuggestUnavailable(f"LocationIQ {type(exc).__name__}") from None
+    return locationiq_to_features(payload)
+
+
+def fetch_features(q: str, limit: int) -> list:
+    api_key = os.environ.get(LOCATIONIQ_KEY_ENV, "").strip()
+    if api_key:
+        try:
+            return fetch_locationiq_features(api_key, q, limit)
+        except SuggestUnavailable as exc:
+            logger.warning("suggest: %s; falling back to Photon", exc)
+    return fetch_photon_features(q, limit)
+
+
 class TTLCache:
     """Small thread-safe LRU with per-entry expiry (handlers run in a thread
     pool, and a warm Lambda instance serves many requests)."""
@@ -244,6 +327,6 @@ def suggest(q: str, limit: int) -> list[Suggestion]:
     cached = _cache.get(key)
     if cached is not None:
         return cached
-    result = clean_suggestions(fetch_photon_features(q, limit), q, limit)
+    result = clean_suggestions(fetch_features(q, limit), q, limit)
     _cache.put(key, result)
     return result

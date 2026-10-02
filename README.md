@@ -8,8 +8,9 @@ Each location gets a 0–100 score built from 11 factors: grocery, gym, cafe, ga
 
 ## Using the website
 
-- **Score an address** at [benrispace.com](https://benrispace.com). Type an address and pick a suggestion (or press Enter). You get the overall score, each factor's sub-score, and a plain-language explanation.
-- **Explore the map** at [benrispace.com/map](https://benrispace.com/map). Cells are coloured by score. Toggle factors on and off, or pick a preset (Daily errands, Family, Commuter, Quiet). The **Best areas** list ranks the strongest spots for the factors you chose.
+- **One split-screen page.** The map fills the right side (stacked under a search bar on phones); the left panel holds search, results and filters.
+- **Score an address.** Type an address and pick a suggestion (or press Enter). The map flies there and the panel shows the overall score, each factor's sub-score, and a plain-language explanation. Clicking a map cell or a Best-areas entry scores that spot too.
+- **Explore the map.** Cells are coloured by score. Toggle factors on and off, pick a preset (Daily errands, Family, Commuter, Quiet), or set how much each factor matters. The **Best areas** list ranks the strongest spots for the factors you chose.
 - **No area scores 100 on everything.** Scores are relative within each metro area, so pick one or two factors to see where each is at its maximum.
 
 Coverage: NYC, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County, CT.

@@ -29,16 +29,19 @@ data "aws_iam_policy_document" "api_lambda" {
   }
 
   statement {
-    sid       = "ReadDatabaseUrl"
-    actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.database_url.arn]
+    sid     = "ReadSecrets"
+    actions = ["ssm:GetParameter"]
+    resources = [
+      aws_ssm_parameter.database_url.arn,
+      aws_ssm_parameter.locationiq_api_key.arn,
+    ]
   }
 
   # The parameter is encrypted with the AWS-managed aws/ssm key, whose alias
   # does not exist in a fresh account until first use, so it cannot be looked
   # up by ARN here. The conditions scope decryption to this one parameter.
   statement {
-    sid       = "DecryptDatabaseUrl"
+    sid       = "DecryptSecrets"
     actions   = ["kms:Decrypt"]
     resources = ["arn:${local.partition}:kms:${var.aws_region}:${local.account_id}:key/*"]
 
@@ -51,7 +54,10 @@ data "aws_iam_policy_document" "api_lambda" {
     condition {
       test     = "StringEquals"
       variable = "kms:EncryptionContext:PARAMETER_ARN"
-      values   = [aws_ssm_parameter.database_url.arn]
+      values = [
+        aws_ssm_parameter.database_url.arn,
+        aws_ssm_parameter.locationiq_api_key.arn,
+      ]
     }
   }
 }
@@ -76,8 +82,9 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DATABASE_URL_SSM_PARAM = aws_ssm_parameter.database_url.name
-      CORS_ALLOWED_ORIGINS   = "https://${var.domain_name},https://${local.www_domain}"
+      DATABASE_URL_SSM_PARAM       = aws_ssm_parameter.database_url.name
+      LOCATIONIQ_API_KEY_SSM_PARAM = aws_ssm_parameter.locationiq_api_key.name
+      CORS_ALLOWED_ORIGINS         = "https://${var.domain_name},https://${local.www_domain}"
     }
   }
 
