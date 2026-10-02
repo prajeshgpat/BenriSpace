@@ -18,6 +18,7 @@ describe("SiteFooter", () => {
     for (const name of [
       "OpenFreeMap",
       "OpenMapTiles",
+      "LocationIQ",
       "Photon",
       "Nominatim",
       "NYC Open Data",

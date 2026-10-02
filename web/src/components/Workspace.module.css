@@ -213,3 +213,34 @@
     align-content: start;
   }
 }
+
+.locate {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}
+
+.locateNote {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.locateError {
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Below MapLibre's zoom buttons, which sit 10px from the corner. */
+.mapLocate {
+  position: absolute;
+  top: 4.875rem;
+  right: 0.25rem;
+  z-index: 2;
+}
+
+@media (min-width: 40rem) and (pointer: fine) {
+  .mapLocate {
+    right: 0.625rem;
+  }
+}

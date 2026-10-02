@@ -13,6 +13,7 @@ import {
   type Ref,
 } from "react";
 
+import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useMapData } from "@/hooks/useMapData";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
 import {
@@ -26,8 +27,14 @@ import {
   type ScoreTarget,
 } from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/errors";
 import type { MapTopResult, Suggestion } from "@/lib/api/types";
 import { API_BASE_URL } from "@/lib/config";
+import {
+  OUTSIDE_COVERAGE_MESSAGE,
+  YOUR_LOCATION_LABEL,
+  isInCoverage,
+} from "@/lib/geolocation";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import {
   explorerHref,
@@ -41,6 +48,7 @@ import { EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { ErrorNotice } from "./ErrorNotice";
+import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreResult } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
@@ -282,6 +290,25 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const handleSelectSuggestion = ({ label, latitude, longitude }: Suggestion) =>
     navigate({ kind: "coordinates", lat: latitude, lon: longitude, label });
 
+  async function selectCurrentLocation(point: LatLon): Promise<string | null> {
+    if (!isInCoverage(point)) return OUTSIDE_COVERAGE_MESSAGE;
+    // Asked first so a place with no data never moves the map. Any other
+    // failure is left to the result card, which can retry.
+    try {
+      await client.getScoreByCoordinates(point);
+    } catch (cause) {
+      if (isApiError(cause) && cause.kind === "not-found") {
+        return OUTSIDE_COVERAGE_MESSAGE;
+      }
+    }
+    navigate({ kind: "coordinates", ...point, label: YOUR_LOCATION_LABEL });
+    return null;
+  }
+
+  const locator = useCurrentLocation(selectCurrentLocation);
+  const locating = locator.state.status === "locating";
+  const locateNoteId = "locate-note";
+
   function close() {
     setPicked(null);
     navigate(null);
@@ -367,7 +394,30 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           onSelectSuggestion={handleSelectSuggestion}
           suggestClient={client}
         />
+        <div className={styles.locate}>
+          <LocateButton
+            variant="panel"
+            locating={locating}
+            disabled={locator.unsupported !== null}
+            describedBy={locator.unsupported ? locateNoteId : undefined}
+            onClick={locator.locate}
+          />
+          {locator.unsupported ? (
+            <p id={locateNoteId} className={styles.locateNote}>
+              {locator.unsupported}
+            </p>
+          ) : null}
+          <div aria-live="assertive" aria-atomic="true">
+            {locator.state.status === "error" ? (
+              <p className={styles.locateError}>{locator.state.message}</p>
+            ) : null}
+          </div>
+        </div>
       </div>
+
+      <p className="sr-only" role="status">
+        {locating ? "Finding your location\u2026" : ""}
+      </p>
 
       <p className="sr-only" role="status">
         {announcement(state)}
@@ -457,6 +507,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         }}
         onUnavailable={() => setMapUnavailable(true)}
       />
+      {locator.unsupported ? null : (
+        <div className={styles.mapLocate}>
+          <LocateButton
+            variant="map"
+            locating={locating}
+            onClick={locator.locate}
+          />
+        </div>
+      )}
       <div className={styles.overlay}>
         <MapLegend range={range} />
         <MapNotices

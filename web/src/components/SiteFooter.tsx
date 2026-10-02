@@ -31,6 +31,7 @@ export function SiteFooter() {
           OpenMapTiles
         </ExternalLink>
         . Address search by{" "}
+        <ExternalLink href="https://locationiq.com">LocationIQ</ExternalLink>,{" "}
         <ExternalLink href="https://photon.komoot.io">Photon</ExternalLink> and{" "}
         <ExternalLink href="https://nominatim.org">Nominatim</ExternalLink>{" "}
         (OSM). Also{" "}
