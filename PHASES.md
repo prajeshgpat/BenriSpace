@@ -130,10 +130,11 @@ precomputed scores served through an API.
       resources total now managed). DNS stays at Cloudflare (the domain is
       registered at Cloudflare Registrar, which requires its nameservers);
       Terraform manages the records through the Cloudflare provider, all
-      DNS-only so AWS certificates validate end to end. Not yet applied:
-      `disable_execute_api_endpoint = true` (closing the old
-      `execute-api.amazonaws.com` address), and the Valhalla EC2 instance
-      (Phase 2). Operational note: creating the Amplify app through Terraform with a
+      DNS-only so AWS certificates validate end to end. The old
+      `execute-api.amazonaws.com` address was closed 2026-10-02
+      (`disable_execute_api_endpoint = true`; it now returns 404, and
+      `api.benrispace.com` is the only entry point). Not yet applied: the
+      Valhalla EC2 instance (Phase 2). Operational note: creating the Amplify app through Terraform with a
       GitHub token (AWS's documented `admin:repo_hook` flow) does NOT work
       for a private repo — it failed with a GitHub 404 — and even with
       `repo` + `admin:repo_hook` the app kept depending on that token for
