@@ -335,18 +335,32 @@ def fetch_segments_for_bbox(
 # --------------------------------------------------------------------------
 
 
-def classify_cell(lat: float, lon: float, index: dict[tuple[int, int], list[dict]]) -> dict:
-    """Returns the four feature_store fields for one geo_entity."""
+def classify_cell(
+    lat: float,
+    lon: float,
+    index: dict[tuple[int, int], list[dict]],
+    facility_index: dict | None = None,
+) -> dict:
+    """Returns the four feature_store fields for one geo_entity, plus the
+    three v2 facility fields when facility_index is given (segments in
+    `index` should then carry facility_factor; see
+    ingestion/emergency_facilities.py). facility_index=None -> v2 fields
+    omitted entirely (stay NULL), legacy output unchanged."""
     nearby = nearby_segments_with_distance(lat, lon, index, SEARCH_RADIUS_M)
     nearest = nearest_segment([s for s in nearby if s["distance_m"] <= NEAREST_SEARCH_RADIUS_M])
     nearest_highway = nearest["highway"] if nearest else None
 
-    return {
+    fields = {
         "road_classification": nearest_highway,
         "congestion_proxy_raw": compute_congestion_proxy_raw(nearby, CONGESTION_RADIUS_M),
         "emergency_corridor_proxy_raw": compute_emergency_corridor_proxy_raw(nearby, EMERGENCY_RADIUS_M),
         "street_orientation": derive_street_orientation(nearest_highway),
     }
+    if facility_index is not None:
+        from ingestion.emergency_facilities import compute_emergency_features
+
+        fields.update(compute_emergency_features(lat, lon, index, facility_index))
+    return fields
 
 
 # --------------------------------------------------------------------------
@@ -362,9 +376,28 @@ def run() -> None:
             print(f"  {metro_area}: {len(segments)} road segments", file=sys.stderr)
             index = index_segments(segments)
 
+            # v2: facility-aware emergency signal. Reuses the segments just
+            # fetched (no second road fetch). A facility-fetch failure must
+            # not break the legacy road columns: leave the v2 fields NULL.
+            facility_index = None
+            try:
+                from ingestion.emergency_facilities import (
+                    annotate_segments_with_factor,
+                    fetch_facility_index,
+                )
+
+                time.sleep(1)
+                facility_index = fetch_facility_index(client, min_lat, max_lat, min_lon, max_lon)
+                index = index_segments(annotate_segments_with_factor(segments, facility_index))
+                n_fac = sum(map(len, facility_index.values()))
+                print(f"  {metro_area}: {n_fac} emergency facilities", file=sys.stderr)
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                print(f"  {metro_area}: facility fetch failed ({exc}); v2 columns left NULL", file=sys.stderr)
+                facility_index = None
+
             metro_rows = 0
             for entity in iter_geo_entities(conn, metro_area=metro_area):
-                fields = classify_cell(entity["latitude"], entity["longitude"], index)
+                fields = classify_cell(entity["latitude"], entity["longitude"], index, facility_index)
                 upsert_feature_store(conn, entity["id"], fields)
                 metro_rows += 1
                 ctx.rows_affected += 1
