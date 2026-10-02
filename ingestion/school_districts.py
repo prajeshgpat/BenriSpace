@@ -48,11 +48,15 @@ TIGER_YEAR = 2024
 LAYERS = (("UNSD", "unsd"), ("ELSD", "elsd"), ("SCSD", "scsd"))
 LAYER_PRIORITY = {"unsd": 0, "elsd": 1, "scsd": 2}
 
+# Verified 2026-10-02 against the portal's endpoint list: EDFacts district
+# assessments exist for 2009-2018 and 2020 (no 2019), and grade-99 means "all
+# grades". 2020 is skipped (testing was waived that spring), so 2018 is the
+# latest full year.
 URBAN_URL = (
     "https://educationdata.urban.org/api/v1/school-districts/edfacts/assessments/"
-    "{year}/grade-edfacts/99/"
+    "{year}/grade-99/"
 )
-RATING_YEAR = 2019  # UNVERIFIED: confirm latest year with full coverage
+RATING_YEAR = 2018
 RATING_SOURCE_TEMPLATE = "edfacts_proficiency_{year}_state_percentile"
 # Urban Portal missing/suppressed codes are negative (-1, -2, -3).
 SUBGROUP_ALL_FIELDS = (

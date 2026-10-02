@@ -96,3 +96,18 @@ compare a learned model against).
 history — a new version gets new rows rather than overwriting. The API
 (`ScoreResponse.weightsVersion`) always reports which version produced a
 given response.
+
+**Current serving state.** The scorer writes `v2-handtuned` rows next to the
+existing `v1-handtuned` rows. The API serves whichever version its
+`SCORING_WEIGHTS_VERSION` setting names; that defaults to `v1-handtuned` and
+moves to `v2-handtuned` only after the v2 data ingestion and scoring run have
+populated it (in progress). Until then the v2-only factors (restaurant, bar,
+premium retail, facility-based noise corridor, school rating) show "No data".
+
+## Cohorts and areas
+
+Normalization is per `metro_area` cohort of geohash6 grid cells (about 0.6 x 0.4
+miles each). Scores for a road-bounded area (`GET /v1/area`) are not
+normalized separately: they are the area-weighted average of the overlapping
+cells' latest scores, so small areas inherit similar scores until per-polygon
+scoring exists.

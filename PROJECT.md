@@ -17,9 +17,10 @@ amenity _types_ is a usable proxy for neighborhood quality.
 
 **v1 scope:** NYC metro, 1–2 hour radius — five boroughs, Long Island,
 Westchester, Hudson Valley, northern NJ, Fairfield County CT. This radius
-spans multiple transit agencies (MTA, LIRR, Metro-North, NJ Transit) and
-multiple counties' school data sources — treat each as a separate ingestion
-job, not one unified feed.
+spans multiple transit agencies (MTA, LIRR, Metro-North, NJ Transit) — treat
+each as a separate ingestion job, not one unified feed. School data is now one
+federal source set across NY/NJ/CT. Nationwide expansion is **not planned**
+(the cell grid would be ~17-20 GB for the US; tract-level polygons ~150 MB).
 
 **Secondary goal:** this project doubles as a portfolio piece for a data
 engineering job search. The RAG pipeline + vector search + end-to-end
@@ -31,21 +32,28 @@ convenient.
 
 ## Scoring Factors
 
-| Factor                                                              | Signal direction                                                                 | Data source                                                            |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Grocery stores, gyms, cafes                                         | Positive                                                                         | OSM Overpass                                                           |
-| Gas stations / convenience store density                            | Negative (proxy for less desirable clientele)                                    | OSM Overpass                                                           |
-| Train/transit accessibility                                         | Positive                                                                         | GTFS static feeds (per agency)                                         |
-| School quality                                                      | Positive                                                                         | NYC Open Data + surrounding county sources                             |
-| Road/traffic conditions (e.g. single-lane roads causing congestion) | Negative                                                                         | OSM road classification tags                                           |
-| Noise corridor (emergency vehicle route noise; API key `emergencyCorridor`)                                     | Negative (mitigated by street orientation — side street vs. facing the corridor) | OSM road classification (proxy only — phase 2 refinement, not precise) |
-| Proximity to tier-1 airports (JFK, Dulles, SFO-class)               | Positive                                                                         | Hardcoded list + drive time via routing engine                         |
-| Popular running/walking trails (proxy for popularity, desirable neighborhood, safety) | Positive | OSM trail/path tags (free, required) + Strava Segments API popularity (optional enhancement, requires app registration) |
+| Factor                                                                                  | Signal direction                                                                 | Data source                                                                                         |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Grocery stores, gyms, cafes, restaurants                                                | Positive                                                                         | OSM Overpass                                                                                        |
+| Bars / pubs                                                                             | Positive, low weight (nightlife is a plus for some, noise for others)            | OSM Overpass                                                                                        |
+| Gas stations / convenience store density                                                | Negative (proxy for less desirable clientele)                                    | OSM Overpass                                                                                        |
+| Train/transit accessibility                                                             | Positive                                                                         | GTFS static feeds (per agency)                                                                      |
+| School quality (20% proximity + 80% rating; NULL, never 0, when unrated)                | Positive                                                                         | NCES school locations + EDFacts district proficiency (Urban Institute Education Data Portal, ODC-By) |
+| Road/traffic conditions (e.g. single-lane roads causing congestion)                     | Negative                                                                         | OSM road classification tags                                                                        |
+| Noise corridor (emergency-vehicle route noise; API key `emergencyCorridor`)             | Negative (mitigated by street orientation — side street vs. facing the corridor) | Real fire-station / hospital / police locations from OSM, with the road-class proxy as fallback     |
+| Proximity to airports (JFK, LGA, EWR)                                                   | Positive                                                                         | Hardcoded list + drive time via routing engine (straight-line until Valhalla exists)                |
+| *Underlying signal:* premium retail (Whole Foods, Starbucks, Target — Target weighted less) | Positive ("nicer area" signal; counts toward the overall score, not user-toggleable) | OSM Overpass                                                                                        |
+| *Underlying signal:* running route popularity (API key `trailPopularity`)               | Positive (proxy for popularity, desirable neighborhood, safety; counts toward the overall score, not user-toggleable) | Mapped OSM running trails (free, required) + Strava Segments popularity (optional, not configured)  |
+
+That is 14 factors in the v2 weight set (`v2-handtuned`): 12 user-toggleable
+plus the 2 underlying signals. Exact weights live in
+`scoring/engine.py` (`DEFAULT_WEIGHTS`). User-facing distances are always feet
+and miles; the API and database keep metres.
 
 OSM alone only tells us a trail *exists*, not that it's *popular* — Strava's
 segment data (athlete/effort counts) is the actual popularity signal named
-above; OSM trail presence is the fallback baseline when Strava isn't
-configured. **Garmin was considered and dropped**: unlike Strava, Garmin has
+above; OSM trail presence is the baseline, and it is what runs today because
+Strava is not configured. **Garmin was considered and dropped**: unlike Strava, Garmin has
 no public API exposing aggregate trail/route popularity data (its developer
 program is oriented around an individual athlete's own device/health data,
 not public usage aggregates) — noted here so it isn't silently forgotten as
@@ -55,6 +63,18 @@ access path we're missing.
 Scores are a **weighted composite of normalized sub-scores**, hand-tuned
 initially (no training data to fit against yet). Document weight rationale —
 it's the defensibility story for both users and future ML refinement.
+
+**Status (2026-10-02):** production serves v1 (11 factors). The v2 code is
+merged and its data ingestion plus the Lambda cutover
+(`SCORING_WEIGHTS_VERSION=v2-handtuned`) are in progress.
+
+**Clicking the map** scores the area bounded by secondary-and-above roads
+(plus coastline closure) that contains the point: the area-weighted average of
+the overlapping grid cells' latest scores, falling back to the cell rectangle
+when no area matches or it is too large (>10 sq mi). 16,277 areas are loaded.
+Known weak spots: tiny sliver areas, unclipped water. Finer neighborhood
+polygons (5-10 blocks, secondary roads as hard barriers) are a stage-1 offline
+prototype only.
 
 ---
 
@@ -129,23 +149,28 @@ parallel work later.
 
 ### Phase 1 — MVP, single metro
 
-- **POIs**: OSM Overpass API (free, no key) — grocery, gyms, cafes, gas
-  stations/convenience stores
+- **POIs**: OSM Overpass API (free, no key) — grocery, gyms, cafes,
+  restaurants, bars, gas stations/convenience stores, and premium-retail brands
 - **Transit**: GTFS static feeds, one ingestion job per agency (MTA, LIRR,
-  Metro-North, NJ Transit)
-- **Schools**: NYC Open Data + surrounding county open-data sources
+  Metro-North, NJ Transit; the NJ Transit API key is not obtained yet)
+- **Schools**: NCES school locations (NY/NJ/CT) + EDFacts district proficiency
+  converted to within-state percentiles (see `docs/data-sources.md`).
+  GreatSchools is link-only (licensed, not ingested); Stanford SEDA was rejected
+  (non-commercial terms)
 - **Roads**: OSM road classification tags (`highway=primary/secondary/...`)
-  for congestion and emergency-corridor proxies
-- **Airports**: hardcoded lat/longs (JFK, Dulles, SFO-class), drive time via
-  self-hosted routing engine
+  for congestion and the noise-corridor fallback proxy; OSM fire/hospital/police
+  locations for the real noise-corridor signal
+- **Airports**: hardcoded lat/longs (JFK, LGA, EWR), drive time via a
+  self-hosted routing engine (straight-line fallback until Valhalla exists)
 - **Trails**: OSM-tagged running/walking paths (free, no key, required
   baseline) + Strava Segments API popularity data (optional enhancement,
   requires a Strava API app — see Phase 1 Requirements in `PHASES.md`).
-  Garmin has no suitable public API for this and isn't pursued.
+  Garmin has no suitable public API for this and isn't pursued. Strava is not
+  configured today.
 - **Ingestion orchestration**: GitHub Actions scheduled workflow — sufficient
   for weekly/monthly refresh cadence. Do not reach for Airflow yet; it's
   unnecessary operational overhead at this scale.
-- **Storage**: Supabase free tier (Postgres + pgvector included — same
+- **Storage**: Supabase free tier (~140 MB of 500 MB used; Postgres + pgvector included — same
   instance serves the embeddings work in Phase 3, no separate vector DB
   needed)
 - **Scoring**: precomputed and stored, never calculated live per request.
@@ -155,7 +180,10 @@ parallel work later.
   HTTP API — scales to zero when idle — served at `api.benrispace.com`
 - **Frontend**: Next.js + TypeScript on AWS Amplify Hosting, served at
   `benrispace.com`/`www.benrispace.com` (replaces the earlier Firebase
-  Hosting plan)
+  Hosting plan). Live pages: Home, App (`/app`, split-screen map + score
+  panel), API docs, Settings, and Pricing/Login placeholders; light/dark theme
+- **Address search**: LocationIQ autocomplete with Photon fallback, reverse
+  geocoding for clicked points, and "use my current location"
 - **Infrastructure**: Terraform (`infra/`) provisions all AWS resources;
   GitHub Actions deploys via an OIDC-assumed IAM role (no long-lived AWS
   keys in repo secrets)
@@ -333,7 +361,7 @@ Designed for **1 to a few users today, without a rebuild when it grows**:
 
 Phase 1 should run close to **$0/month**, with a few small, known line
 items: Supabase free tier, Lambda's always-free allowance (1M requests +
-400,000 GB-s/month), GitHub Actions free minutes, OSM/GTFS/NYC Open Data
+400,000 GB-s/month), GitHub Actions free minutes, OSM/GTFS/NCES/EDFacts
 all free. Real, non-$0 items to plan for:
 
 - **Domain registration** for benrispace.com (~$12–20/yr depending on

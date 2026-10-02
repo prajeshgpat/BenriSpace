@@ -85,6 +85,7 @@ resource "aws_lambda_function" "api" {
       DATABASE_URL_SSM_PARAM       = aws_ssm_parameter.database_url.name
       LOCATIONIQ_API_KEY_SSM_PARAM = aws_ssm_parameter.locationiq_api_key.name
       CORS_ALLOWED_ORIGINS         = "https://${var.domain_name},https://${local.www_domain}"
+      SCORING_WEIGHTS_VERSION      = var.scoring_weights_version
     }
   }
 

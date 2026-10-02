@@ -10,13 +10,16 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | --- | --- | --- |
 | `GET /score` | Score for one address or coordinate | live |
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
+| `GET /area` | Score for the road-bounded area under a point | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (placeholder geometry, see below) |
-| `GET /suggest` | Address autocomplete | available after the next deploy |
-| `GET /reverse` | Readable address for a map point | available after the next deploy |
-| `GET /map/cells` | Composite score per map cell for a chosen set of factors | available after the next deploy |
-| `GET /map/top` | Best, well-separated areas for a chosen set of factors | available after the next deploy |
+| `GET /suggest` | Address autocomplete | live |
+| `GET /reverse` | Readable address for a map point | live |
+| `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
+| `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
-Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are real responses from the production API. Examples for the three newer endpoints are real responses from the same code running against the production database; they are not reachable on `api.benrispace.com` until the next deploy.
+**Which examples are real.** Examples for `/score`, `/score/{id}/explanation`, `/triangulate`, `/suggest`, `/reverse`, `/map/cells` and `/map/top` are real responses captured when this guide was written. They predate the v2 data cutover, so they show `weightsVersion: "v1-handtuned"` and only the original eleven sub-scores. Examples marked "illustrative" (`/area` and the `school` and `nearestMi` shapes) show structure only; their values are made up.
+
+**v2 status.** The v2 code (fourteen factors, `/area`, `/reverse`, miles) is deployed. The v2 data ingestion and the switch of the API to `v2-handtuned` scores are still in progress. Until the cutover the API serves `v1-handtuned` scores, so restaurant, bar, premium retail and the facility-based noise corridor are absent or `null` ("No data" on the website), and school ratings are missing where not yet loaded.
 
 ## Conventions
 
@@ -31,7 +34,7 @@ Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are re
   `code` is stable and meant for programs; `message` is for humans and may change.
 - **`null` means "not measured", never 0.** A sub-score can be `null` when the underlying data does not exist for that spot yet. Treat it as unknown. Composites ignore `null` factors rather than counting them as zero.
 - **CORS:** browsers may call the API only from `https://benrispace.com`, `https://www.benrispace.com` and `http://localhost:3000`. From any other origin the browser will block the response. Server-side clients (curl, Python, Node) are not affected by CORS.
-- **Caching:** `/suggest`, `/reverse`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
+- **Caching:** `/area`, `/suggest`, `/reverse`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
 - **Rate limiting:** the API Gateway currently allows a steady 10 requests per second with bursts of 20, across all callers. Beyond that you get `429 Too Many Requests` (from API Gateway, not the application, so the body is not in the error shape above). Per-user quotas arrive with API keys.
 
 ## What a score means
@@ -39,7 +42,8 @@ Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are re
 - Scores run from **0 to 100, and higher is always better**. Factors where less is better (gas stations nearby, traffic, the noise corridor, airport drive time) are already inverted, so a high `gasStation` score means "far from gas stations".
 - Scores are **relative within a metro area**, not absolute. Each factor is min-max normalized across all cells in the same metro area (for example `nyc` or `northern_nj`), so 100 means "best in its metro area for this factor" and 0 means "worst". A suburban cell is compared with other suburban cells in its own area, not with Manhattan.
 - **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more gas stations, traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but 10 on distance from gas stations. A composite near 80 is exceptional.
-- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
+- Scores describe an **area**, not a single building. The underlying grid cells are about 0.6 by 0.4 miles, and the small road-bounded areas returned by `/area` are averages of the cells they overlap, so neighbouring small areas often share similar scores.
+- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`; the older `v1-handtuned` has eleven factors, without restaurant, bar and premiumRetail): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
 ### The fourteen factors
@@ -49,16 +53,19 @@ Examples for `/score`, `/score/{id}/explanation` and `/triangulate` below are re
 | `grocery` | Grocery stores close by |
 | `gym` | Gyms close by |
 | `cafe` | Cafes close by |
+| `restaurant` | Restaurants close by (`amenity=restaurant` only) |
+| `bar` | Bars, pubs and beer gardens close by |
+| `premiumRetail` | Close to Whole Foods, Starbucks and Target (underlying metric) |
 | `gasStation` | Far from gas stations |
 | `convenienceStore` | Far from convenience stores |
 | `transit` | Close to frequent transit stops |
 | `school` | Schools close by and well rated |
 | `road` | Light traffic and congestion nearby |
-| `emergencyCorridor` | Far from the noise corridor (API key `emergencyCorridor`; displayed as "Noise corridor") |
+| `emergencyCorridor` | Far from the noise corridor (displayed as "Noise corridor") |
 | `airport` | Short drive to a major airport |
 | `trailPopularity` | Mapped running trails close by (underlying metric) |
 
-The table above is completed by `restaurant` (restaurants close by), `bar` (bars and pubs close by), and `premiumRetail` (close to Whole Foods, Starbucks and Target); the API serves only rows matching its configured weights version, so rows from an older version lack them.
+Brand matching for `premiumRetail` uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v1-handtuned` until the v2 cutover), so rows from an older version lack the newer factors.
 
 **Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely. It is a rough proxy (default weight 0.75). The API key `emergencyCorridor` and the database columns keep their names.
 
@@ -66,7 +73,7 @@ The table above is completed by `restaurant` (restaurants close by), `bar` (bars
 
 ## Geohash cells
 
-The metro area is divided into a grid of **geohash6** cells, roughly 0.75 by 0.4 miles. Every score belongs to one cell. `/map/cells` identifies cells by their geohash string (for example `dr5ru0`); with `precision=5` the cells are about 3 by 3 miles (`dr5ru`), and each one is the average of the finer cells inside it.
+The metro area is divided into a grid of **geohash6** cells, roughly 0.6 by 0.4 miles. Every score belongs to one cell. `/map/cells` identifies cells by their geohash string (for example `dr5ru0`); with `precision=5` the cells are about 2.3 by 3 miles (`dr5ru`), and each one is the average of the finer cells inside it.
 
 A geohash is a base-32 string (alphabet `0123456789bcdefghjkmnpqrstuvwxyz`) in which each character narrows a latitude/longitude rectangle; a longer string is a smaller rectangle, and a cell's prefix is the larger cell containing it. To get a cell's rectangle, decode it:
 
@@ -145,7 +152,7 @@ Everything user-facing is in feet and miles: distances in text, `nearestMi`, `mi
 
 ### `school`
 
-Alongside `subScores.school` (which is `null` when no school rating exists for the location) the response carries a `school` object, or `null` for rows scored before school data was ingested:
+Shape only (illustrative). Alongside `subScores.school` (which is `null` when no school rating exists for the location) the response carries a `school` object, or `null` for rows scored before school data was ingested:
 
 ```json
 { "school": { "proximity": 72.0, "ratingAvailable": false, "districtName": "Example UFSD", "source": "example-source" } }
@@ -171,7 +178,7 @@ Errors:
 
 ## `GET /area`
 
-Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
+Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. The website calls this when you click the map and draws the polygon; on a 404 it falls back to the single grid cell. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -184,7 +191,7 @@ The point picks the smallest area whose polygon contains it; a point within 40 m
 curl "http://localhost:8000/v1/area?lat=40.7484&lon=-73.9857"
 ```
 
-Shape only. The values below are illustrative, not real data, and `subScores` is shortened:
+Shape only (illustrative). The values below are made up, not real data, and `subScores` is shortened:
 
 ```json
 {
@@ -218,7 +225,7 @@ Errors:
 
 ## `GET /score/{geoEntityId}/explanation`
 
-A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Currently generated from a template; an LLM-written explanation may replace it later without changing the shape.
+A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Currently generated from a template (RAG-written explanations are a later phase); an LLM-written explanation may replace it later without changing the shape.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -236,7 +243,7 @@ curl "https://api.benrispace.com/v1/score/21c5d4bd-e66e-423b-8f4c-8e569604f187/e
 }
 ```
 
-Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. For locations scored before the newer data was ingested the values are `null`, and the explanation omits its "Nearest feature" sentence. Shape:
+Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. For locations scored before the newer data was ingested the values are `null`, and the explanation omits its "Nearest feature" sentence. Shape (illustrative):
 
 ```json
 { "nearestMi": { "grocery": 0.2, "gym": null, "premiumRetail": 0.8 } }
@@ -248,7 +255,7 @@ Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no sco
 
 ## `POST /triangulate`
 
-Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score.
+Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score. Candidate cells are prefiltered with a bounding box derived from the anchor circles.
 
 **This is a placeholder.** There is no routing engine yet, so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
 
@@ -321,11 +328,9 @@ Errors:
 
 ## `GET /suggest`
 
-*Available after the next deploy.*
-
 Address autocomplete for a search box. Returns up to `limit` places for what the user has typed so far, restricted to the covered area and biased toward the middle of the metro. Pass a suggestion's `latitude`/`longitude` straight to `GET /score?lat=&lon=`, which skips geocoding.
 
-Suggestions come from [Photon](https://photon.komoot.io), a geocoder built on OpenStreetMap data, proxied so browsers never talk to it directly. Results are cleaned up before you see them: labels are built as `house number + street, city, state` (NY, NJ, CT, PA abbreviated), point-of-interest names at an address are replaced by the address itself, and duplicate labels or points within 25 m of each other are merged. A query that starts with a digit lists addresses before streets and landmarks. The same query is cached on the server for 10 minutes.
+Suggestions come from [LocationIQ](https://locationiq.com) when the server has an API key (the primary provider), with [Photon](https://photon.komoot.io), a keyless geocoder built on OpenStreetMap data, as the fallback. Both are proxied so browsers never talk to them directly. Nominatim is not used for autocomplete because its usage policy forbids it. Results are cleaned up before you see them: labels are built as `house number + street, city, state` (NY, NJ, CT, PA abbreviated), point-of-interest names at an address are replaced by the address itself, and duplicate labels or points within 25 m of each other are merged. A query that starts with a digit lists addresses before streets and landmarks. The same query is cached on the server for 10 minutes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -355,7 +360,7 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | `q` missing or shorter than 3 characters; `limit` outside 1-10 |
-| 503 | `suggest_unavailable` | The provider timed out (3 s), returned an error, or sent something unreadable |
+| 503 | `suggest_unavailable` | Every provider timed out (3 s for LocationIQ, 8 s for Photon), returned an error, or sent something unreadable |
 
 On a 503, fall back to plain-text search (`GET /score?address=...`) rather than showing an error. Error responses are not cached.
 
@@ -363,9 +368,7 @@ On a 503, fall back to plain-text search (`GET /score?address=...`) rather than 
 
 ## `GET /reverse`
 
-*Available after the next deploy.*
-
-Turns a coordinate (for example a map click) into a short readable address. The label is `house number + street, locality, state` (NY, NJ, CT, PA abbreviated), the same style as `/suggest`. With no house number it is the street; with no street it is the neighbourhood name; if nothing usable is known, `label` is `null` (still HTTP 200). The point is echoed back as sent. Results are cached on the server for 10 minutes, by coordinates rounded to 4 decimals (about 11 m).
+Turns a coordinate (for example a map click) into a short readable address. The label is `house number + street, locality, state` (NY, NJ, CT, PA abbreviated), the same style as `/suggest` (LocationIQ first, Photon as the fallback). With no house number it is the street; with no street it is the neighbourhood name; if nothing usable is known, `label` is `null` (still HTTP 200). The point is echoed back as sent. Results are cached on the server for 10 minutes, by coordinates rounded to 4 decimals (about 11 m).
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -394,8 +397,6 @@ On a 503, show the coordinates (or nothing) rather than an error. Error response
 
 ## `GET /map/cells`
 
-*Available after the next deploy.*
-
 Composite score for every grid cell inside a map viewport, calculated for the factors and weights you choose. It is a weighted average of the stored sub-scores (not a recalculation from raw data), so it is cheap to call whenever the user toggles a filter.
 
 For each cell, the composite uses only the selected factors that are not `null` for that cell, so the denominator counts only the weights of factors that have data; cells where every selected factor is `null` are left out.
@@ -403,7 +404,7 @@ For each cell, the composite uses only the selected factors that are not `null` 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `bbox` | string | yes | Viewport as `minLon,minLat,maxLon,maxLat`. Cells whose grid point lies inside are returned. |
-| `precision` | integer | no | `6` (default, about 0.75 x 0.4 mile cells) or `5` (about 3 x 3 miles; the mean of the finer cells). Use 5 when zoomed out. |
+| `precision` | integer | no | `6` (default, about 0.6 x 0.4 mile cells) or `5` (about 2.3 x 3 miles; the mean of the finer cells). Use 5 when zoomed out. |
 | `factors` | string | no | Comma-separated factor keys to include, for example `transit,cafe`. Omit for all fourteen (including the underlying `premiumRetail` and `trailPopularity`); an explicit list means exactly those factors. Must not be empty if present. |
 | `weights` | string | no | Overrides as `factor:number`, comma-separated, for example `transit:2,cafe:0.5`. Numbers must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use their default weight. Overrides for factors not in `factors` are ignored. |
 | `limit` | integer | no | 1 to 20000, default 8000. `truncated` is true when more cells matched. |
@@ -439,8 +440,6 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 
 ## `GET /map/top`
 
-*Available after the next deploy.*
-
 "Where should I look?" Ranks cells by the same composite as `/map/cells`, then walks down the list keeping each cell that is at least `minSeparationMi` from every cell already kept, so you get distinct neighbourhoods rather than ten adjacent blocks. Because scores are relative within each metro area, the winners are the best spots in their metro area for the factors you chose; narrowing `factors` to one or two shows where each is at its maximum (with `factors=transit` the top score is 100).
 
 | Parameter | Type | Required | Description |
@@ -449,7 +448,7 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 | `factors` | string | no | As for `/map/cells` |
 | `weights` | string | no | As for `/map/cells` |
 | `limit` | integer | no | 1 to 50, default 10 |
-| `minSeparationMi` | number | no | Minimum distance between returned areas, in miles. 0 to 31; default about 1.9 (the old 3 km default). |
+| `minSeparationMi` | number | no | Minimum distance between returned areas, in miles. 0 to 31; default about 1.9 (equal to the old 3 km default). |
 | `minSeparationKm` | number | no | **Deprecated**, still works. Kilometres, 0 to 50, default 3. Sending it together with `minSeparationMi` is a `400 invalid_request`. |
 
 You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all fourteen factors, whatever you selected for the ranking).
@@ -490,7 +489,7 @@ curl "http://localhost:8000/v1/map/top?factors=transit,cafe&bbox=-74.05,40.68,-7
 }
 ```
 
-Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50 `minSeparationMi` outside 0-31 (or `minSeparationKm` outside 0-50), or both separation parameters at once. The response has no separation field; the spacing is applied, not echoed.
+Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50, `minSeparationMi` outside 0-31 (or `minSeparationKm` outside 0-50), or both separation parameters at once. The response has no separation field; the spacing is applied, not echoed.
 
 ---
 
@@ -510,16 +509,16 @@ async function api(path, params = {}) {
   return body;
 }
 
-// Score a coordinate (works today). In a browser this only works from benrispace.com.
+// Score a coordinate In a browser this only works from benrispace.com.
 const score = await api("/score", { lat: 40.7484, lon: -73.9857 });
 console.log(score.compositeScore, score.subScores.transit);
 
-// Autocomplete, then score the chosen suggestion (after the next deploy).
+// Autocomplete, then score the chosen suggestion.
 const { suggestions } = await api("/suggest", { q: "350 5th ave" });
 const pick = suggestions[0];
 const picked = await api("/score", { lat: pick.latitude, lon: pick.longitude });
 
-// Best areas for transit and cafes, weighting transit double (after the next deploy).
+// Best areas for transit and cafes, weighting transit double.
 const top = await api("/map/top", { factors: "transit,cafe", weights: "transit:2", limit: 5 });
 for (const r of top.results) console.log(r.geohash, r.score, r.metroArea);
 ```
@@ -532,11 +531,9 @@ import httpx
 API = "https://api.benrispace.com/v1"
 
 with httpx.Client(base_url=API, timeout=20) as client:
-    # Works today.
     score = client.get("/score", params={"lat": 40.7484, "lon": -73.9857}).json()
     print(score["compositeScore"], score["subScores"]["transit"])
 
-    # After the next deploy.
     cells = client.get(
         "/map/cells",
         params={
@@ -554,4 +551,4 @@ with httpx.Client(base_url=API, timeout=20) as client:
         print(error["code"], error["message"])
 ```
 
-The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally.
+The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally before the v2 deploy. After the data cutover, responses show `v2-handtuned` and fourteen sub-scores.

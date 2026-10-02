@@ -30,6 +30,12 @@ variable "lambda_zip_path" {
   default     = "../build/lambda.zip"
 }
 
+variable "scoring_weights_version" {
+  description = "Scores weights_version the API serves (map, /score, /area). Moves to v2-handtuned once the v2 scoring run has populated it."
+  type        = string
+  default     = "v1-handtuned"
+}
+
 variable "lambda_memory_mb" {
   description = "Lambda memory in MB. CPU scales with memory, which mostly matters for cold-start import time."
   type        = number
