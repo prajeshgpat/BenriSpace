@@ -138,6 +138,15 @@ precomputed scores served through an API.
       alone (what AWS's docs state) failed with a GitHub 404 on a private
       repo even with the Amplify GitHub App installed. Keep that token
       short-lived and revoke it after use.
+      Second operational note: the GitHub OIDC deploy role first rejected
+      CI with `Not authorized to perform sts:AssumeRoleWithWebIdentity`
+      because GitHub now issues the `sub` claim with immutable IDs
+      (`repo:prajeshgpat@23436700/BenriSpace@1394007909:ref:refs/heads/main`),
+      not the name-only form the trust policy assumed. Found by reading
+      the failed attempts in CloudTrail (`lookup-events` on
+      `AssumeRoleWithWebIdentity`); trust now matches the ID form
+      (`github_owner_id` / `github_repository_id` variables), which also
+      resists repo-rename/transfer impersonation.
 - [~] **Lambda packaging + deploy workflow** — built 2026-09-30:
       `api/lambda_handler.py` (Mangum; loads the database URL from SSM at
       cold start, fails loudly if it can't), `scripts/build_lambda.sh`

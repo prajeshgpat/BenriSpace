@@ -18,13 +18,18 @@ data "aws_iam_policy_document" "github_deploy_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # Exact match on repo and branch, by immutable IDs: GitHub issues the sub
+    # claim as repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:..., which also
+    # means a re-registered repo or username can't impersonate this one.
     # Exact match on repo and branch. A workflow job that declares a GitHub
     # `environment:` gets a different sub claim (repo:<repo>:environment:<name>)
     # and will be rejected by this condition.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/${var.github_branch}"]
+      values = [
+        "repo:${split("/", var.github_repository)[0]}@${var.github_owner_id}/${split("/", var.github_repository)[1]}@${var.github_repository_id}:ref:refs/heads/${var.github_branch}",
+      ]
     }
   }
 }

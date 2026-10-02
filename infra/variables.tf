@@ -79,6 +79,18 @@ variable "github_repository" {
   default     = "prajeshgpat/BenriSpace"
 }
 
+variable "github_owner_id" {
+  description = "Numeric GitHub ID of the repository owner. GitHub's OIDC tokens identify repos by immutable IDs (repo:<owner>@<owner_id>/<name>@<repo_id>), so the deploy role must trust that form. Public: https://api.github.com/users/<owner>."
+  type        = number
+  default     = 23436700
+}
+
+variable "github_repository_id" {
+  description = "Numeric GitHub ID of the repository (see github_owner_id). Public for public repos; for a private repo, find it in the sub claim of a failed OIDC attempt in CloudTrail or via an authenticated GET /repos/<owner>/<name>."
+  type        = number
+  default     = 1394007909
+}
+
 variable "github_branch" {
   description = "Branch that may deploy the API and that Amplify builds as production."
   type        = string
