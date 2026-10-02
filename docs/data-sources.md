@@ -13,7 +13,9 @@ fetched, stored or scored.
 |---|---|---|
 | School locations (count, nearest) | NCES EDGE public school locations (2024-25), NY/NJ/CT | US federal government work; the NCES page states no licence text. Treated as public domain (verify at NCES before launch). Cite NCES. |
 | District boundaries | Census TIGER/Line / NCES EDGE school district boundaries (unified, elementary, secondary) | Same federal-source data; public domain. |
-| Ratings | EDFacts district assessment proficiency (math + reading, mean percent proficient) via the Urban Institute Education Data Portal | Portal text: "All data made available via the Education Data Portal in any form is licensed to you under the Open Data Commons Attribution License (ODC-By) v1.0." Commercial use allowed with attribution. |
+| Ratings | EDFacts district assessment proficiency (math + reading, mean percent proficient), school year 2018, via the Urban Institute Education Data Portal (`/api/v1/school-districts/edfacts/assessments/2018/grade-99/`, grade 99 = all grades) | Portal text: "All data made available via the Education Data Portal in any form is licensed to you under the Open Data Commons Attribution License (ODC-By) v1.0." Commercial use allowed with attribution. |
+
+**Why 2018.** The portal's EDFacts district assessments cover 2009-2018 and 2020; there is no 2019 file, and 2020 is skipped because testing was waived that spring. 2018 is the latest full year. The endpoint was checked live on 2026-10-02 and returns 1,637 districts across the three states (NY 785, NJ 652, CT 200).
 
 Required attribution (UI footer / docs page):
 "School ratings: EDFacts proficiency data, Education Data Portal (Urban
@@ -47,6 +49,8 @@ SEDA is not used. Revisit only with written permission.
    `school_district_geoid`, `school_district_name` and `school_rating_source`.
    An unrated cell gets a NULL school score.
 
+Where this appears: the website footer credits NCES and the Education Data Portal (Urban Institute, ODC Attribution License). Cells whose district has no rating show the school score as "No data", with proximity shown separately.
+
 Caveats: district-level only (no within-district variation); proficiency
 reflects student demographics as well as school quality; the EDFacts year is
-older than today.
+older than today (2018 data); NJ and CT use different state tests from NY, which is why ratings are converted to within-state percentiles.

@@ -8,22 +8,26 @@ Each phase below has a **Requirements from you** subsection — accounts,
 API keys, or decisions that only you can provide, not something to design
 around. Full list, but here's what's actually blocking right now:
 
-## Blocking Phase 1 today
+## Status as of 2026-10-02
 
-All the code that *doesn't* need these has been built and unit-tested
-(grid, POI/transit/schools/roads/airports ingestion, scoring engine, API
-scaffold — see Phase 1's Tasks below for the detailed state of each). What's
-below is genuinely blocking the next step for each:
+Phase 1 is **live in production**: https://benrispace.com (Next.js on
+Amplify) and https://api.benrispace.com (FastAPI on Lambda behind API
+Gateway), backed by Postgres on Supabase. PRs #1–#5 have merged
+(`dev-benrispace` → `main`). **In progress:** the scoring v2 data
+ingestion run and the Lambda cutover to `v2-handtuned` (see Phase 1 →
+Scoring engine). Production still serves v1 scores until that switch.
+
+## Blocking items
+
+Only the items below still need something from you; everything else in
+Phase 1 is built (see Phase 1's Tasks for the state of each):
 
 - [x] Register `benrispace.com` — done 2026-09-28 (at Cloudflare
       Registrar; see the DNS decision below).
-- [ ] AWS account with billing enabled — blocks `terraform apply` and
-      therefore every deploy (API, frontend, DNS). **Switched from GCP
-      2026-09-29** — see `PROJECT.md` → Hosting & Domain for rationale
-      (resume breadth, not cost). Nothing GCP-specific was ever built, so
-      this was a clean swap, not a migration. Terraform config and the
-      Next.js frontend can both be written *before* the account exists;
-      only applying/deploying needs it.
+- [x] AWS account with billing enabled — done; Terraform applied
+      2026-10-01/02. **Switched from GCP 2026-09-29** — see `PROJECT.md` →
+      Hosting & Domain for rationale (resume breadth, not cost). Nothing
+      GCP-specific was ever built, so this was a clean swap.
 - [x] **Cloudflare API token** — done 2026-10-01 (rolled once after it
       appeared in chat). Lives in `~/.cloudflare_token` (mode 600, outside
       the repo); Terraform reads it from `CLOUDFLARE_API_TOKEN`.
@@ -48,14 +52,12 @@ below is genuinely blocking the next step for each:
       default and failed to resolve from this sandbox (no outbound IPv6),
       which would also fail on GitHub Actions runners (IPv4-only), so the
       pooler is the right production choice too, not just a workaround.
-      Only `airports.py` and `scoring/run.py` have been run against real
-      data so far — the OSM/GTFS/NYC-Open-Data/Strava-backed jobs
-      (`osm_poi`, `gtfs_transit`, `schools`, `roads`, `trails`) haven't
-      been run live yet; they make real external API calls, some
-      (`trails.py`'s Strava path) with real rate-limit-bound runtimes, so
-      that's worth a deliberate go-ahead rather than doing it silently.
-- [ ] NJ Transit developer API key — blocks that one agency only; MTA/LIRR/
-      Metro-North transit ingestion is otherwise code-complete
+      All ingestion jobs have since run live (see the individual tasks and
+      the orchestration task below). Database usage is ~140 MB of the
+      500 MB free tier.
+- [ ] NJ Transit developer API key — not obtained; blocks that one agency
+      only (MTA/LIRR/Metro-North are done). Expect one failed NJ Transit
+      row in `ingestion_runs` on every ingestion run until it exists.
 
 Everything else (Valhalla hosting in Phase 2, LLM provider in Phase 3,
 Google OAuth + Stripe in Phase 4) is deferred and detailed in its own
@@ -109,7 +111,7 @@ precomputed scores served through an API.
 
 ### Tasks
 
-- [~] **Register benrispace.com** and point DNS — domain registered
+- [x] **Register benrispace.com** and point DNS — domain registered
       2026-09-28 at Cloudflare Registrar. DNS stays at Cloudflare; Terraform
       (Cloudflare provider) owns every record — `benrispace.com`/`www` →
       Amplify, `api.benrispace.com` → API Gateway, and ACM certificate
@@ -123,7 +125,7 @@ precomputed scores served through an API.
       for the database URL (set out-of-band; never in state), GitHub OIDC
       deploy role (repo + `main` only), $10/month budget alert to
       prajeshgpat@gmail.com. The live API returns real scores (Midtown
-      Manhattan: composite 76.6, all 11 factors, ~0.2s warm), CORS allows
+      Manhattan: composite 76.6 with the 11 v1 factors, ~0.2s warm), CORS allows
       only the frontend origins. **Stage 2 applied 2026-10-02**: ACM
       certificates, the `api.benrispace.com` custom domain, the Amplify
       app/branch/custom domain, and all Cloudflare DNS records (27
@@ -154,15 +156,14 @@ precomputed scores served through an API.
       `AssumeRoleWithWebIdentity`); trust now matches the ID form
       (`github_owner_id` / `github_repository_id` variables), which also
       resists repo-rename/transfer impersonation.
-- [~] **Lambda packaging + deploy workflow** — built 2026-09-30:
+- [x] **Lambda packaging + deploy workflow** — built 2026-09-30:
       `api/lambda_handler.py` (Mangum; loads the database URL from SSM at
       cold start, fails loudly if it can't), `scripts/build_lambda.sh`
-      (cross-builds Linux arm64 / Python 3.12 wheels from any host, 9.9 MB
-      zip, verified ELF aarch64 contents), `.github/workflows/deploy-api.yml`
-      (test → build → OIDC deploy → smoke check). Unit tested; **the
-      workflow has never run and the zip has never been invoked on Lambda**.
-      Before first deploy: put `?sslmode=require&connect_timeout=5` on the
-      database URL stored in SSM so a paused database fails fast.
+      (cross-builds Linux arm64 / Python 3.12 wheels from any host),
+      `.github/workflows/deploy-api.yml` (test → build → OIDC deploy →
+      smoke check). **Running in production**: the deploy workflow runs on
+      merges to `main` that touch the API, common or scoring code, and the
+      live Lambda serves `api.benrispace.com`.
 - [x] **Grid generation** (not originally listed as its own task — a gap
       found while building: every ingestion job below writes into
       `feature_store` keyed by `geo_entity_id`, so those rows have to exist
@@ -189,21 +190,29 @@ precomputed scores served through an API.
         blocked on the developer API key below, and its username/password
         auth flow (not a static zip like the others) still needs
         implementing once that key exists
-- [~] **School data ingestion** — `ingestion/schools.py`, pluggable
-      `SchoolDataSource` interface. **Live-verified 2026-09-29**: NYC Open
-      Data ingested successfully against real Supabase (64,320 rows, 1,635
-      cells with a school within 1600m, avg rating 9.06/10).
-  - [ ] Nassau/Suffolk, Westchester — stubbed behind the same interface
-        (`NotImplementedError`, `# TODO: verify current dataset URL`), not
-        wired up
-  - [ ] Northern NJ, Fairfield CT — no source built yet
+- [~] **School data ingestion** — `ingestion/schools.py` (locations) +
+      `ingestion/school_districts.py` (ratings). v1 was NYC Open Data only.
+      v2 replaces it with metro-wide sources: NCES school locations for
+      NY/NJ/CT, and district ratings from federal EDFacts proficiency
+      (2018, the latest full year) via the Urban Institute Education Data
+      Portal (ODC-By), converted to within-state percentiles. The school
+      score is 20% proximity + 80% rating, and NULL (never 0) when a cell
+      has no rated district. GreatSchools is link-only (licensed, not
+      ingested); Stanford SEDA was rejected (non-commercial terms). See
+      `docs/data-sources.md`. **In progress:** code merged; the live v2
+      ingestion run is not finished.
 - [x] **Road classification ingestion** — `ingestion/roads.py`. Code
       complete + unit tested (18 tests) for `road_classification`,
       `congestion_proxy_raw`, `emergency_corridor_proxy_raw`,
       `street_orientation`. **Live-verified 2026-09-29**: 64,320 cells
       classified against real Supabase, sensible distribution (15,168
       cells with no road within 1000m, matching "unknown" orientation
-      count exactly).
+      count exactly). v2 adds `ingestion/emergency_facilities.py`: real
+      fire-station, hospital and police locations from OSM now drive the
+      **noise corridor** factor (formerly "emergency corridor"; the API key
+      is still `emergencyCorridor`), with the road proxy as per-cell
+      fallback. The v2 live run of that job is part of the in-progress
+      ingestion below.
 - [x] **Airport proximity** — `ingestion/airports.py`. JFK/LGA/EWR
       hardcoded; drive time via a pluggable router — straight-line fallback
       active today (Valhalla unset), real Valhalla call wired and ready for
@@ -251,20 +260,12 @@ precomputed scores served through an API.
       subtags (server-side in the Overpass query, not just client-side)
       dropped NYC to 326,522 segments, confirmed live.
 
-      **Current data state**: NYC's 4,029 cells successfully landed
-      (confirmed in `feature_store`) via a prior per-metro commit — proof
-      the incremental-commit-per-metro design correctly preserves partial
-      progress across a failed run, not just a design intent. The
-      remaining 5 metros haven't landed yet: Overpass's public instance
-      has been returning 504s on this query even for small split
-      sub-quadrants for the last several minutes (confirmed NOT a general
-      outage — trivial queries against the same server succeed instantly;
-      this specific multi-clause `out geom` query is just expensive, and
-      server load right now is worse than it was minutes ago when the
-      identical query succeeded for all of NYC). This reads as transient
-      server-side load, not a bug — retriable later (the weekly CI cron
-      once secrets are wired up, or a manual re-run), not worth continuing
-      to hammer a free shared public server against right now.
+      The per-metro commit design preserves partial progress across a
+      failed run (NYC landed while the other metros hit Overpass 504s on
+      this expensive query; transient server load, retried by later runs).
+      **Strava is not configured**, so the route-popularity factor (key
+      `trailPopularity`) runs on mapped OSM running trails only; the Strava
+      path stays optional.
 - [~] **Ingestion orchestration** — `.github/workflows/ingestion.yml`:
       grid → ingestion jobs → scoring, weekly cron (Mon 06:00 UTC) +
       manual dispatch. **First live run 2026-10-02** (read back from the
@@ -283,39 +284,70 @@ precomputed scores served through an API.
       values persist, the red job still surfaces the failure), and the
       shared Overpass client retries a *fast* 502/503/504 with backoff
       while still letting a *slow* one reach roads/trails' bbox-splitting.
-      Needs one more green end-to-end run after merging.
+      These fixes are merged. **In progress:** the v2 data ingestion run
+      (new factor, school and emergency-facility columns) and a fully
+      green end-to-end run; the NJ Transit row is expected to fail until
+      its key exists.
 - [x] **Storage** — Supabase project live 2026-09-29 (see the Requirements
       note above for the full story: pipeline-mode fix, pooler vs. direct
       connection). Schema applied, grid populated, confirmed working
       end-to-end.
-- [x] **Scoring engine** — `scoring/engine.py` + `scoring/run.py`. Weighted
+- [~] **Scoring engine** — `scoring/engine.py` + `scoring/run.py`. Weighted
       composite of normalized sub-scores, hand-tuned weights with
-      documented rationale, 8 unit tests, **and now live-verified**: ran
-      against real Supabase data, produced correct composite scores.
-      Kept as direct (non-delegated) work per this phase's own sequencing
+      documented rationale (`DEFAULT_WEIGHTS`), live-verified against real
+      Supabase data. **v1 (`v1-handtuned`, 11 factors) is what production
+      serves.** **v2 (`v2-handtuned`, 14 factors)** is merged in code: 12
+      user-toggleable factors (grocery, gym, cafe, restaurant, bar, gas
+      station, convenience store, transit, school, road, noise corridor,
+      airport) plus 2 underlying signals that count toward the overall
+      score but cannot be toggled: premium retail (Whole Foods/Starbucks/
+      Target "nicer area" signal, Target weighted less) and running route
+      popularity. **In progress:** finishing the v2 ingestion run, then
+      switching the Lambda's `SCORING_WEIGHTS_VERSION` to `v2-handtuned`
+      (it is unset today, so the code default `v1-handtuned` applies).
+      Kept as direct (non-delegated) work per this phase's sequencing
       guidance.
-- [~] **API** — `api/` implements all three `contracts/openapi.yaml`
-      endpoints (unauthenticated — Phase 4 adds auth on top), unit tested,
-      with CORS for the frontend origins. `GET /score` is fully real, **and now live-verified** against
-      real Supabase data via an in-process test client (not yet run as a
-      deployed server). `/explanation` and `/triangulate` are
-      clearly-labeled Phase 1 placeholders (template-based explanation,
-      straight-line-circle isochrone) standing in for Phase 3/2. Uses OSM
-      Nominatim for address geocoding — a new design call, not previously
-      specified, flagged for your review. **Not yet deployed** — blocked on
-      AWS access above. Lambda packaging is tracked as its own task above.
-- [x] **Frontend (Next.js + TypeScript on Amplify)** — `web/`, built
-      2026-09-30 and **deployed 2026-10-02** at https://benrispace.com and
-      https://www.benrispace.com (Next.js 15, the newest Amplify Hosting
-      supports; React 19; Node 24; first build 3 minutes). Address search →
-      composite score, 11-factor breakdown (null = "No data", never 0),
-      explanation; shareable `/?address=` URL; loading/validation/
-      not-found/network-error states; light/dark; responsive. API types
-      generated from `contracts/openapi.yaml`. Lint, typecheck, 91 unit
-      tests and production build pass; golden and failure paths were
-      exercised in headless Chrome against the local API. Not yet verified:
-      Safari/Firefox, screen readers, real touch devices. Every push to
-      `main` triggers an Amplify build (~$0.01/build-minute).
+- [x] **API** — `api/` on Lambda at https://api.benrispace.com, unit
+      tested, CORS for the frontend origins, unauthenticated (Phase 4 adds
+      auth). Endpoints: `GET /v1/score`, `/v1/score/{id}/explanation`,
+      `/v1/suggest` (address autocomplete: LocationIQ primary, Photon
+      fallback), `/v1/reverse` (readable street address for a clicked
+      point), `/v1/map/cells`, `/v1/map/top`, `/v1/area`, and
+      `POST /v1/triangulate`. `/score` is fully real; `/explanation` and
+      `/triangulate` are still clearly-labeled placeholders
+      (template-based explanation, straight-line-circle isochrone)
+      standing in for Phase 3/2. Geocoding for typed addresses still
+      uses OSM Nominatim (`api/geocoding.py`).
+- [x] **Click-to-polygon areas** — clicking the map shows the area bounded
+      by secondary-and-above roads (plus coastline closure) containing the
+      point, scored as the area-weighted average of the overlapping grid
+      cells' latest scores; falls back to the cell rectangle when no area
+      matches or it is too large (>10 sq mi). Loaded in production:
+      16,277 areas and 101,540 area-cell mappings (`areas-v1-2026-10`),
+      via migration `0003_areas` (with `0002_v2`, both applied).
+      `GET /v1/area`. Known weak spots: tiny sliver areas, unclipped
+      water.
+- [~] **Neighborhood polygons** (clusters of ~5-10 blocks bounded by
+      secondary roads, a step finer than the road-bounded areas above) —
+      secondary-and-above roads are hard barriers (decision made).
+  - [x] Stage 1: offline prototype, `ingestion/areas/` (no database
+        access)
+  - [ ] Stage 2: full-metro run (not started)
+  - [ ] Stage 3: per-polygon scoring, API and UI (not started)
+- [x] **Frontend (Next.js + TypeScript on Amplify)** — `web/`, **live** at
+      https://benrispace.com and https://www.benrispace.com (Next.js 15,
+      React 19, Node 24). Pages: Home (explains the features and metrics),
+      App at `/app` (split-screen map + score panel; the old separate
+      `/map` page redirects there), API docs, Settings (theme), and
+      Pricing/Login placeholders. Header tabs, gear, Login, and a lightbulb
+      light/dark switch with a recoloured dark basemap. Address
+      autocomplete, "use my current location", readable street address for
+      clicked points, null = "No data" (never 0), shareable URLs, loading/
+      validation/error states, responsive. Distances are shown in feet and
+      miles only. API types generated from `contracts/openapi.yaml`. Lint,
+      typecheck, unit tests and production build run in CI. Not yet
+      verified: Safari/Firefox, screen readers, real touch devices. Every
+      push to `main` triggers an Amplify build (~$0.01/build-minute).
 
 ### Deliverables
 
@@ -335,25 +367,14 @@ precomputed data (no live third-party API calls on the request path).
 Nothing in this phase can start until these exist — none of it is a design
 decision, it's just accounts/credentials only you can create:
 
-- **Domain**: registered 2026-09-28 at Cloudflare Registrar; DNS stays
-  there. Needed: a Cloudflare API token (dashboard → My Profile → API
-  Tokens → "Edit zone DNS" template, scoped to benrispace.com), exported
-  as `CLOUDFLARE_API_TOKEN` in your shell — not pasted into chat or put in
-  a file.
-- **AWS** (switched from GCP 2026-09-29): an account with billing enabled
-  (card on file required to create an AWS account at all, not an expected
-  charge). Setup, in order:
-  1. Create the account; turn on **MFA for the root user** and then stop
-     using root for anything day-to-day.
-  2. Enable **IAM Identity Center** and create yourself an admin user —
-     this is what you'll use locally (`aws sso login`) to run the first
-     `terraform apply`. Don't create long-lived access keys.
-  3. That's it on your side — Terraform itself creates the GitHub OIDC
-     identity provider and the deploy role, so CI never needs a static AWS
-     key in repo secrets.
-  I'll also need the AWS region you want (default recommendation:
-  `us-east-1` — lowest prices and required anyway for the ACM certificate
-  if CloudFront is ever added in front).
+- **Domain — done.** Registered 2026-09-28 at Cloudflare Registrar; DNS
+  stays there. The Cloudflare API token exists (in `~/.cloudflare_token`,
+  outside the repo) and Terraform reads it from `CLOUDFLARE_API_TOKEN`.
+- **AWS — done** (switched from GCP 2026-09-29; account in `us-east-1`).
+  Setup was: root MFA, IAM Identity Center admin user for local
+  `aws sso login` + `terraform apply`, no long-lived access keys.
+  Terraform itself creates the GitHub OIDC provider and deploy role, so CI
+  never needs a static AWS key.
 - ~~**Firebase**~~ — no longer needed; frontend moves to Next.js on
   Amplify (see Frontend task above). Optional: share the old frontend's
   repo if anything in it is worth porting.
@@ -361,21 +382,21 @@ decision, it's just accounts/credentials only you can create:
   working (see "Blocking Phase 1 today" above for the full story — Session
   pooler connection string, pipeline-mode fix, everything tested against
   real data 2026-09-29).
-- **GitHub Actions secrets**: repo is confirmed at
-  `github.com/prajeshgpat/BenriSpace` — `.github/workflows/ingestion.yml`
-  reads `DATABASE_URL` (the Session pooler connection string, same one in
-  your local `.env`) plus `NJ_TRANSIT_API_KEY`/`NJ_TRANSIT_API_USERNAME`
-  and the optional Strava vars. None of these are set as repo secrets yet
-  — that's why the workflow is still inert despite the pipeline itself
-  being live and working. Add `DATABASE_URL` as a repo secret whenever
-  you're ready for the weekly ingestion cron to start running. The AWS
-  deploy workflows need no AWS secret at all — just the deploy role's ARN
-  (output by `terraform apply`), which is safe to store as a plain repo
-  variable since OIDC does the authentication.
-- **NJ Transit developer account + API key** — their GTFS static feed
-  requires registration, unlike MTA/LIRR/Metro-North which are open
-  downloads with no key.
-- *(Optional, not blocking)* **Strava API application** — for real trail
+- **GitHub Actions secrets — set.** Repo is
+  `github.com/prajeshgpat/BenriSpace`; `.github/workflows/ingestion.yml`
+  reads `DATABASE_URL` (Session pooler string) and ran live on 2026-10-02.
+  `NJ_TRANSIT_API_KEY`/`NJ_TRANSIT_API_USERNAME` and the Strava vars are
+  not set. The AWS deploy workflows need no AWS secret, only the deploy
+  role's ARN as a plain repo variable (OIDC authenticates).
+- **NJ Transit developer account + API key — still to do.** Their GTFS
+  static feed requires registration, unlike MTA/LIRR/Metro-North which are
+  open downloads with no key.
+- **Before making the repo public**: rotate the Supabase database
+  password and service-role key (both were pasted in chat earlier);
+  decide whether to keep the personal email and AWS account ID that appear
+  in `PHASES.md`, `api/geocoding.py` and `common/overpass.py`; enable
+  GitHub secret scanning. README and LICENSE (MIT) already exist.
+- *(Optional, not blocking; not configured)* **Strava API application** — for real trail
   popularity data (athlete/effort counts), register at
   `strava.com/settings/api` and give me the Client ID, Client Secret, and
   an OAuth refresh token with `read` scope (your own account authorizing
@@ -387,8 +408,6 @@ decision, it's just accounts/credentials only you can create:
   ~150 minutes per weekly run, which on a private GitHub repo eats real
   Actions minutes (~600/month against the free-tier budget) — a real,
   if modest, cost tradeoff against the $0/month target.
-- *(Optional, not blocking)* a NYC Open Data / Socrata app token, only if
-  anonymous rate limits become a problem.
 
 ---
 
@@ -598,6 +617,9 @@ the added complexity/cost.
         across metros justifies an orchestrator)
   - [ ] Only at this point, consider paid Places API for coverage gaps OSM
         can't fill
+  - Nationwide sizing, for reference only (**not planned**; NYC metro
+    only for now): the cell grid would be ~17-20 GB for the US, while
+    tract-level polygons would be ~150 MB.
 
 ### Deliverables
 
