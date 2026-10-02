@@ -7,3 +7,6 @@ venv/
 .ruff_cache/
 *.egg-info/
 build/
+
+# Personal local-dev launcher
+/scripts/dev.sh
