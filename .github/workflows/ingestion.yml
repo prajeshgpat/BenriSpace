@@ -3,9 +3,20 @@
 #
 # Order matters: grid generation must run first (every other job writes
 # feature_store rows keyed by geo_entity_id, which only exist after the
-# grid is populated), the five ingestion sources are independent of each
-# other and run in parallel, and scoring must run last (it reads
-# feature_store, which only has data once ingestion finishes).
+# grid is populated), the ingestion sources run ONE AT A TIME, and scoring
+# runs last (it reads feature_store).
+#
+# Why sequential: every source updates different columns of the SAME
+# feature_store rows, and a job's transaction holds those row locks until it
+# commits (gtfs_transit holds them for ~10 minutes). Run in parallel, the
+# first live run had osm_roads and trails wait on another job's locks until
+# Postgres' 2-minute statement_timeout cancelled them. Local runs never hit
+# this because they were always one at a time. Total runtime is the sum of
+# the jobs (~45 min) rather than the longest, and the Actions minutes billed
+# are about the same either way.
+#
+# Scoring runs even if one source failed: feature_store keeps the previous
+# values for that source, and the failed job still turns the run red.
 #
 # Inert until DATABASE_URL is set as a repo secret — see PHASES.md
 # "Blocking Phase 1 today". NJ_TRANSIT_API_KEY/USERNAME and
@@ -53,14 +64,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180 # trails.py's Strava enhancement can run ~150min; this is a safety ceiling
     strategy:
-      fail-fast: false # one source failing (e.g. NJ Transit, no key yet) shouldn't cancel the others
+      fail-fast: false # one source failing shouldn't cancel the others
+      max-parallel: 1 # see the lock-contention note at the top
       matrix:
-        module:
-          - ingestion.osm_poi
-          - ingestion.gtfs_transit
-          - ingestion.schools
-          - ingestion.roads
+        module: # cheap and reliable first; the slowest, flakiest source last
           - ingestion.airports
+          - ingestion.schools
+          - ingestion.gtfs_transit
+          - ingestion.osm_poi
+          - ingestion.roads
           - ingestion.trails
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +83,8 @@ jobs:
       - run: python -m ${{ matrix.module }}
 
   score:
-    needs: ingest
+    needs: [grid, ingest]
+    if: ${{ !cancelled() && needs.grid.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

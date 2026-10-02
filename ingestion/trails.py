@@ -136,6 +136,7 @@ thin, untested DB/network glue (same convention as every sibling ingestion
 module).
 """
 
+import itertools
 import math
 import sys
 import time
@@ -249,7 +250,7 @@ def parse_trail_elements(elements: list[dict]) -> list[dict]:
             continue
         tag_value = tags.get("highway") or tags.get("leisure")
         geometry = el.get("geometry") or []
-        for a, b in zip(geometry, geometry[1:]):
+        for a, b in itertools.pairwise(geometry):
             if a is None or b is None:
                 continue
             mid_lat = (a["lat"] + b["lat"]) / 2.0

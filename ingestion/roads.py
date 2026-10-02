@@ -79,6 +79,7 @@ Design calls made here (flag if wrong, easy to change):
   `road_classification = None` / `street_orientation = 'unknown'`.
 """
 
+import itertools
 import math
 import sys
 import time
@@ -282,7 +283,7 @@ def _fetch_bbox(client: httpx.Client, min_lat: float, min_lon: float, max_lat: f
             continue
         lanes = _parse_lanes(tags.get("lanes"))
         geometry = element.get("geometry") or []
-        for a, b in zip(geometry, geometry[1:]):
+        for a, b in itertools.pairwise(geometry):
             if a is None or b is None:
                 continue
             mid_lat = (a["lat"] + b["lat"]) / 2.0
@@ -354,24 +355,23 @@ def classify_cell(lat: float, lon: float, index: dict[tuple[int, int], list[dict
 
 
 def run() -> None:
-    with get_connection() as conn, ingestion_job("osm_roads") as ctx:
-        with make_client() as client:
-            for metro_area, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES:
-                print(f"Fetching road segments for {metro_area}...", file=sys.stderr)
-                segments = fetch_segments_for_bbox(client, min_lat, max_lat, min_lon, max_lon)
-                print(f"  {metro_area}: {len(segments)} road segments", file=sys.stderr)
-                index = index_segments(segments)
+    with get_connection() as conn, ingestion_job("osm_roads") as ctx, make_client() as client:
+        for metro_area, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES:
+            print(f"Fetching road segments for {metro_area}...", file=sys.stderr)
+            segments = fetch_segments_for_bbox(client, min_lat, max_lat, min_lon, max_lon)
+            print(f"  {metro_area}: {len(segments)} road segments", file=sys.stderr)
+            index = index_segments(segments)
 
-                metro_rows = 0
-                for entity in iter_geo_entities(conn, metro_area=metro_area):
-                    fields = classify_cell(entity["latitude"], entity["longitude"], index)
-                    upsert_feature_store(conn, entity["id"], fields)
-                    metro_rows += 1
-                    ctx.rows_affected += 1
+            metro_rows = 0
+            for entity in iter_geo_entities(conn, metro_area=metro_area):
+                fields = classify_cell(entity["latitude"], entity["longitude"], index)
+                upsert_feature_store(conn, entity["id"], fields)
+                metro_rows += 1
+                ctx.rows_affected += 1
 
-                conn.commit()
-                print(f"  {metro_area}: classified {metro_rows} cells", file=sys.stderr)
-                time.sleep(1)  # be polite between metro-area queries
+            conn.commit()
+            print(f"  {metro_area}: classified {metro_rows} cells", file=sys.stderr)
+            time.sleep(1)  # be polite between metro-area queries
 
     print(f"osm_roads ingestion complete: {ctx.rows_affected} cells classified.", file=sys.stderr)
 

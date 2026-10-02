@@ -262,6 +262,28 @@ parallel work later.
 
 ---
 
+## Development Workflow
+
+All work happens on the **`dev-benrispace`** branch. `main` changes only
+through a pull request, because merging to `main` is what costs money and
+risk: it triggers the Amplify frontend build and the Lambda deploy workflow.
+
+1. Commit to `dev-benrispace` and push. `ci.yml` runs on every push: it
+   diffs against `main`, then runs the Python lint + tests and/or the web
+   lint + typecheck + tests + production build, only for the areas that
+   changed. A docs-only branch runs almost nothing; a newer push cancels an
+   in-flight run.
+2. Open a PR `dev-benrispace` → `main`. `ci.yml` and (for `infra/**`)
+   `terraform.yml` run again; **`ci-ok`** is the single status to require
+   before merging.
+3. Merge. Only now do `deploy-api.yml` (API/common/scoring/pyproject
+   changes) and the Amplify build (every push to `main`) run. Batching
+   several small changes into one PR means one deploy instead of many.
+4. Infrastructure: edit `infra/` on the dev branch, merge, then run
+   `terraform apply` locally (AWS SSO) — apply is deliberately manual.
+
+---
+
 ## Business Model
 
 Leaning **API-first/licensing**, not a consumer-facing app as the primary

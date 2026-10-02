@@ -264,14 +264,25 @@ precomputed scores served through an API.
       server-side load, not a bug — retriable later (the weekly CI cron
       once secrets are wired up, or a manual re-run), not worth continuing
       to hammer a free shared public server against right now.
-- [x] **Ingestion orchestration** — `.github/workflows/ingestion.yml`:
-      grid → ingestion jobs in parallel (`fail-fast: false`, so a missing
-      NJ Transit key or unconfigured Strava doesn't block the others) →
-      scoring, weekly cron + manual dispatch (`ingestion.trails` already in
-      the matrix). **Inert until `DATABASE_URL`/etc. are repo secrets** —
-      YAML-validated and the underlying `common/db.py` connection path is
-      now live-verified (see Storage below), but the workflow itself
-      hasn't run in CI yet.
+- [~] **Ingestion orchestration** — `.github/workflows/ingestion.yml`:
+      grid → ingestion jobs → scoring, weekly cron (Mon 06:00 UTC) +
+      manual dispatch. **First live run 2026-10-02** (read back from the
+      `ingestion_runs` table, since a private repo's Actions logs aren't
+      readable from outside): grid, airports, schools and gtfs_transit
+      (MTA/LIRR/Metro-North) passed; osm_poi failed on a fast Overpass 504;
+      osm_roads and trails were cancelled by Postgres' 2-minute
+      `statement_timeout` waiting on row locks; scoring never ran because
+      it required every ingestion job to succeed. Root cause of the lock
+      waits: the jobs ran in parallel and all update different columns of
+      the same `feature_store` rows, while a job's transaction holds those
+      locks until commit (gtfs_transit holds them ~10 minutes). It never
+      showed up locally because local runs were always sequential. Fixes
+      (on `dev-benrispace`): jobs now run one at a time (`max-parallel: 1`,
+      ~45 min total), scoring runs even when one source failed (stale
+      values persist, the red job still surfaces the failure), and the
+      shared Overpass client retries a *fast* 502/503/504 with backoff
+      while still letting a *slow* one reach roads/trails' bbox-splitting.
+      Needs one more green end-to-end run after merging.
 - [x] **Storage** — Supabase project live 2026-09-29 (see the Requirements
       note above for the full story: pipeline-mode fix, pooler vs. direct
       connection). Schema applied, grid populated, confirmed working

@@ -66,9 +66,9 @@ variable "api_throttle_burst_limit" {
 }
 
 variable "disable_execute_api_endpoint" {
-  description = "Turn off the generated execute-api hostname so api.<domain> is the only entry point. Leave false until the custom domain resolves, since the execute-api URL is the only way to reach the API before then."
+  description = "true = turn OFF the generated execute-api hostname so api.<domain> is the only entry point (the default now that the custom domain is live). Set false to bring the raw execute-api URL back, e.g. when debugging the custom domain."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # --- GitHub -------------------------------------------------------------------
