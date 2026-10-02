@@ -21,7 +21,7 @@ from common.coverage import metro_center, union_bbox
 from common.geo import haversine_m
 
 PHOTON_URL = "https://photon.komoot.io/api/"
-PROVIDER_TIMEOUT_S = 3.0
+PROVIDER_TIMEOUT_S = 8.0
 MIN_QUERY_LENGTH = 3
 
 # Photon returns many near-duplicates (e.g. six POIs at one street address), so
