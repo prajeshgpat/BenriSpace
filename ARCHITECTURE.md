@@ -17,7 +17,7 @@ flowchart LR
   user([Browser])
 
   subgraph cf["Cloudflare (DNS only, no proxy)"]
-    dns["DNS records<br/>api live · apex + www pending"]
+    dns["DNS records<br/>benrispace.com · www · api"]
   end
 
   subgraph aws["AWS · us-east-1"]
@@ -40,8 +40,7 @@ flowchart LR
 
   classDef live fill:#d1fae5,stroke:#059669,color:#064e3b
   classDef pending fill:#fef3c7,stroke:#d97706,color:#78350f
-  class apigw,lam,ssm,pg,nom,dns live
-  class amp pending
+  class amp,apigw,lam,ssm,pg,nom,dns live
 ```
 
 - **Endpoints:** `GET /v1/score`, `GET /v1/score/{id}/explanation`,
@@ -173,8 +172,8 @@ flowchart LR
 
   classDef live fill:#d1fae5,stroke:#059669,color:#064e3b
   classDef pending fill:#fef3c7,stroke:#d97706,color:#78350f
-  class role,lam,tfstate,tf live
-  class dep,tfci,ing,amp pending
+  class role,lam,amp,tfstate,tf live
+  class dep,tfci,ing pending
 ```
 
 - No long-lived AWS keys exist anywhere: CI uses OIDC, the developer uses SSO.

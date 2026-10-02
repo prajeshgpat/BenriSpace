@@ -32,6 +32,7 @@ FACTOR_LABELS: dict[str, str] = {
     "road": "road and traffic conditions",
     "emergency_corridor": "distance from emergency-vehicle corridors",
     "airport": "airport drive time",
+    "trail_popularity": "access to popular running and walking trails",
 }
 
 

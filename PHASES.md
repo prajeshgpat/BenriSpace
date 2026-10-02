@@ -24,12 +24,9 @@ below is genuinely blocking the next step for each:
       this was a clean swap, not a migration. Terraform config and the
       Next.js frontend can both be written *before* the account exists;
       only applying/deploying needs it.
-- [ ] **Cloudflare API token** — DNS stays at Cloudflare (decided
-      2026-10-01; Cloudflare Registrar can't delegate elsewhere) and
-      Terraform manages the records. Create a token from the "Edit zone
-      DNS" template scoped to benrispace.com and export it locally as
-      `CLOUDFLARE_API_TOKEN` — don't paste it into chat. Blocks stage 2
-      (custom domains + frontend).
+- [x] **Cloudflare API token** — done 2026-10-01 (rolled once after it
+      appeared in chat). Lives in `~/.cloudflare_token` (mode 600, outside
+      the repo); Terraform reads it from `CLOUDFLARE_API_TOKEN`.
 - ~~Confirm access to the existing Firebase Hosting project~~ — no longer
       needed: the frontend moves to Next.js on Amplify (2026-09-29). If the
       existing Firebase-hosted frontend has code worth porting (components,
@@ -116,7 +113,9 @@ precomputed scores served through an API.
       2026-09-28 at Cloudflare Registrar. DNS stays at Cloudflare; Terraform
       (Cloudflare provider) owns every record — `benrispace.com`/`www` →
       Amplify, `api.benrispace.com` → API Gateway, and ACM certificate
-      validation. Waiting on a Cloudflare API token.
+      validation. **Live 2026-10-02**: `api.benrispace.com`,
+      `benrispace.com` and `www.benrispace.com` all resolve and serve over
+      valid Amazon certificates (DNS-only records).
 - [~] **Infrastructure-as-code (Terraform)** — `infra/` (+ `infra/bootstrap/`
       for the S3 state bucket). **Stage 1 applied 2026-10-01** (AWS account
       `812960096894`, us-east-1): state bucket, Lambda `benrispace-api`,
@@ -125,15 +124,20 @@ precomputed scores served through an API.
       deploy role (repo + `main` only), $10/month budget alert to
       prajeshgpat@gmail.com. The live API returns real scores (Midtown
       Manhattan: composite 76.6, all 11 factors, ~0.2s warm), CORS allows
-      only the frontend origins. **Stage 2 not applied yet**: ACM certs,
-      the `api.benrispace.com` custom domain, the Amplify app and all DNS.
-      DNS decision made 2026-10-01: the domain is at Cloudflare Registrar
-      (which requires Cloudflare nameservers), so DNS stays there and
-      Terraform manages the records through the Cloudflare provider
-      (all DNS-only/grey-cloud so AWS certificates validate end to end).
-      Needs from the owner: a Cloudflare API token ("Edit zone DNS",
-      scoped to benrispace.com) exported as `CLOUDFLARE_API_TOKEN`, and a
-      GitHub token + Amplify GitHub App install for the frontend.
+      only the frontend origins. **Stage 2 applied 2026-10-02**: ACM
+      certificates, the `api.benrispace.com` custom domain, the Amplify
+      app/branch/custom domain, and all Cloudflare DNS records (27
+      resources total now managed). DNS stays at Cloudflare (the domain is
+      registered at Cloudflare Registrar, which requires its nameservers);
+      Terraform manages the records through the Cloudflare provider, all
+      DNS-only so AWS certificates validate end to end. Not yet applied:
+      `disable_execute_api_endpoint = true` (closing the old
+      `execute-api.amazonaws.com` address), and the Valhalla EC2 instance
+      (Phase 2). Operational note: the Amplify GitHub connection needed a
+      classic token with **`repo` + `admin:repo_hook`** — `admin:repo_hook`
+      alone (what AWS's docs state) failed with a GitHub 404 on a private
+      repo even with the Amplify GitHub App installed. Keep that token
+      short-lived and revoke it after use.
 - [~] **Lambda packaging + deploy workflow** — built 2026-09-30:
       `api/lambda_handler.py` (Mangum; loads the database URL from SSM at
       cold start, fails loudly if it can't), `scripts/build_lambda.sh`
@@ -273,16 +277,18 @@ precomputed scores served through an API.
       Nominatim for address geocoding — a new design call, not previously
       specified, flagged for your review. **Not yet deployed** — blocked on
       AWS access above. Lambda packaging is tracked as its own task above.
-- [~] **Frontend (Next.js + TypeScript on Amplify)** — `web/`, built
-      2026-09-30 (Next.js 15, the newest Amplify Hosting supports; React 19;
-      Node 24). Address search → composite score, 11-factor breakdown
-      (null = "No data", never 0), explanation; shareable `/?address=` URL;
-      loading/validation/not-found/network-error states; light/dark;
-      responsive. API types generated from `contracts/openapi.yaml`. Lint,
-      typecheck, 91 unit tests and production build pass; golden and failure
-      paths were exercised in headless Chrome against the local API. **Not
-      deployed** (needs Amplify via Terraform). Not yet verified: Safari/
-      Firefox, screen readers, real touch devices.
+- [x] **Frontend (Next.js + TypeScript on Amplify)** — `web/`, built
+      2026-09-30 and **deployed 2026-10-02** at https://benrispace.com and
+      https://www.benrispace.com (Next.js 15, the newest Amplify Hosting
+      supports; React 19; Node 24; first build 3 minutes). Address search →
+      composite score, 11-factor breakdown (null = "No data", never 0),
+      explanation; shareable `/?address=` URL; loading/validation/
+      not-found/network-error states; light/dark; responsive. API types
+      generated from `contracts/openapi.yaml`. Lint, typecheck, 91 unit
+      tests and production build pass; golden and failure paths were
+      exercised in headless Chrome against the local API. Not yet verified:
+      Safari/Firefox, screen readers, real touch devices. Every push to
+      `main` triggers an Amplify build (~$0.01/build-minute).
 
 ### Deliverables
 

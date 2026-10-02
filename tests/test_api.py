@@ -263,3 +263,13 @@ def test_validation_errors_use_the_contract_error_shape_not_fastapi_422():
     assert body["code"] == "invalid_request"
     assert "geo_entity_id" in body["message"] or "geoEntityId" in body["message"]
     assert "detail" not in body
+
+
+def test_every_scored_factor_has_a_human_readable_explanation_label():
+    # The trail factor shipped without a label and the live explanation read
+    # "trail_popularity 79/100" -- a raw field name. Fail on any future gap.
+    from api.explain import FACTOR_LABELS
+    from api.schemas import SubScores
+
+    assert set(SubScores.model_fields) == set(FACTOR_LABELS)
+    assert all("_" not in label for label in FACTOR_LABELS.values())
