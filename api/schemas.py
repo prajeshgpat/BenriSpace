@@ -39,6 +39,9 @@ class SubScores(CamelModel):
     grocery: float | None = None
     gym: float | None = None
     cafe: float | None = None
+    restaurant: float | None = None
+    bar: float | None = None
+    premium_retail: float | None = None
     gas_station: float | None = None
     convenience_store: float | None = None
     transit: float | None = None
@@ -47,6 +50,17 @@ class SubScores(CamelModel):
     emergency_corridor: float | None = None
     airport: float | None = None
     trail_popularity: float | None = None
+
+
+class SchoolInfo(CamelModel):
+    """School detail beside the (rating-gated) `school` sub-score: proximity
+    is shown even when no rating exists, so the UI can say 'proximity 72,
+    rating unavailable'."""
+
+    proximity: float | None = None
+    rating_available: bool = False
+    district_name: str | None = None
+    source: str | None = None
 
 
 class ScoreResponse(CamelModel):
@@ -58,12 +72,15 @@ class ScoreResponse(CamelModel):
     sub_scores: SubScores
     weights_version: str
     computed_at: datetime
+    school: SchoolInfo | None = None
 
 
 class ExplanationResponse(CamelModel):
     geo_entity_id: UUID
     explanation: str
     computed_at: datetime
+    # Nearest feature per factor in miles (FactorKey -> miles | null).
+    nearest_mi: dict[str, float | None] | None = None
 
 
 class AnchorPoint(CamelModel):
@@ -103,6 +120,12 @@ class SuggestResponse(CamelModel):
     suggestions: list[Suggestion]
 
 
+class ReverseResponse(CamelModel):
+    label: str | None
+    latitude: float
+    longitude: float
+
+
 class MapCellsResponse(CamelModel):
     precision: int
     factors: list[str]
@@ -128,3 +151,17 @@ class MapTopResponse(CamelModel):
     weights: dict[str, float]
     weights_version: str
     results: list[MapTopResult]
+
+
+class AreaInfo(CamelModel):
+    # GeoJSON Polygon or MultiPolygon in [lon, lat].
+    geometry: dict
+    area_sq_mi: float
+    bounded_by: list[str]
+    cell_count: int
+
+
+class AreaScoreResponse(ScoreResponse):
+    area_id: int
+    area: AreaInfo
+    explanation: str
