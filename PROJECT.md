@@ -58,6 +58,9 @@ it's the defensibility story for both users and future ML refinement.
 
 ---
 
+> System diagrams (runtime, data pipeline, data model, delivery): see
+> [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ## Hosting & Domain
 
 Production domain: **benrispace.com** (registered 2026-09-28). DNS
