@@ -133,11 +133,17 @@ precomputed scores served through an API.
       DNS-only so AWS certificates validate end to end. Not yet applied:
       `disable_execute_api_endpoint = true` (closing the old
       `execute-api.amazonaws.com` address), and the Valhalla EC2 instance
-      (Phase 2). Operational note: the Amplify GitHub connection needed a
-      classic token with **`repo` + `admin:repo_hook`** — `admin:repo_hook`
-      alone (what AWS's docs state) failed with a GitHub 404 on a private
-      repo even with the Amplify GitHub App installed. Keep that token
-      short-lived and revoke it after use.
+      (Phase 2). Operational note: creating the Amplify app through Terraform with a
+      GitHub token (AWS's documented `admin:repo_hook` flow) does NOT work
+      for a private repo — it failed with a GitHub 404 — and even with
+      `repo` + `admin:repo_hook` the app kept depending on that token for
+      every build (Amplify clones over an SSH key tied to it): after the
+      token was revoked, new builds failed with `Permission denied
+      (publickey)`. The fix is the console's **Migrate to our GitHub App**
+      flow, after which builds use the Amplify GitHub App installation and
+      no personal token exists anywhere. For a rebuild from scratch: create
+      the app with a short-lived token, migrate it in the console
+      immediately, then revoke the token.
       Second operational note: the GitHub OIDC deploy role first rejected
       CI with `Not authorized to perform sts:AssumeRoleWithWebIdentity`
       because GitHub now issues the `sub` claim with immutable IDs
