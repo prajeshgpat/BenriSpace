@@ -21,6 +21,8 @@ import {
   type Importance,
 } from "@/lib/map/selection";
 
+import { FactorIcon } from "@/lib/factorIcons";
+
 import styles from "./FactorControls.module.css";
 
 const IMPORTANCE_LABELS: Record<Importance, string> = {
@@ -109,6 +111,7 @@ export function FactorControls({ selection, onChange }: FactorControlsProps) {
                       checked={selection.factors.includes(key)}
                       onChange={() => onChange(toggleFactor(selection, key))}
                     />
+                    <FactorIcon factor={key} className={styles.icon} />
                     <span>{FACTORS[key].label}</span>
                   </label>
                 ),
@@ -164,7 +167,10 @@ function ImportanceRow({ factor, selection, onChange }: ImportanceRowProps) {
 
   return (
     <div className={styles.importanceRow}>
-      <label htmlFor={selectId}>{label}</label>
+      <label htmlFor={selectId} className={styles.importanceLabel}>
+        <FactorIcon factor={factor} className={styles.icon} />
+        <span>{label}</span>
+      </label>
       <select
         id={selectId}
         className={styles.select}

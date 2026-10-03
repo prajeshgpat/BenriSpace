@@ -19,6 +19,8 @@ import {
 import { formatArea } from "@/lib/units";
 
 import { CopyLinkButton } from "./CopyLinkButton";
+import { FactorIcon } from "@/lib/factorIcons";
+
 import styles from "./ScoreResult.module.css";
 
 interface ScoreResultProps {
@@ -256,7 +258,10 @@ function FactorItem({
   return (
     <li className={styles.factor} data-factor={row.key}>
       <div className={styles.factorHead}>
-        <span className={styles.factorLabel}>{row.label}</span>
+        <span className={styles.factorLabel}>
+          <FactorIcon factor={row.key} className={styles.factorIcon} />
+          <span>{row.label}</span>
+        </span>
         {hasData ? (
           <span className={styles.factorValue}>
             <span className={styles.factorBand}>{row.band}</span>
