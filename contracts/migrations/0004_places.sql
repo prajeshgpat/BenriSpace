@@ -1,5 +1,5 @@
 -- BenriSpace named places (for "what could improve this score" suggestions).
--- NOT yet applied to production. Additive only; idempotent.
+-- Applied to production on 2026-10-03. Additive only; idempotent.
 -- Mirrored into contracts/schema.sql so a fresh database already has it.
 --
 -- One row per named, scored amenity: OSM POIs (grocery, gym, cafe, restaurant,
