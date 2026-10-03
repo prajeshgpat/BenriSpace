@@ -54,3 +54,12 @@ Where this appears: the website footer credits NCES and the Education Data Porta
 Caveats: district-level only (no within-district variation); proficiency
 reflects student demographics as well as school quality; the EDFacts year is
 older than today (2018 data); NJ and CT use different state tests from NY, which is why ratings are converted to within-state percentiles.
+
+## Transit coverage (GTFS + OSM)
+
+| Source | Status | Notes |
+|---|---|---|
+| MTA, LIRR, Metro-North | GTFS static zips (rrgtfsfeeds.s3.amazonaws.com) | Public. |
+| PATH | GTFS zip `https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip` | Public; verified 2026-10-03 (HTTP 200, zip with stops.txt). |
+| OpenStreetMap transit stops (`osm_transit`, agency `osm`) | Overpass, one query per metro bbox | Nodes tagged railway=station/halt/tram_stop, public_transport=station, highway=bus_stop with a name or ref (no subway entrances). ODbL, attribute OpenStreetMap contributors. OSM stops within 40 m of a GTFS stop, or same-named within 40 m of each other, are dropped so counts are not inflated. Named stops go to `places` as source `osmtransit` (separate from `osm` POIs). If Overpass fails, the run continues with GTFS only. Fills NJ Transit, CT, Westchester and Long Island bus gaps. |
+| NJ Transit | Still pending: needs a developer key; the `AgencyFeed` stays in place and fails cleanly | OSM covers NJ stops meanwhile. |

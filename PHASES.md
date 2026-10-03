@@ -56,6 +56,7 @@ Phase 1 is built (see Phase 1's Tasks for the state of each):
       All ingestion jobs have since run live (see the individual tasks and
       the orchestration task below). Database usage is ~140 MB of the
       500 MB free tier.
+- [x] PATH GTFS and OSM transit stops (ingestion/osm_transit.py) added 2026-10-03 to cover NJ until the NJ Transit key exists.
 - [ ] NJ Transit developer API key — not obtained; blocks that one agency
       only (MTA/LIRR/Metro-North are done). Expect one failed NJ Transit
       row in `ingestion_runs` on every ingestion run until it exists.

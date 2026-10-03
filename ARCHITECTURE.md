@@ -85,7 +85,7 @@ flowchart LR
     poi["osm_poi<br/>groceries · gyms · cafes · restaurants · bars<br/>gas · convenience · Whole Foods/Starbucks/Target<br/>source: OSM Overpass"]
     roads["roads<br/>congestion · noise corridor<br/>fire/hospital/police locations<br/>source: OSM Overpass"]
     trails["trails<br/>running route popularity (underlying)<br/>source: OSM Overpass + optional Strava enrichment (not configured)"]
-    transit["gtfs_transit<br/>stops by agency<br/>source: MTA · LIRR · Metro-North feeds"]
+    transit["gtfs_transit<br/>stops by agency<br/>source: MTA · LIRR · Metro-North · PATH feeds + OSM stops"]
     schools["schools<br/>count · distance · district rating<br/>source: NCES + EDFacts (Urban Institute)"]
     airports["airports<br/>drive time (straight-line unless routing is configured)<br/>JFK · LGA · EWR hardcoded"]
   end
