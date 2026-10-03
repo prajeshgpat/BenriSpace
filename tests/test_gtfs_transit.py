@@ -112,11 +112,12 @@ def test_aggregate_cell_nearest_stop_outside_radius_still_counted_as_nearest():
     assert result["transit_agencies"] == ["mta"]
 
 
-def test_agencies_config_has_all_four_with_correct_source_labels():
+def test_agencies_config_has_all_agencies_with_correct_source_labels():
     names = {a.name: a.ingestion_source for a in AGENCIES}
     assert names == {
         "mta": "gtfs_mta",
         "lirr": "gtfs_lirr",
+        "path": "gtfs_path",
         "metro_north": "gtfs_metro_north",
         "nj_transit": "gtfs_nj_transit",
     }

@@ -54,6 +54,13 @@ Design calls made here (flag if wrong, easy to change):
   so activating it later needs real implementation work (login/token
   exchange, current feed endpoint), not just setting an env var -- do not
   assume it degrades to "just add the key" once credentials exist.
+- **OSM transit stops (pseudo-agency 'osm')** fill gaps where a GTFS feed is
+  missing (NJ Transit, CT/Westchester/LI buses). See ingestion/osm_transit.py:
+  OSM stops within 40 m of any GTFS stop, or same-named within 40 m of each
+  other, are dropped so NYC counts are not inflated. Named ones are written
+  to places under source 'osmtransit' (separate replace_places call, never
+  touching 'osm' POI rows). An Overpass failure is logged and GTFS-only
+  results are written.
 """
 
 from __future__ import annotations
@@ -71,6 +78,7 @@ from common.db import get_connection, iter_geo_entities, log_ingestion_run, upse
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
 from common.places import Place, clean_name, replace_places
+from ingestion import osm_transit
 
 RADIUS_M = 800.0
 _TIE_EPSILON_M = 1e-6  # float-compare tolerance when picking agencies at the min distance
@@ -112,6 +120,13 @@ AGENCIES: tuple[AgencyFeed, ...] = (
         name="metro_north",
         ingestion_source="gtfs_metro_north",
         feed_urls=("https://rrgtfsfeeds.s3.amazonaws.com/gtfsmnr.zip",),
+    ),
+    # PATH: public feed hosted by Trillium; verified 2026-10-03 (HTTP 200,
+    # application/zip, contains stops.txt, last modified 2025-06-06).
+    AgencyFeed(
+        name="path",
+        ingestion_source="gtfs_path",
+        feed_urls=("https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip",),
     ),
     AgencyFeed(
         name="nj_transit",
@@ -339,6 +354,33 @@ def fetch_agency_stops_and_places(
             client.close()
 
 
+def fetch_osm_stops_isolated() -> list[osm_transit.OsmStop] | None:
+    """OSM transit stops, or None (logged) if the Overpass fetch fails, so the
+    run continues with GTFS only."""
+    run_id = log_ingestion_run("osm_transit", status="running")
+    try:
+        stops = osm_transit.fetch_all_stops()
+    except Exception as exc:  # noqa: BLE001 -- isolate OSM failure from GTFS
+        log_ingestion_run("osm_transit", status="failed", error_message=str(exc), run_id=run_id)
+        print(f"[gtfs_transit] osm_transit failed: {exc}", file=sys.stderr)
+        return None
+    log_ingestion_run("osm_transit", status="success", rows_affected=len(stops), run_id=run_id)
+    return stops
+
+
+def merge_osm_into_agency_stops(
+    agency_stops: dict[str, list[tuple[float, float]]],
+    osm_stops: list[osm_transit.OsmStop],
+) -> list[osm_transit.OsmStop]:
+    """Dedupes OSM stops against all GTFS stops and each other, adds the
+    survivors' coordinates as agency 'osm', and returns the survivors."""
+    gtfs_coords = [c for stops in agency_stops.values() for c in stops]
+    kept = osm_transit.dedupe_osm_stops(osm_stops, gtfs_coords)
+    if kept:
+        agency_stops["osm"] = [(s.lat, s.lon) for s in kept]
+    return kept
+
+
 def run() -> None:
     with get_connection() as conn, ingestion_job("gtfs_transit") as ctx:
         agency_stops: dict[str, list[tuple[float, float]]] = {}
@@ -369,10 +411,16 @@ def run() -> None:
                 )
                 print(f"[gtfs_transit] {agency.name}: {len(stops)} stops", file=sys.stderr)
 
-        if not agency_stops:
+        osm_stops = fetch_osm_stops_isolated()
+        if not agency_stops and not osm_stops:
             raise RuntimeError(
-                "All agency feeds failed -- nothing to write to feature_store"
+                "All agency feeds and OSM transit failed -- nothing to write to feature_store"
             )
+        osm_kept = merge_osm_into_agency_stops(agency_stops, osm_stops or [])
+        print(
+            f"[gtfs_transit] osm: {len(osm_kept)}/{len(osm_stops or [])} stops after dedupe",
+            file=sys.stderr,
+        )
 
         rows_updated = 0
         for cell in iter_geo_entities(conn):
@@ -380,12 +428,16 @@ def run() -> None:
             upsert_feature_store(conn, cell["id"], fields)
             rows_updated += 1
         conn.commit()
-        replace_places(conn, "gtfs", all_places)
+        if all_places:
+            replace_places(conn, "gtfs", all_places)
+        osm_places = osm_transit.stops_to_places(osm_kept)
+        if osm_places:
+            replace_places(conn, osm_transit.PLACES_SOURCE, osm_places)
         ctx.rows_affected = rows_updated
 
     print(
         f"gtfs_transit: updated {rows_updated} geo_entities across "
-        f"{len(agency_stops)}/{len(AGENCIES)} agencies "
+        f"{len(agency_stops)} sources (of {len(AGENCIES)} GTFS agencies + osm) "
         f"({', '.join(sorted(agency_stops)) or 'none'})",
         file=sys.stderr,
     )
