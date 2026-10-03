@@ -55,3 +55,21 @@ def test_district_fields_unrated_or_missing_district_is_null():
     assert unrated["school_district_rating"] is None and unrated["school_rating_source"] is None
     none = district_fields(None, {}, "src")
     assert none["school_district_geoid"] is None and none["school_district_rating"] is None
+
+
+def test_unwrap_shapefile_zip_extracts_nested_zip(tmp_path):
+    import zipfile
+
+    from ingestion.schools import _unwrap_shapefile_zip
+
+    outer = tmp_path / "EDGE.zip"
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr("Shapefile_SCH.zip", b"inner-bytes")
+        zf.writestr("EDGE.TXT", b"x")
+    inner = _unwrap_shapefile_zip(outer)
+    assert inner.name == "Shapefile_SCH.zip" and inner.read_bytes() == b"inner-bytes"
+
+    flat = tmp_path / "flat.zip"
+    with zipfile.ZipFile(flat, "w") as zf:
+        zf.writestr("a.shp", b"x")
+    assert _unwrap_shapefile_zip(flat) == flat

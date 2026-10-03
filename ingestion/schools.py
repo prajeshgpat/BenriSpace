@@ -68,9 +68,27 @@ def parse_nces_row(attrs: dict, source: str = "nces_edge") -> SchoolRecord | Non
     return SchoolRecord(lat=lat, lon=lon, name=str(attrs.get("NAME") or ""), source=source)
 
 
+def _unwrap_shapefile_zip(path: Path) -> Path:
+    """The EDGE download is a zip holding Shapefile_SCH.zip (plus xlsx/txt);
+    extracts the inner shapefile zip next to it once and returns its path."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as zf:
+        inner = [
+            n for n in zf.namelist() if n.lower().startswith("shapefile") and n.endswith(".zip")
+        ]
+        if not inner:
+            return path
+        dest = path.with_name(Path(inner[0]).name)
+        if not dest.exists():
+            dest.write_bytes(zf.read(inner[0]))
+        return dest
+
+
 def load_nces_schools(path: Path) -> list[SchoolRecord]:
     from ingestion.school_districts import read_shapefile
 
+    path = _unwrap_shapefile_zip(path)
     records = (parse_nces_row(attrs) for attrs, _ in read_shapefile(path))
     return [r for r in records if r is not None]
 
