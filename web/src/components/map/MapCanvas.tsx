@@ -19,7 +19,7 @@ import { AREA_STYLE, CELL_OPACITY, FILL_COLOR_EXPRESSION } from "@/lib/map/color
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
-import { METRO_BBOX, type MapView } from "@/lib/map/viewport";
+import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
@@ -302,6 +302,15 @@ export function MapCanvas({
       return;
     }
     mapRef.current = map;
+    if (!initial.current) {
+      // The bounds fit shows the whole metro; open four levels closer on the city.
+      try {
+        const { lat, lon, zoom } = initialMetroView(map.getZoom());
+        map.jumpTo({ center: [lon, lat], zoom });
+      } catch {
+        // Keep the fitted view.
+      }
+    }
     if (styleTheme.current === "dark") loadBasemap(map, "dark");
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();

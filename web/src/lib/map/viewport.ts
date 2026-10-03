@@ -3,6 +3,17 @@ import type { Bbox } from "@/lib/api/types";
 /** The covered metro, west/south/east/north. */
 export const METRO_BBOX: Bbox = [-75.2, 39.85, -71.85, 42.0];
 
+/** Where the map opens when nothing in the URL says otherwise: New York City. */
+export const INITIAL_CENTER = { lat: 40.73, lon: -73.99 } as const;
+
+/** Zoom levels closer than the whole-metro fit; the same as clicking + four times. */
+export const INITIAL_ZOOM_IN_LEVELS = 4;
+
+/** The default camera, given the zoom at which the metro box fits the viewport. */
+export function initialMetroView(fittedZoom: number): MapView {
+  return { ...INITIAL_CENTER, zoom: fittedZoom + INITIAL_ZOOM_IN_LEVELS };
+}
+
 /** Below this zoom ~1 km cells are too small to see and too many to fetch. */
 export const FINE_CELL_MIN_ZOOM = 10;
 
