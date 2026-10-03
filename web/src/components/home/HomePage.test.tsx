@@ -24,36 +24,49 @@ describe("HomePage", () => {
     const input = screen.getByRole("combobox", { name: "Address" });
     expect(input).toHaveAttribute("name", "address");
     expect(form).toContainElement(input);
-    expect(within(form).getByRole("button")).toHaveAttribute("type", "submit");
+    expect(
+      within(form).getByRole("button", { name: "Score it" }),
+    ).toHaveAttribute("type", "submit");
   });
 
   it("lists the twelve factors with icons, names and one sentence", () => {
     render(<HomePage />);
     expect(FACTOR_KEYS).toHaveLength(12);
-    const items = screen.getAllByRole("listitem").filter((li) => li.hasAttribute("data-factor"));
+    const items = screen
+      .getAllByRole("listitem")
+      .filter((li) => li.hasAttribute("data-factor"));
     expect(items).toHaveLength(12);
     for (const key of FACTOR_KEYS) {
       const item = items.find((li) => li.getAttribute("data-factor") === key)!;
       expect(
-        within(item).getByRole("heading", { level: 3, name: FACTORS[key].label }),
+        within(item).getByRole("heading", {
+          level: 3,
+          name: FACTORS[key].label,
+        }),
       ).toBeInTheDocument();
       expect(item).toHaveTextContent(FACTOR_GUIDE[key].blurb);
       expect(item.querySelector("svg")).not.toBeNull();
     }
-    expect(screen.getByRole("heading", { level: 3, name: "Noise corridor" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Noise corridor" }),
+    ).toBeInTheDocument();
   });
 
   it("shows the three steps and mentions feet and miles", () => {
     render(<HomePage />);
     for (const name of ["Search", "See the score", "Understand why"]) {
-      expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { level: 3, name }),
+      ).toBeInTheDocument();
     }
     expect(screen.getByText(/feet and miles/)).toBeInTheDocument();
   });
 
   it("lists what is coming soon", () => {
     render(<HomePage />);
-    expect(screen.getByRole("heading", { level: 2, name: "Coming soon" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Coming soon" }),
+    ).toBeInTheDocument();
     for (const item of ["AI explanations", "Similar areas", "Compare places"]) {
       expect(screen.getByText(item)).toBeInTheDocument();
     }
@@ -61,7 +74,12 @@ describe("HomePage", () => {
 
   it("links to the app from the hero and the closing call to action", () => {
     render(<HomePage />);
-    expect(screen.getByRole("link", { name: "Explore the map" })).toHaveAttribute("href", "/app");
-    expect(screen.getByRole("link", { name: "Open the app" })).toHaveAttribute("href", "/app");
+    expect(
+      screen.getByRole("link", { name: "Explore the map" }),
+    ).toHaveAttribute("href", "/app");
+    expect(screen.getByRole("link", { name: "Open the app" })).toHaveAttribute(
+      "href",
+      "/app",
+    );
   });
 });

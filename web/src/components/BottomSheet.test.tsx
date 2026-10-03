@@ -121,4 +121,41 @@ describe("BottomSheet", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(sheet().style.transform).toBe("");
   });
+
+  describe("swiping down from the body of the full sheet", () => {
+    const body = () => screen.getByLabelText("Search").parentElement!;
+
+    function swipe(startY: number, endY: number, scrollTop = 0) {
+      Object.defineProperty(sheet(), "offsetHeight", { value: 800 });
+      Object.defineProperty(sheet().firstElementChild!, "offsetHeight", {
+        value: 100,
+      });
+      Object.defineProperty(body(), "scrollTop", {
+        value: scrollTop,
+        configurable: true,
+      });
+      fireEvent.touchStart(body(), { touches: [{ clientY: startY }] });
+      fireEvent.touchMove(body(), { touches: [{ clientY: endY }] });
+      fireEvent.touchEnd(body(), { changedTouches: [{ clientY: endY }] });
+    }
+
+    it("shrinks the sheet when the body is scrolled to the top", () => {
+      const onChange = vi.fn();
+      render(<Harness initial="full" onChange={onChange} />);
+      swipe(100, 520);
+      expect(onChange).toHaveBeenCalledWith("half");
+    });
+
+    it("leaves a scrolled body, an upward swipe and other snaps alone", () => {
+      const onChange = vi.fn();
+      const { unmount } = render(<Harness initial="full" onChange={onChange} />);
+      swipe(100, 520, 30);
+      swipe(520, 100);
+      expect(onChange).not.toHaveBeenCalled();
+      unmount();
+      render(<Harness initial="half" onChange={onChange} />);
+      swipe(100, 520);
+      expect(onChange).not.toHaveBeenCalled();
+    });
+  });
 });

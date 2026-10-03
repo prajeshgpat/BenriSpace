@@ -192,6 +192,22 @@
   padding-bottom: 1.25rem;
 }
 
+/* Without a header (below 40rem) the workspace is the whole screen; the page
+   shell's top padding for the menu button is pulled back out. */
+@media not all and (min-width: 40rem) {
+  .workspace {
+    flex: none;
+    height: 100dvh;
+    margin-top: calc(-1 * var(--menu-clearance));
+  }
+
+  /* The zoom buttons and the locate button start below the menu button. */
+  .mapArea :global(.maplibregl-ctrl-top-right) {
+    top: var(--menu-clearance);
+  }
+
+}
+
 @media (min-width: 56.25rem) {
   .workspace {
     flex: none;
@@ -275,5 +291,11 @@
 @media (min-width: 40rem) and (pointer: fine) {
   .mapLocate {
     right: 0.625rem;
+  }
+}
+
+@media not all and (min-width: 40rem) {
+  .mapLocate {
+    top: calc(4.875rem + var(--menu-clearance));
   }
 }

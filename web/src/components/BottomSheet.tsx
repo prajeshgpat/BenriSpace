@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useId,
   useRef,
   useState,
@@ -45,7 +46,8 @@ interface Drag {
 
 /**
  * A draggable panel over the bottom of its positioned parent, with three
- * snap points. Only the handle drags; the body scrolls when fully open.
+ * snap points. The handle drags; the body scrolls when fully open, and a downward swipe
+ * from its top edge pulls the sheet back down.
  */
 export function BottomSheet({
   snap,
@@ -57,7 +59,12 @@ export function BottomSheet({
   const bodyId = useId();
   const sheetRef = useRef<HTMLElement | null>(null);
   const peekRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
+  const latest = useRef({ snap, onSnapChange });
+  useEffect(() => {
+    latest.current = { snap, onSnapChange };
+  });
   const suppressClick = useRef(false);
   // Pixels the sheet is pulled down from fully open, while a finger is on it.
   const [dragOffset, setDragOffset] = useState<number | null>(null);
@@ -122,6 +129,87 @@ export function BottomSheet({
     );
   }
 
+  // A downward swipe that starts in the body of the fully open sheet while it
+  // is scrolled to the top pulls the sheet down. Anything else scrolls as usual.
+  // Native listeners: React's touchmove is passive and cannot stop the scroll.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    let gesture: Drag | null = null;
+
+    function onTouchStart(event: TouchEvent) {
+      gesture = null;
+      const sheet = sheetRef.current;
+      const touch = event.touches[0];
+      if (!sheet || !touch || event.touches.length !== 1) return;
+      if (latest.current.snap !== "full" || body!.scrollTop > 0) return;
+      const offsets = snapOffsets(
+        sheet.offsetHeight,
+        peekRef.current?.offsetHeight ?? 0,
+      );
+      gesture = {
+        pointerId: 0,
+        startY: touch.clientY,
+        startOffset: offsets.full,
+        offsets,
+        samples: [{ time: event.timeStamp, y: touch.clientY }],
+        moved: false,
+      };
+    }
+
+    function onTouchMove(event: TouchEvent) {
+      const touch = event.touches[0];
+      if (!gesture || !touch) return;
+      const delta = touch.clientY - gesture.startY;
+      if (!gesture.moved) {
+        if (delta < 0 || body!.scrollTop > 0) {
+          gesture = null; // scrolling up, or already scrolled: plain scroll
+          return;
+        }
+        if (delta < TAP_SLOP) return;
+        gesture.moved = true;
+      }
+      event.preventDefault();
+      gesture.samples.push({ time: event.timeStamp, y: touch.clientY });
+      if (gesture.samples.length > 12) gesture.samples.shift();
+      setDragOffset(clampOffset(gesture.startOffset + delta, gesture.offsets));
+    }
+
+    function onTouchEnd(event: TouchEvent, commit: boolean) {
+      const current = gesture;
+      gesture = null;
+      if (!current?.moved) return;
+      setDragOffset(null);
+      if (!commit) return;
+      const end = event.changedTouches[0]?.clientY ?? current.startY;
+      const offset = clampOffset(
+        current.startOffset + end - current.startY,
+        current.offsets,
+      );
+      latest.current.onSnapChange(
+        resolveSnap({
+          offset,
+          velocity: releaseVelocity(current.samples),
+          offsets: current.offsets,
+          current: latest.current.snap,
+        }),
+      );
+    }
+
+    const end = (event: TouchEvent) => onTouchEnd(event, true);
+    const cancel = (event: TouchEvent) => onTouchEnd(event, false);
+    body.addEventListener("touchstart", onTouchStart, { passive: true });
+    body.addEventListener("touchmove", onTouchMove, { passive: false });
+    body.addEventListener("touchend", end);
+    body.addEventListener("touchcancel", cancel);
+    return () => {
+      body.removeEventListener("touchstart", onTouchStart);
+      body.removeEventListener("touchmove", onTouchMove);
+      body.removeEventListener("touchend", end);
+      body.removeEventListener("touchcancel", cancel);
+    };
+  }, []);
+
   function handleClick() {
     if (suppressClick.current) {
       suppressClick.current = false;
@@ -167,6 +255,7 @@ export function BottomSheet({
       </button>
       <div
         id={bodyId}
+        ref={bodyRef}
         className={styles.body}
         // Content below the fold is out of sight until the sheet opens, so
         // tabbing into it opens the sheet rather than focusing something hidden.
