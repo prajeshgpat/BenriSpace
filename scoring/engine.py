@@ -75,28 +75,65 @@ class CategorySpec:
 
 
 CATEGORY_SPECS: list[CategorySpec] = [
-    CategorySpec("grocery_score", "positive", count_column="grocery_count_500m", nearest_column="grocery_nearest_m"),
-    CategorySpec("gym_score", "positive", count_column="gym_count_500m", nearest_column="gym_nearest_m"),
-    CategorySpec("cafe_score", "positive", count_column="cafe_count_500m", nearest_column="cafe_nearest_m"),
-    CategorySpec("restaurant_score", "positive", count_column="restaurant_count_500m", nearest_column="restaurant_nearest_m"),
-    CategorySpec("bar_score", "positive", count_column="bar_count_500m", nearest_column="bar_nearest_m"),
-    # Bonus signal built at ingestion from distance to Whole Foods/Starbucks/Target.
-    CategorySpec("premium_retail_score", "positive", single_column="premium_retail_raw", underlying=True),
-    CategorySpec("gas_station_score", "negative", count_column="gas_station_count_500m", nearest_column="gas_station_nearest_m"),
-    CategorySpec("convenience_store_score", "negative", count_column="convenience_store_count_500m", nearest_column="convenience_store_nearest_m"),
-    CategorySpec("transit_score", "positive", count_column="transit_stop_count_800m", nearest_column="transit_nearest_m"),
     CategorySpec(
-        "school_score", "positive",
-        count_column="school_count_1600m", nearest_column="school_nearest_m",
+        "grocery_score",
+        "positive",
+        count_column="grocery_count_500m",
+        nearest_column="grocery_nearest_m",
+    ),
+    CategorySpec(
+        "gym_score", "positive", count_column="gym_count_500m", nearest_column="gym_nearest_m"
+    ),
+    CategorySpec(
+        "cafe_score", "positive", count_column="cafe_count_500m", nearest_column="cafe_nearest_m"
+    ),
+    CategorySpec(
+        "restaurant_score",
+        "positive",
+        count_column="restaurant_count_500m",
+        nearest_column="restaurant_nearest_m",
+    ),
+    CategorySpec(
+        "bar_score", "positive", count_column="bar_count_500m", nearest_column="bar_nearest_m"
+    ),
+    # Bonus signal built at ingestion from distance to Whole Foods/Starbucks/Target.
+    CategorySpec(
+        "premium_retail_score", "positive", single_column="premium_retail_raw", underlying=True
+    ),
+    CategorySpec(
+        "gas_station_score",
+        "negative",
+        count_column="gas_station_count_500m",
+        nearest_column="gas_station_nearest_m",
+    ),
+    CategorySpec(
+        "convenience_store_score",
+        "negative",
+        count_column="convenience_store_count_500m",
+        nearest_column="convenience_store_nearest_m",
+    ),
+    CategorySpec(
+        "transit_score",
+        "positive",
+        count_column="transit_stop_count_800m",
+        nearest_column="transit_nearest_m",
+    ),
+    CategorySpec(
+        "school_score",
+        "positive",
+        count_column="school_count_1600m",
+        nearest_column="school_nearest_m",
         rating_column="school_avg_rating_1600m",
-        rating_weight=0.8, missing_rating="null",
+        rating_weight=0.8,
+        missing_rating="null",
         proximity_score_column="school_proximity_score",
     ),
     CategorySpec("road_score", "negative", single_column="congestion_proxy_raw"),
     # Prefers the real facility-based signal; falls back to the v1 proxy for
     # cells where emergency_corridor_facility_raw is null.
     CategorySpec(
-        "emergency_corridor_score", "negative",
+        "emergency_corridor_score",
+        "negative",
         single_column="emergency_corridor_facility_raw",
         fallback_single_column="emergency_corridor_proxy_raw",
         dampened_by_street_orientation=True,
@@ -105,7 +142,14 @@ CATEGORY_SPECS: list[CategorySpec] = [
     # rating_column here is Strava segment popularity, not a star-rating —
     # same "optional external enrichment on top of an OSM base signal"
     # shape as school ratings, so it reuses the same blend/fallback logic.
-    CategorySpec("trail_popularity_score", "positive", count_column="running_trail_count_800m", nearest_column="running_trail_nearest_m", rating_column="strava_segment_popularity_raw", underlying=True),
+    CategorySpec(
+        "trail_popularity_score",
+        "positive",
+        count_column="running_trail_count_800m",
+        nearest_column="running_trail_nearest_m",
+        rating_column="strava_segment_popularity_raw",
+        underlying=True,
+    ),
 ]
 
 # Score columns of underlying metrics (counted in the composite, no UI toggle).
@@ -225,7 +269,16 @@ def min_max_normalize(raw_by_id: dict[str, float]) -> dict[str, float]:
     return {k: (v - lo) / (hi - lo) * 100.0 for k, v in raw_by_id.items()}
 
 
-def compute_composite(sub_scores: dict[str, float], weights: dict[str, float] = DEFAULT_WEIGHTS) -> float:
+def all_score_columns() -> list[str]:
+    """Every per-category score column the engine can emit, plus the composite."""
+    cols = [spec.score_column for spec in CATEGORY_SPECS]
+    cols += [spec.proximity_score_column for spec in CATEGORY_SPECS if spec.proximity_score_column]
+    return [*cols, "composite_score"]
+
+
+def compute_composite(
+    sub_scores: dict[str, float], weights: dict[str, float] = DEFAULT_WEIGHTS
+) -> float:
     total_weight = 0.0
     weighted_sum = 0.0
     for category, score in sub_scores.items():
@@ -285,8 +338,8 @@ def score_metro_cohort(feature_rows: list[dict]) -> dict[str, dict]:
                 sub_scores[spec.score_column] = pd_score
             else:
                 sub_scores[spec.score_column] = (
-                    (1 - spec.rating_weight) * pd_score + spec.rating_weight * rating_score
-                )
+                    1 - spec.rating_weight
+                ) * pd_score + spec.rating_weight * rating_score
         if not sub_scores:
             continue
         results[geo_id] = {

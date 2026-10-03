@@ -8,7 +8,7 @@ import sys
 from common.config import SCORING_WEIGHTS_VERSION
 from common.db import get_connection
 from common.ingestion_log import ingestion_job
-from scoring.engine import score_metro_cohort
+from scoring.engine import all_score_columns, score_metro_cohort
 
 
 def run() -> None:
@@ -38,7 +38,10 @@ def run() -> None:
                 continue
 
             with conn.cursor() as cur:
-                for geo_id, values in scored.items():
+                for geo_id, found in scored.items():
+                    # Every score column is written, NULL when absent, so a score that
+                    # no longer applies (e.g. a school with no rating) clears the old value.
+                    values = {c: found.get(c) for c in all_score_columns()}
                     columns = [*values.keys(), "geo_entity_id", "weights_version"]
                     placeholders = ", ".join(["%s"] * len(columns))
                     cur.execute(
