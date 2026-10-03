@@ -81,6 +81,14 @@ class ExplanationResponse(CamelModel):
     computed_at: datetime
     # Nearest feature per factor in miles (FactorKey -> miles | null).
     nearest_mi: dict[str, float | None] | None = None
+    # 'ai' when written by the LLM layer, 'rules' for the rule-based text.
+    source: Literal["ai", "rules"] | None = None
+
+
+class AreaExplanationResponse(CamelModel):
+    explanation: str
+    source: Literal["ai", "rules"]
+    area_id: int | None = None
 
 
 class AnchorPoint(CamelModel):

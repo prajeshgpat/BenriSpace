@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import type { Explanation, Score } from "@/lib/api/types";
+import type { AreaExplanation, Explanation, Score } from "@/lib/api/types";
 import { makeAreaScore, makeExplanation, makeScore, stubClient } from "@/test/fixtures";
 
 import { useScoreLookup } from "./useScoreLookup";
@@ -211,6 +211,96 @@ describe("useScoreLookup", () => {
       );
       expect(client.getScoreByCoordinates).not.toHaveBeenCalled();
       expect(client.getScoreExplanation).not.toHaveBeenCalled();
+    });
+
+    describe("AI explanation upgrade", () => {
+      const aiBody = { explanation: "AI text.", source: "ai", areaId: 7 } as const;
+
+      it("shows the rules text at once, then swaps in the AI text", async () => {
+        const ai = deferred<AreaExplanation>();
+        const area = makeAreaScore();
+        const client = makeClient({
+          getAreaByCoordinates: vi.fn(async () => area),
+          getAreaExplanation: vi.fn(() => ai.promise),
+        });
+        const { result } = renderHook(() => useScoreLookup(click, client));
+
+        await waitFor(() =>
+          expect(result.current.state).toMatchObject({
+            explanation: { status: "ready", text: area.explanation, explanationSource: "rules" },
+          }),
+        );
+        expect(client.getAreaExplanation).toHaveBeenCalledWith(
+          40.725,
+          -73.995,
+          expect.any(AbortSignal),
+        );
+
+        await act(async () => ai.resolve(aiBody));
+        expect(result.current.state).toMatchObject({
+          score: area.score,
+          explanation: { status: "ready", text: "AI text.", explanationSource: "ai" },
+        });
+      });
+
+      it.each([
+        ["fails", () => Promise.reject(new ApiError("server", "x"))],
+        ["answers with rules", () => Promise.resolve({ ...aiBody, source: "rules" as const })],
+      ])("keeps the rules text silently when the request %s", async (_l, respond) => {
+        const area = makeAreaScore();
+        const getAreaExplanation = vi.fn(respond);
+        const client = makeClient({
+          getAreaByCoordinates: vi.fn(async () => area),
+          getAreaExplanation,
+        });
+        const { result } = renderHook(() => useScoreLookup(click, client));
+        await waitFor(() => expect(getAreaExplanation).toHaveBeenCalled());
+        await act(async () => {});
+        expect(result.current.state).toMatchObject({
+          status: "success",
+          explanation: { status: "ready", text: area.explanation, explanationSource: "rules" },
+        });
+      });
+
+      it("ignores an AI response that arrives after the target changed", async () => {
+        const ai = deferred<AreaExplanation>();
+        const other: ScoreTarget = { ...click, lat: 40.8, lon: -73.9, label: "other" };
+        const second = makeAreaScore({ explanation: "Second rules." });
+        const getAreaByCoordinates = vi
+          .fn()
+          .mockResolvedValueOnce(makeAreaScore())
+          .mockResolvedValueOnce(second);
+        const getAreaExplanation = vi
+          .fn()
+          .mockImplementationOnce(() => ai.promise)
+          .mockImplementationOnce(() => new Promise(() => {}));
+        const client = makeClient({ getAreaByCoordinates, getAreaExplanation });
+        const { result, rerender } = renderHook(({ t }) => useScoreLookup(t, client), {
+          initialProps: { t: click },
+        });
+        await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(1));
+
+        rerender({ t: other });
+        await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(2));
+        await act(async () => ai.resolve(aiBody));
+
+        expect(result.current.state).toMatchObject({
+          explanation: { text: "Second rules.", explanationSource: "rules" },
+        });
+      });
+    });
+
+    it("uses the source reported by the cell explanation", async () => {
+      const client = makeClient({
+        getAreaByCoordinates: vi.fn(async () => Promise.reject(new ApiError("not-found", "n"))),
+        getScoreExplanation: vi.fn(async () => makeExplanation({ source: "ai" })),
+      });
+      const { result } = renderHook(() => useScoreLookup(click, client));
+      await waitFor(() =>
+        expect(result.current.state).toMatchObject({
+          explanation: { status: "ready", explanationSource: "ai" },
+        }),
+      );
     });
 
     it("marks a blank inline explanation unavailable", async () => {

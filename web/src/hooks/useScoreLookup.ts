@@ -5,11 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { targetKey, targetLabel, type ScoreTarget } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { ApiError, isApiError } from "@/lib/api/errors";
-import type { AreaInfo, Score } from "@/lib/api/types";
+import type { AreaInfo, ExplanationSource, Score } from "@/lib/api/types";
 
 export type ExplanationState =
   | { status: "loading" }
-  | { status: "ready"; text: string }
+  | { status: "ready"; text: string; explanationSource: ExplanationSource }
   | { status: "unavailable" };
 
 export type LookupState =
@@ -83,15 +83,37 @@ export function useScoreLookup(
             { signal },
           );
           const text = result.explanation;
-          settle({
+          const success = (explanation: ExplanationState): Settled => ({
             status: "success",
             address,
             score: result.score,
             area: result.area,
-            explanation: text.trim()
-              ? { status: "ready", text }
-              : { status: "unavailable" },
+            explanation,
           });
+          settle(
+            success(
+              text.trim()
+                ? { status: "ready", text, explanationSource: "rules" }
+                : { status: "unavailable" },
+            ),
+          );
+          // Non-blocking upgrade: the rule-based text stays up until (and
+          // unless) the AI-written one arrives. Failures are silent, and an
+          // aborted signal makes `settle` drop a stale response.
+          client
+            .getAreaExplanation(current.lat, current.lon, signal)
+            .then((ai) => {
+              if (ai.source === "ai" && ai.explanation.trim()) {
+                settle(
+                  success({
+                    status: "ready",
+                    text: ai.explanation,
+                    explanationSource: "ai",
+                  }),
+                );
+              }
+            })
+            .catch(() => {});
           return;
         } catch {
           if (signal.aborted) return;
@@ -122,12 +144,10 @@ export function useScoreLookup(
       // The explanation is supplementary: if it fails, the score still stands.
       let explanation: ExplanationState;
       try {
-        const { explanation: text } = await client.getScoreExplanation(
-          score.geoEntityId,
-          { signal },
-        );
+        const { explanation: text, source } =
+          await client.getScoreExplanation(score.geoEntityId, { signal });
         explanation = text.trim()
-          ? { status: "ready", text }
+          ? { status: "ready", text, explanationSource: source ?? "rules" }
           : { status: "unavailable" };
       } catch {
         explanation = { status: "unavailable" };

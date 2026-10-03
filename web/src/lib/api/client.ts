@@ -4,8 +4,10 @@ import { ApiError } from "./errors";
 import type {
   AreaGeometry,
   AreaInfo,
+  AreaExplanation,
   AreaScore,
   Explanation,
+  ExplanationSource,
   Position,
   FactorKey,
   MapCells,
@@ -71,6 +73,12 @@ export interface ApiClient {
     geoEntityId: string,
     options?: RequestOptions,
   ): Promise<Explanation>;
+  /** Slower than `getAreaByCoordinates`: the text may be written by the LLM. */
+  getAreaExplanation(
+    lat: number,
+    lon: number,
+    signal?: AbortSignal,
+  ): Promise<AreaExplanation>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -212,6 +220,26 @@ export function parseAreaScore(body: unknown): AreaScore {
   };
 }
 
+function parseSource(value: unknown): ExplanationSource | undefined {
+  return value === "ai" || value === "rules" ? value : undefined;
+}
+
+export function parseAreaExplanation(body: unknown): AreaExplanation {
+  if (
+    !isObject(body) ||
+    typeof body.explanation !== "string" ||
+    (body.source !== "ai" && body.source !== "rules") ||
+    !(body.areaId === null || isFiniteNumber(body.areaId))
+  ) {
+    throw invalidResponse("area explanation");
+  }
+  return {
+    explanation: body.explanation,
+    source: body.source,
+    areaId: body.areaId,
+  };
+}
+
 export function parseExplanation(body: unknown): Explanation {
   if (
     !isObject(body) ||
@@ -225,6 +253,7 @@ export function parseExplanation(body: unknown): Explanation {
     geoEntityId: body.geoEntityId,
     explanation: body.explanation,
     computedAt: body.computedAt,
+    ...(parseSource(body.source) ? { source: parseSource(body.source) } : {}),
   };
 }
 
@@ -443,6 +472,13 @@ export function createApiClient({
     async getAreaByCoordinates({ lat, lon }, options) {
       const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
       return parseAreaScore(await getJson(`/area?${params}`, options));
+    },
+
+    async getAreaExplanation(lat, lon, signal) {
+      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      return parseAreaExplanation(
+        await getJson(`/area/explanation?${params}`, { signal }),
+      );
     },
 
     async getScoreExplanation(geoEntityId, options) {

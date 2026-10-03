@@ -104,6 +104,7 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getScoreByCoordinates: unexpected("getScoreByCoordinates"),
     getAreaByCoordinates: unexpected("getAreaByCoordinates"),
     getScoreExplanation: unexpected("getScoreExplanation"),
+    getAreaExplanation: unexpected("getAreaExplanation"),
     suggestAddresses: unexpected("suggestAddresses"),
     reverseGeocode: unexpected("reverseGeocode"),
     getMapCells: unexpected("getMapCells"),
