@@ -1,4 +1,4 @@
--- BenriSpace LLM layer (AI explanations). NOT yet applied to production.
+-- BenriSpace LLM layer (AI explanations). Applied to production on 2026-10-03.
 -- Additive only; idempotent. Mirrored into contracts/schema.sql.
 --
 -- llm_cache : generated, validated responses keyed by a hash of the evidence
