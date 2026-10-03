@@ -1,34 +1,47 @@
+/* On a phone the map fills the space under the header and the panel is a
+   bottom sheet over it (see BottomSheet). The workspace takes whatever the
+   page shell leaves, so the page itself never scrolls. */
 .workspace {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-}
-
-/* On a phone the map stays in view above the panel; nothing overlays it. */
-.mapArea {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: flex;
-  flex: none;
-  order: -1;
-  height: 42dvh;
-  min-height: 15rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-sunken);
-}
-
-.panel {
-  /* Contains the visually hidden live regions so they cannot extend the page. */
   position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-height: 18rem;
+  overflow: hidden;
+}
+
+.mapArea {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background: var(--surface-sunken);
+}
+
+/* Map controls rise above the collapsed or half-open sheet. */
+.mapArea :global(.maplibregl-ctrl-bottom-right),
+.mapArea :global(.maplibregl-ctrl-bottom-left) {
+  bottom: var(--sheet-offset, 0);
+}
+
+/* The desktop sidebar; on a phone it only shows until the sheet takes over,
+   so the server-rendered page already looks like the collapsed sheet. */
+.panel {
+  /* Contains the visually hidden live regions so they cannot extend the page. */
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
   min-width: 0;
-  padding: 1rem 1rem 0;
+  max-height: calc(6rem + env(safe-area-inset-bottom, 0px));
+  padding: 2.5rem 1rem 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--page);
+  box-shadow: 0 -2px 16px rgba(11, 11, 11, 0.18);
 }
 
 .panel:focus {
@@ -42,8 +55,17 @@
 .search {
   display: grid;
   gap: 0.875rem;
-  /* Keeps it clear of the sticky map when scrolled into view on a phone. */
-  scroll-margin-top: calc(42dvh + 0.5rem);
+}
+
+/* The collapsed sheet has room for the field alone; the label stays for
+   screen readers and the placeholder carries the prompt. */
+.search label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .placeholder {
@@ -175,30 +197,48 @@
     flex: none;
     flex-direction: row;
     height: calc(100dvh - var(--header-height));
+    min-height: 0;
+    overflow: visible;
   }
 
   .mapArea {
     position: relative;
+    inset: auto;
     order: 2;
     flex: 1;
     height: auto;
     min-width: 0;
     min-height: 0;
-    border-bottom: 0;
+  }
+
+  .mapArea :global(.maplibregl-ctrl-bottom-right),
+  .mapArea :global(.maplibregl-ctrl-bottom-left) {
+    bottom: 0;
+  }
+
+  .search label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
   }
 
   .panel {
+    position: relative;
+    inset: auto;
+    z-index: auto;
     flex: none;
     order: 1;
     width: clamp(23.75rem, 30vw, 27.5rem);
+    max-height: none;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-top: 1.25rem;
+    padding: 1.25rem 1rem 0;
     border-right: 1px solid var(--border);
-  }
-
-  .search {
-    scroll-margin-top: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .controls {

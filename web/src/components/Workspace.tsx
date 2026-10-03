@@ -8,11 +8,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
   type Ref,
 } from "react";
 
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
@@ -37,6 +39,7 @@ import {
   YOUR_LOCATION_LABEL,
   isInCoverage,
 } from "@/lib/geolocation";
+import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import {
@@ -50,6 +53,7 @@ import { bandLabel, roundScore } from "@/lib/score/presentation";
 import { APP_PATH, EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
+import { BottomSheet } from "./BottomSheet";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
@@ -113,26 +117,57 @@ function MapPlaceholder() {
   );
 }
 
+/** Visible height of the sheet at each snap, for keeping map controls clear of it. */
+const SHEET_OFFSET: Record<SheetSnap, string> = {
+  peek: "calc(6rem + env(safe-area-inset-bottom, 0px))",
+  half: "calc(50% - 0.5rem)",
+  full: "calc(50% - 0.5rem)",
+};
+
 interface LayoutProps {
   panel: ReactNode;
   map: ReactNode;
   panelRef?: Ref<HTMLElement>;
+  snap?: SheetSnap;
+  onSnapChange?: (snap: SheetSnap) => void;
 }
 
-function Layout({ panel, map, panelRef }: LayoutProps) {
+function Layout({ panel, map, panelRef, snap, onSnapChange }: LayoutProps) {
+  const mobile = useIsMobile();
+  const [localSnap, setLocalSnap] = useState<SheetSnap>("peek");
+  const sheetSnap = snap ?? localSnap;
+  const content = (
+    <>
+      {panel}
+      <div className={styles.credits}>
+        <SiteFooter />
+      </div>
+    </>
+  );
   return (
-    <div className={styles.workspace}>
-      <aside
-        ref={panelRef}
-        className={styles.panel}
-        aria-label="Search and map controls"
-        tabIndex={-1}
-      >
-        {panel}
-        <div className={styles.credits}>
-          <SiteFooter />
-        </div>
-      </aside>
+    <div
+      className={styles.workspace}
+      style={{ "--sheet-offset": SHEET_OFFSET[sheetSnap] } as CSSProperties}
+    >
+      {mobile ? (
+        <BottomSheet
+          ref={panelRef}
+          snap={sheetSnap}
+          onSnapChange={onSnapChange ?? setLocalSnap}
+          label="Search and map controls"
+        >
+          {content}
+        </BottomSheet>
+      ) : (
+        <aside
+          ref={panelRef}
+          className={styles.panel}
+          aria-label="Search and map controls"
+          tabIndex={-1}
+        >
+          {content}
+        </aside>
+      )}
       <section className={styles.mapArea} aria-label="Map">
         {map}
       </section>
@@ -203,6 +238,20 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // Until the map moves, or the URL asked for a view, there is no view worth
   // writing down: the metro overview is what `/app` already means.
   const [viewShared, setViewShared] = useState(start.pinned);
+
+  const mobile = useIsMobile();
+  // Phones show the panel as a bottom sheet: collapsed until there is a place
+  // to show, and back to collapsed when it is closed.
+  const [snap, setSnap] = useState<SheetSnap>(
+    initial.target ? "half" : "peek",
+  );
+  const [sheetKey, setSheetKey] = useState(placeKey);
+  if (sheetKey !== placeKey) {
+    setSheetKey(placeKey);
+    setSnap(placeKey ? "half" : "peek");
+  }
+  // Let a click on the map show the map, not the sheet covering it.
+  const revealMap = () => setSnap((current) => (current === "full" ? "half" : current));
 
   const panelRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -475,7 +524,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             />
           ) : null}
         </section>
-      ) : (
+      ) : mobile && snap === "peek" ? null : (
         <Welcome onExample={handleSearch} />
       )}
 
@@ -524,8 +573,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             setViewShared(true);
           } else setTopViewport((current) => current ?? next);
         }}
-        onCellClick={selectCell}
+        onCellClick={(cell) => {
+          revealMap();
+          selectCell(cell);
+        }}
         onMarkerClick={(geohash) => {
+          revealMap();
           const result = topResults?.find((r) => r.geohash === geohash);
           if (result) selectTop(result);
         }}
@@ -561,7 +614,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     </>
   );
 
-  return <Layout panelRef={panelRef} panel={panel} map={map} />;
+  return (
+    <Layout
+      panelRef={panelRef}
+      panel={panel}
+      map={map}
+      snap={snap}
+      onSnapChange={setSnap}
+    />
+  );
 }
 
 function Welcome({ onExample }: { onExample: (address: string) => void }) {
