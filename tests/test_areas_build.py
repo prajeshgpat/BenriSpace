@@ -227,7 +227,7 @@ def test_cli_dry_run_on_cached_sample(tmp_path):
     assert build.main(["--cache-dir", str(cache), "--out-dir", str(out)]) == 0
     gj = json.loads((out / "areas.geojson").read_text())
     metrics = json.loads((out / "metrics.json").read_text())
-    assert len(gj["features"]) == metrics["face_count"] > 100
+    assert len(gj["features"]) == metrics["face_count"] > 50
     assert [ft["id"] for ft in gj["features"]] == list(range(1, metrics["face_count"] + 1))
     import importlib.util
 

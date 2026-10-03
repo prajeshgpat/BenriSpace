@@ -16,7 +16,13 @@ Pipeline (all geometry in a local metric projection until the final step):
      equirectangular), bounded_by (top road names by shared boundary length,
      naming.bounding_streets) and the geohash6 cells overlapped.
 
-Nothing is dropped for being large (the API caps at 10 sq mi).
+  7. size limits (limits.py, limits_apply.py): faces over 1.5 sq mi or with a
+     bounding box over 2 mi are cut by a ~1 mi tile grid, and faces under
+     0.02 sq mi merge into the neighbour sharing the longest boundary when
+     the caps still hold. bounded_by and cells are computed per final piece.
+     Each Face also carries extent_m and compactness (areas.extent_m /
+     areas.compactness, migration 0006_area_shape.sql, which must be applied
+     BEFORE build --write).
 """
 
 from __future__ import annotations
@@ -57,6 +63,7 @@ class FaceParams:
     coast_offset_m: float = 2.0
     decimals: int = 5
     max_bounded_by: int = 4
+    enforce_size_limits: bool = True  # split > 1.5 sq mi / 2 mi faces, merge slivers
     # None = every grid cell the face overlaps; else only these geohashes.
     geohashes: frozenset[str] | None = None
 
@@ -69,6 +76,8 @@ class Face:
     bbox: tuple[float, float, float, float]  # min_lat, max_lat, min_lon, max_lon
     cells: tuple[tuple[str, float], ...] = field(default_factory=tuple)  # (geohash, overlap_sq_m)
     stats: dict = field(default_factory=dict)
+    extent_m: float | None = None  # longest side of the bounding box, local metres
+    compactness: float | None = None  # 4*pi*area/perimeter^2
 
 
 # ---------------------------------------------------------------- geohash
@@ -278,7 +287,7 @@ def build_faces(
     named = [e for e in edges if e.name]
     tree = STRtree([e.geom for e in named]) if named else None
 
-    faces: list[Face] = []
+    kept: list[Polygon] = []
     for f, is_land in zip(raw, land, strict=True):
         if not is_land:
             continue
@@ -286,16 +295,30 @@ def build_faces(
             continue
         if 2 * f.area / f.length < p.min_thickness_m:
             continue
+        kept.extend(g for g in ([f] if f.geom_type == "Polygon" else getattr(f, "geoms", [])))
+
+    from ingestion.areas.limits_apply import compactness, enforce_limits
+
+    faces: list[Face] = []
+    for f in enforce_limits(kept, p.projector) if p.enforce_size_limits else kept:
         ll = project_back(f, p.projector, p.decimals)
         if ll.is_empty or not ll.geom_type.endswith("Polygon"):
             continue
         minx, miny, maxx, maxy = ll.bounds
         local = local_projector(miny, maxy, minx, maxx)
-        area = _to_m(ll, local).area
+        local_m = _to_m(ll, local)
+        area = local_m.area
+        x0, y0, x1, y1 = local_m.bounds
         streets = bounding_streets(f, named, tree) if tree is not None else []
         names = tuple(s[0] for s in streets[: p.max_bounded_by])
         cells = tuple(cell_overlaps(ll, local, p.geohashes))
-        faces.append(Face(ll, names, area, (miny, maxy, minx, maxx), cells))
+        faces.append(
+            Face(
+                ll, names, area, (miny, maxy, minx, maxx), cells,
+                extent_m=max(x1 - x0, y1 - y0),
+                compactness=compactness(area, local_m.length),
+            )
+        )  # fmt: skip
     return faces
 
 

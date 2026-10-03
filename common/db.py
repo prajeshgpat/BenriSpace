@@ -411,22 +411,27 @@ def get_map_top_candidates(
 
 def get_area_candidates(conn: psycopg.Connection, lat: float, lon: float) -> list[dict]:
     """Areas whose bounding box contains the point. Returns [] (after rolling
-    back the failed statement) when the areas tables have not been created."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                select id, area_sq_m, geometry, bounded_by,
-                       min_lat, max_lat, min_lon, max_lon
-                from areas
-                where %s between min_lat and max_lat and %s between min_lon and max_lon
-                """,
-                (lat, lon),
-            )
-            return list(cur)
-    except psycopg.errors.UndefinedTable:
-        conn.rollback()
-        return []
+    back the failed statement) when the areas tables have not been created.
+    Reads extent_m (migration 0006); before it is applied the column is
+    skipped and extent_m is None."""
+    sql = """
+        select id, area_sq_m, {extent}geometry, bounded_by,
+               min_lat, max_lat, min_lon, max_lon
+        from areas
+        where %s between min_lat and max_lat and %s between min_lon and max_lon
+        """
+    for extent in ("extent_m, ", ""):
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql.format(extent=extent), (lat, lon))
+                rows = list(cur)
+            return [{"extent_m": None, **r} for r in rows] if not extent else rows
+        except psycopg.errors.UndefinedTable:
+            conn.rollback()
+            return []
+        except psycopg.errors.UndefinedColumn:
+            conn.rollback()
+    return []
 
 
 def get_area_aggregate(

@@ -67,7 +67,7 @@ def test_sample_street_points_covered(sample):
     numbered = number_faces(faces)
     m = compute_metrics(numbered, proj, 0.0, pts)
     assert m["street_points_in_face_pct"] >= 95.0
-    assert m["face_count"] > 100
+    assert m["face_count"] > 50
 
 
 def test_sample_no_faces_over_water(sample):
@@ -155,7 +155,7 @@ def island_ring(ccw=True):
 
 def test_left_of_coast_rule_island_and_mainland():
     roads = [road(1, "Main Street", (0, -2000), (0, 0), (1, 2))]
-    faces = build_faces(roads, [mainland_coast(), island_ring(True)], FRAME, FaceParams(P))
+    faces = build_faces(roads, [mainland_coast(), island_ring(True)], FRAME, FaceParams(P, enforce_size_limits=False))
     centers = sorted((round(f.geometry.centroid.x, 4), round(f.geometry.centroid.y, 4)) for f in faces)
     assert len(faces) == 3
     lat = lambda y: P.inv(0, y)[1]
@@ -168,7 +168,7 @@ def test_left_of_coast_rule_island_and_mainland():
 
 def test_clockwise_ring_is_water():
     # Same ring, reversed: land would be on the outside (right of travel is inside).
-    faces = build_faces([], [mainland_coast(), island_ring(False)], FRAME, FaceParams(P))
+    faces = build_faces([], [mainland_coast(), island_ring(False)], FRAME, FaceParams(P, enforce_size_limits=False))
     assert len(faces) == 1  # only the mainland; the reversed ring encloses water
     assert faces[0].geometry.centroid.y < P.inv(0, 0)[1]
 
@@ -179,7 +179,7 @@ def test_sliver_and_small_faces_dropped_and_names():
         road(2, "Side Road", (10, -2000), (10, 0), (3, 4)),  # 10 m strip: thinner than 15 m
         road(3, "Far Avenue", (1990, -2000), (1990, 0), (5, 6)),  # 10 m x 2 km as well
     ]
-    faces = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P))
+    faces = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, enforce_size_limits=False))
     assert len(faces) == 2
     by_x = sorted(faces, key=lambda f: f.geometry.centroid.x)
     assert by_x[0].bounded_by == ("Main St",)
@@ -194,19 +194,19 @@ def test_small_area_threshold():
         road(2, "B", (60, -2000), (60, 0), (3, 4)),  # 60 m wide: passes thickness, area 120k
         road(3, "C", (60, -60), (-0.0, -60), (5, 6)),
     ]
-    big = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P))
-    strict = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, min_area_m2=1_000_000))
+    big = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, enforce_size_limits=False))
+    strict = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, min_area_m2=1_000_000, enforce_size_limits=False))
     assert len(strict) < len(big)
 
 
 def test_residential_is_not_a_wall():
     roads = [RoadWay(1, "residential", "Elm", (1, 2), ((0, -2000), (0, 0)))]
-    faces = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P))
+    faces = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, enforce_size_limits=False))
     assert len(faces) == 1  # the hard filter ignores residential (edges would be dropped)
 
 
 def test_overlap_sums_on_synthetic():
-    faces = build_faces([], [mainland_coast()], FRAME, FaceParams(P))
+    faces = build_faces([], [mainland_coast()], FRAME, FaceParams(P, enforce_size_limits=False))
     assert len(faces) == 1
     f = faces[0]
     assert sum(ov for _, ov in f.cells) == pytest.approx(f.area_sq_m, rel=1e-6)

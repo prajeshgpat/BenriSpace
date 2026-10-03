@@ -16,6 +16,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
+| `GET /similar` | Well-separated areas with a similar factor profile (pgvector) | built, needs migration 0007 |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
@@ -36,7 +37,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
   `code` is stable and meant for programs; `message` is for humans and may change.
 - **`null` means "not measured", never 0.** A sub-score can be `null` when the underlying data does not exist for that spot yet. Treat it as unknown. Composites ignore `null` factors rather than counting them as zero.
 - **CORS:** browsers may call the API only from `https://benrispace.com`, `https://www.benrispace.com` and `http://localhost:3000`. From any other origin the browser will block the response. Server-side clients (curl, Python, Node) are not affected by CORS.
-- **Caching:** `/area`, `/area/explanation`, `/suggest`, `/reverse`, `/places`, `/improve`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
+- **Caching:** `/area`, `/area/explanation`, `/suggest`, `/reverse`, `/places`, `/improve`, `/similar`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
 - **Rate limiting:** the API Gateway currently allows a steady 10 requests per second with bursts of 20, across all callers. Beyond that you get `429 Too Many Requests` (from API Gateway, not the application, so the body is not in the error shape above). Per-user quotas arrive with API keys.
 
 ## What a score means
@@ -187,7 +188,7 @@ Errors:
 
 ## `GET /area`
 
-Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. The website calls this when you click the map and draws the polygon; on a 404 it falls back to the single grid cell. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
+Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. The website calls this when you click the map and draws the polygon; areas are capped at 1.5 square miles and 2 miles across (larger road-bounded blocks are cut into roughly 1 mile tiles, tiny ones merged into a neighbour at build time); on a 404 it falls back to the single grid cell. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -242,7 +243,7 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | `lat`/`lon` missing, not numbers, or out of range |
-| 404 | `area_not_found` | No area contains or is within 40 m of the point, the area is larger than 10 square miles, no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
+| 404 | `area_not_found` | No area contains or is within 40 m of the point, the only matching area is larger than 1.5 square miles or wider than 2 miles (legacy polygons), no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ## `GET /area/explanation`
@@ -531,6 +532,59 @@ Errors:
 | --- | --- | --- |
 | 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `radiusMi` outside (0, 3], or `maxSuggestions` outside 1..5 |
 | 404 | `area_not_found` | No area and no scored cell for this location |
+| 422 | `out_of_coverage` | The point is outside the covered metro area |
+
+---
+
+## `GET /similar`
+
+Areas elsewhere in the same metro with a similar factor profile. Each scored cell has a 14-dimension vector (one z-scored sub-score per factor, a missing school score counts as average), stored in pgvector. The nearest vectors are found in the database, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+
+Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `lat` | number | yes | Latitude, inside the covered area |
+| `lon` | number | yes | Longitude, inside the covered area |
+| `k` | integer | no | Number of results, 1 to 10. Default 5 |
+| `minSeparationMi` | number | no | Minimum spacing in miles from the point and between results, 0 to 10. Default 1 |
+
+```bash
+curl "https://api.benrispace.com/v1/similar?lat=40.758&lon=-73.9855&k=3"
+```
+
+Example response (invented for illustration, not a captured production response):
+
+```json
+{
+  "minSeparationMi": 1.0,
+  "results": [
+    {
+      "latitude": 40.6892,
+      "longitude": -73.9442,
+      "direction": "SE",
+      "distanceLabel": "6.1 mi",
+      "similarity": 88,
+      "compositeScore": 71,
+      "areaLabel": "Area bounded by Nostrand Ave, Atlantic Ave and Bedford Ave",
+      "differences": [
+        { "factor": "transit", "label": "transit", "delta": 14 },
+        { "factor": "emergencyCorridor", "label": "noise", "delta": -12 }
+      ],
+      "summary": "14 points better for transit, 12 points weaker for noise."
+    }
+  ]
+}
+```
+
+`similarity` is a whole number from 0 to 100: `100 * max(0, 1 - distance / 6)`, where `distance` is the straight-line gap between the two vectors. `differences` lists up to 3 factors where the result's score differs from the point's by at least 10, largest gap first; `delta` is signed (positive means the result scores higher, which is always better). `summary` is built from `differences`, or reads "Very similar across all factors." when there are none. `areaLabel` is the road-bounded area containing the result, or `null` when there is none. `results` can hold fewer than `k` entries when the spacing rule leaves too few.
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `k` outside 1..10, or `minSeparationMi` outside 0..10 |
+| 404 | `not_found` | The cell under the point has no embedding (or no score) yet |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ---

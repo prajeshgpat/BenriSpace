@@ -237,3 +237,26 @@ class ImproveResponse(CamelModel):
     radius_mi: float
     suggestions: list[ImproveSuggestion]
     best_nearby: BestNearby | None = None
+
+
+class SimilarDifference(CamelModel):
+    factor: str
+    label: str
+    delta: int
+
+
+class SimilarArea(CamelModel):
+    latitude: float
+    longitude: float
+    direction: str
+    distance_label: str | None
+    similarity: int
+    composite_score: int
+    area_label: str | None = None
+    differences: list[SimilarDifference]
+    summary: str
+
+
+class SimilarResponse(CamelModel):
+    min_separation_mi: float
+    results: list[SimilarArea]

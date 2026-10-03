@@ -98,3 +98,4 @@ jobs:
           python-version: "3.11"
       - run: pip install -e .
       - run: python -m scoring.run
+      - run: python -m scoring.embeddings

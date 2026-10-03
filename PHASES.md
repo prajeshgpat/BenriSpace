@@ -643,7 +643,9 @@ working order, not a replacement for the phases.
 3. Minimalist homepage.
 4. LLM groundwork: `common/llm.py`, an explanation cache table, and migration
    `0004` adding pgvector embeddings.
-5. `/v1/improve` and `/v1/similar`, with UI.
+5. `/v1/improve` and `/v1/similar`, with UI. (`/v1/similar` uses migration
+   `0007_embeddings.sql`, not yet applied; the earlier `0004` mention above
+   became `0007`.)
 6. Natural-language search and ask-about-this-area.
 
 **Now features**

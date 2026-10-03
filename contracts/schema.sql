@@ -121,8 +121,9 @@ create table scores (
 
     composite_score     numeric not null,
 
-    -- Phase 3 adds: embedding vector(N) here via migration, for
-    -- "similar neighborhoods" search over pgvector.
+    -- z-scored sub-score vector for "similar areas" search over pgvector
+    -- (contracts/migrations/0007_embeddings.sql; scoring/embeddings.py).
+    embedding           vector(14),
 
     computed_at         timestamptz not null default now(),
     unique (geo_entity_id, weights_version)
@@ -130,6 +131,7 @@ create table scores (
 
 create index scores_geo_entity_idx on scores (geo_entity_id);
 create index scores_weights_version_idx on scores (weights_version);
+create index scores_embedding_hnsw_idx on scores using hnsw (embedding vector_l2_ops);
 
 -- Audit log for ingestion jobs. Each data source (OSM POIs, each GTFS
 -- agency, each school data source, roads, airports) is a separate job —
@@ -164,6 +166,12 @@ create table if not exists areas (
 );
 
 create index if not exists areas_bbox_idx on areas (min_lat, max_lat, min_lon, max_lon);
+
+-- Shape columns (migration 0006, not yet applied): longest bbox side in metres
+-- and Polsby-Popper compactness. Areas are capped at 1.5 sq mi / 2 mi across.
+alter table areas
+    add column if not exists extent_m double precision,
+    add column if not exists compactness double precision;
 
 create table if not exists area_cells (
     area_id       integer not null references areas (id) on delete cascade,
