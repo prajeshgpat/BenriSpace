@@ -34,6 +34,7 @@ data "aws_iam_policy_document" "api_lambda" {
     resources = [
       aws_ssm_parameter.database_url.arn,
       aws_ssm_parameter.locationiq_api_key.arn,
+      aws_ssm_parameter.anthropic_api_key.arn,
     ]
   }
 
@@ -57,6 +58,7 @@ data "aws_iam_policy_document" "api_lambda" {
       values = [
         aws_ssm_parameter.database_url.arn,
         aws_ssm_parameter.locationiq_api_key.arn,
+        aws_ssm_parameter.anthropic_api_key.arn,
       ]
     }
   }
@@ -84,6 +86,7 @@ resource "aws_lambda_function" "api" {
     variables = {
       DATABASE_URL_SSM_PARAM       = aws_ssm_parameter.database_url.name
       LOCATIONIQ_API_KEY_SSM_PARAM = aws_ssm_parameter.locationiq_api_key.name
+      ANTHROPIC_API_KEY_SSM_PARAM  = aws_ssm_parameter.anthropic_api_key.name
       CORS_ALLOWED_ORIGINS         = "https://${var.domain_name},https://${local.www_domain}"
       SCORING_WEIGHTS_VERSION      = var.scoring_weights_version
     }

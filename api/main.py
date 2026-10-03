@@ -27,7 +27,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.areas import AREA_MAX_SQ_MI, SQ_M_PER_SQ_MI, build_area_response, pick_area
+from api.ai_explain import ai_explanation
+from api.areas import (
+    AREA_MAX_SQ_MI,
+    SQ_M_PER_SQ_MI,
+    area_explanation,
+    bounded_by_text,
+    build_area_response,
+    pick_area,
+)
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.geocoding import geocode_address
 from api.lookup import (
@@ -49,6 +57,7 @@ from api.reverse import ReverseUnavailable
 from api.reverse import reverse as reverse_geocode
 from api.schemas import (
     AnchorPoint,
+    AreaExplanationResponse,
     AreaScoreResponse,
     Error,
     ExplanationResponse,
@@ -185,10 +194,25 @@ def get_score_explanation(geo_entity_id: UUID):
     sub_scores = sub_scores_from_score_row(score_row)
     # Phase 1 template placeholder, see api/explain.py. Distances are
     # metric internally and rendered in feet/miles.
-    explanation = build_explanation(sub_scores, nearest_m_by_factor(feature_row))
+    nearest_m = nearest_m_by_factor(feature_row)
+    with get_connection() as conn:
+        explanation = ai_explanation(
+            conn,
+            str(geo_entity_id),
+            sub_scores,
+            nearest_m,
+            float(score_row["composite_score"]),
+            "this location",
+            score_row.get("weights_version") or SCORING_WEIGHTS_VERSION,
+        )
+    source = "ai"
+    if explanation is None:
+        explanation = build_explanation(sub_scores, nearest_m)
+        source = "rules"
     return ExplanationResponse(
         geo_entity_id=geo_entity_id,
         explanation=explanation,
+        source=source,
         computed_at=score_row["computed_at"],
         nearest_mi=nearest_mi_by_factor(feature_row),
     )
@@ -311,16 +335,9 @@ def get_places(
     return PlacesResponse(factor=factor, radius_mi=radius_mi, places=places)
 
 
-@app.get(
-    "/v1/area",
-    response_model=AreaScoreResponse,
-    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
-)
-def get_area(
-    response: Response,
-    lat: float = Query(ge=-90, le=90, description="Latitude."),
-    lon: float = Query(ge=-180, le=180, description="Longitude."),
-):
+def _resolve_area(lat: float, lon: float):
+    """Shared by /v1/area and /v1/area/explanation. Returns an error
+    JSONResponse, or (area, aggregate, geo_entity, feature_row)."""
     if not in_coverage(lat, lon):
         return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
 
@@ -345,11 +362,63 @@ def get_area(
         if geo_entity is None:
             return not_found()
         feature_row = get_feature_row(conn, str(geo_entity["id"]))
+    return area, aggregate, geo_entity, feature_row
 
+
+@app.get(
+    "/v1/area",
+    response_model=AreaScoreResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
+)
+def get_area(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+):
+    resolved = _resolve_area(lat, lon)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    area, aggregate, geo_entity, feature_row = resolved
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return build_area_response(
         area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
     )
+
+
+@app.get(
+    "/v1/area/explanation",
+    response_model=AreaExplanationResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
+)
+def get_area_explanation(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+):
+    """AI-written explanation for the area under a point; rule-based text when
+    the LLM layer is unavailable. Kept separate from /v1/area so that stays fast."""
+    resolved = _resolve_area(lat, lon)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    area, aggregate, _geo_entity, feature_row = resolved
+    sub_scores = sub_scores_from_score_row(aggregate)
+    nearest_m = nearest_m_by_factor(feature_row)
+    with get_connection() as conn:
+        text = ai_explanation(
+            conn,
+            f"area:{area['id']}",
+            sub_scores,
+            nearest_m,
+            float(aggregate["composite_score"]),
+            bounded_by_text(list(area.get("bounded_by") or [])),
+            aggregate.get("weights_version") or SCORING_WEIGHTS_VERSION,
+        )
+    source = "ai"
+    if text is None:
+        text = area_explanation(sub_scores, feature_row)
+        source = "rules"
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return AreaExplanationResponse(explanation=text, source=source, area_id=area["id"])
 
 
 @app.get(

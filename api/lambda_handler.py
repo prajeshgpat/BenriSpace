@@ -76,10 +76,36 @@ def load_locationiq_key_from_ssm() -> None:
         os.environ["LOCATIONIQ_API_KEY"] = value.strip()
 
 
+ANTHROPIC_SSM_PARAM_ENV = "ANTHROPIC_API_KEY_SSM_PARAM"
+
+
+def load_anthropic_key_from_ssm() -> None:
+    """Optional, like the LocationIQ key: without it the API keeps serving the
+    rule-based explanation. Failures log the error type only, never the value."""
+    param_name = os.environ.get(ANTHROPIC_SSM_PARAM_ENV)
+    if not param_name:
+        return
+    try:
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "ssm",
+            config=Config(connect_timeout=3, read_timeout=3, retries={"total_max_attempts": 2}),
+        )
+        value = client.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
+    except Exception as exc:  # noqa: BLE001 - optional secret, any failure means rule-based text
+        print(f"Anthropic key not loaded from SSM ({type(exc).__name__}); AI explanations off")
+        return
+    if value.strip() and not value.startswith("placeholder"):
+        os.environ["ANTHROPIC_API_KEY"] = value.strip()
+
+
 # Must run before anything imports common.config, which reads DATABASE_URL
 # from the environment at import time.
 load_database_url_from_ssm()
 load_locationiq_key_from_ssm()
+load_anthropic_key_from_ssm()
 
 from mangum import Mangum
 

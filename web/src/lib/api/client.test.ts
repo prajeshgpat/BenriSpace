@@ -237,6 +237,24 @@ describe("getScoreExplanation", () => {
   });
 });
 
+describe("getAreaExplanation", () => {
+  it("requests the point explanation and parses it", async () => {
+    const { client, fetchMock } = clientReturning(
+      jsonResponse({ explanation: "Hi.", source: "ai", areaId: 3 }),
+    );
+    const result = await client.getAreaExplanation(40.7, -74);
+    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/area/explanation?lat=40.7&lon=-74`);
+    expect(result).toEqual({ explanation: "Hi.", source: "ai", areaId: 3 });
+  });
+
+  it("accepts a null areaId and rejects an unknown source", async () => {
+    const ok = clientReturning(jsonResponse({ explanation: "x", source: "rules", areaId: null }));
+    expect((await ok.client.getAreaExplanation(1, 2)).areaId).toBeNull();
+    const bad = clientReturning(jsonResponse({ explanation: "x", source: "gpt", areaId: null }));
+    expect((await rejection(bad.client.getAreaExplanation(1, 2))).kind).toBe("invalid-response");
+  });
+});
+
 describe("normalizeSubScores", () => {
   it("returns every factor as null when sub-scores are missing entirely", () => {
     const normalized = normalizeSubScores(undefined);

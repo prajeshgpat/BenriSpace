@@ -18,6 +18,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "pygeohash>=1.2",
     "mangum>=0.22",
+    "anthropic>=1.0",
 ]
 
 [project.optional-dependencies]

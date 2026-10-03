@@ -6,7 +6,11 @@ import { emptySubScores, fullSubScores, makeAreaScore, makeScore } from "@/test/
 
 import { ScoreResult } from "./ScoreResult";
 
-const READY = { status: "ready", text: "Transit is the strongest factor." } as const;
+const READY = {
+  status: "ready",
+  text: "Transit is the strongest factor.",
+  explanationSource: "rules",
+} as const;
 
 function factorItem(key: string): HTMLElement {
   const item = document.querySelector<HTMLElement>(`[data-factor="${key}"]`);
@@ -254,5 +258,25 @@ describe("ScoreResult", () => {
       render(<ScoreResult address="x" score={makeScore()} explanation={READY} />);
       expect(screen.queryByTestId("area-note")).not.toBeInTheDocument();
     });
+  });
+
+  it("captions AI-written text only", () => {
+    const { rerender } = render(
+      <ScoreResult address="x" score={makeScore()} explanation={READY} />,
+    );
+    expect(screen.queryByText("AI-written summary")).not.toBeInTheDocument();
+
+    rerender(
+      <ScoreResult
+        address="x"
+        score={makeScore()}
+        explanation={{ ...READY, explanationSource: "ai" }}
+      />,
+    );
+    expect(screen.getByText("AI-written summary")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-caption")).toHaveAttribute(
+      "title",
+      expect.stringContaining("may be imperfect"),
+    );
   });
 });

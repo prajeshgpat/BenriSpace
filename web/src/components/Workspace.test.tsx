@@ -1006,7 +1006,10 @@ describe("area polygon", () => {
     expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
     expect(map().highlightGeohash).toBe("dr5ru7");
     expect(String(areaMock.mock.calls[0][0])).toBe("http://api.test/v1/area?lat=40.7&lon=-74");
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Only the background AI-explanation upgrade may use the generic fetch.
+    expect(
+      fetchMock.mock.calls.filter(([url]) => !String(url).includes("/area/explanation?")),
+    ).toEqual([]);
   });
 
   it("passes no highlight while the lookup is pending, then the polygon replaces it", async () => {

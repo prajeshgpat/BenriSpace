@@ -11,6 +11,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score` | Score for one address or coordinate | live |
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
+| `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
@@ -34,7 +35,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
   `code` is stable and meant for programs; `message` is for humans and may change.
 - **`null` means "not measured", never 0.** A sub-score can be `null` when the underlying data does not exist for that spot yet. Treat it as unknown. Composites ignore `null` factors rather than counting them as zero.
 - **CORS:** browsers may call the API only from `https://benrispace.com`, `https://www.benrispace.com` and `http://localhost:3000`. From any other origin the browser will block the response. Server-side clients (curl, Python, Node) are not affected by CORS.
-- **Caching:** `/area`, `/suggest`, `/reverse`, `/places`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
+- **Caching:** `/area`, `/area/explanation`, `/suggest`, `/reverse`, `/places`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
 - **Rate limiting:** the API Gateway currently allows a steady 10 requests per second with bursts of 20, across all callers. Beyond that you get `429 Too Many Requests` (from API Gateway, not the application, so the body is not in the error shape above). Per-user quotas arrive with API keys.
 
 ## What a score means
@@ -243,9 +244,34 @@ Errors:
 | 404 | `area_not_found` | No area contains or is within 40 m of the point, the area is larger than 10 square miles, no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
+## `GET /area/explanation`
+
+The explanation for the road-bounded area under a point, written by the LLM layer when available and rule-based otherwise. It resolves the area exactly as `GET /area` does; it is a separate endpoint so `/area` stays fast and never waits on an LLM call. Results are cached for 5 minutes (and AI text is cached server-side).
+
+| Parameter | In | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| `lat` | query | number | yes | Latitude, inside the covered area |
+| `lon` | query | number | yes | Longitude, inside the covered area |
+
+```bash
+curl "https://api.benrispace.com/v1/area/explanation?lat=40.672&lon=-73.978"
+```
+
+Example response (invented, for shape only; not captured from production):
+
+```json
+{
+  "explanation": "This area scores 77 overall, driven by excellent transit and everyday amenities close by. Strengths: transit access 99; cafe access 98. Weaknesses: distance from convenience stores is only 2.",
+  "source": "ai",
+  "areaId": 5432
+}
+```
+
+`source` is `"ai"` or `"rules"` (the same rule-based text `/area` returns in its `explanation` field). Errors are the same as `GET /area`: 400 `invalid_request`, 404 `area_not_found`, 422 `out_of_coverage`.
+
 ## `GET /score/{geoEntityId}/explanation`
 
-A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Live today and rule-based (`api/explain.py`, no LLM involved). The LLM-written version is planned for Phase 3 and would not change the response shape.
+A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. The text is written by an LLM, constrained to the stored scores and distances (every number in it must come from them, and only feet and miles are used), and falls back to the rule-based text (`api/explain.py`) whenever the LLM is unavailable, over budget or fails validation. The `source` field says which one you got: `"ai"` or `"rules"`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -263,7 +289,7 @@ curl "https://api.benrispace.com/v1/score/2cedabc0-6869-45a7-8799-760614d657d1/e
 }
 ```
 
-(The text above is the explanation captured from production for this cell; the response also carries `nearestMi`, described next.)
+(The text above is the rule-based explanation captured from production for this cell, so `source` would be `"rules"`; the response also carries `source` and `nearestMi`, described next.)
 
 Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. Where a distance is unknown the value is `null`, and the explanation omits its "Nearest feature" sentence. Shape:
 

@@ -159,6 +159,9 @@ export function ScoreResult({
   );
 }
 
+export const AI_DISCLAIMER =
+  "Generated from this area's data only; may be imperfect";
+
 export const UNDERLYING_NOTE =
   "Also counted in the overall score: premium retail and running route popularity (Whole Foods, Starbucks, Target and nearby running routes).";
 
@@ -206,7 +209,29 @@ function ExplanationText({ explanation }: { explanation: ExplanationState }) {
         </p>
       );
     case "ready":
-      return <p className={styles.explanation}>{explanation.text}</p>;
+      return (
+        <>
+          <p className={styles.explanation}>{explanation.text}</p>
+          {explanation.explanationSource === "ai" ? (
+            <p
+              className={styles.aiCaption}
+              data-testid="ai-caption"
+              title={AI_DISCLAIMER}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className={styles.aiIcon}
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M5 4h14v12H9l-4 4z" />
+              </svg>
+              <span>AI-written summary</span>
+              <span className="sr-only">. {AI_DISCLAIMER}</span>
+            </p>
+          ) : null}
+        </>
+      );
     case "unavailable":
       return (
         <p className={styles.explanationPending}>
