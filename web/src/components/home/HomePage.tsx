@@ -7,6 +7,7 @@ import { scoreColor } from "@/lib/map/colors";
 import { FACTORS } from "@/lib/score/factors";
 import { APP_PATH } from "@/lib/site";
 
+import { HomeSearch } from "./HomeSearch";
 import styles from "./HomePage.module.css";
 
 const STEPS = [
@@ -82,20 +83,7 @@ export function HomePage() {
           <p className={styles.lead}>
             A score out of 100 for any place in the New York metro area.
           </p>
-          <form className={styles.search} action={APP_PATH} method="get">
-            <input
-              className={styles.input}
-              type="search"
-              name="address"
-              required
-              autoComplete="street-address"
-              aria-label="Address"
-              placeholder="Enter an address"
-            />
-            <button className={styles.submit} type="submit">
-              Score it
-            </button>
-          </form>
+          <HomeSearch />
           <Link className={styles.quiet} href={APP_PATH} prefetch={false}>
             Explore the map
           </Link>

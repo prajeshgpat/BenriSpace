@@ -1,5 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import { FACTOR_GUIDE } from "@/lib/home/factorGuide";
 import { FACTOR_KEYS, FACTORS } from "@/lib/score/factors";
@@ -19,7 +21,7 @@ describe("HomePage", () => {
     const form = container.querySelector("form")!;
     expect(form).toHaveAttribute("action", "/app");
     expect(form).toHaveAttribute("method", "get");
-    const input = screen.getByRole("searchbox", { name: "Address" });
+    const input = screen.getByRole("combobox", { name: "Address" });
     expect(input).toHaveAttribute("name", "address");
     expect(form).toContainElement(input);
     expect(within(form).getByRole("button")).toHaveAttribute("type", "submit");

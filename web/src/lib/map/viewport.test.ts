@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { padBbox, precisionForZoom, roundBbox } from "./viewport";
+import { INITIAL_ZOOM_IN_LEVELS, initialMetroView, padBbox, precisionForZoom, roundBbox } from "./viewport";
 
 describe("precisionForZoom", () => {
   it("uses ~5 km cells below zoom 10 and ~1 km cells from zoom 10", () => {
@@ -30,5 +30,12 @@ describe("roundBbox", () => {
     expect(roundBbox([-74.00041, 40.00049, -73.0004, 41.00051])).toEqual([
       -74, 40, -73, 41.001,
     ]);
+  });
+});
+
+describe("initialMetroView", () => {
+  it("centres on New York City, four levels closer than the fitted zoom", () => {
+    expect(INITIAL_ZOOM_IN_LEVELS).toBe(4);
+    expect(initialMetroView(6.5)).toEqual({ lat: 40.73, lon: -73.99, zoom: 10.5 });
   });
 });
