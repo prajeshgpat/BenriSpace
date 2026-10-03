@@ -6,6 +6,7 @@ import {
   nearestSnap,
   releaseVelocity,
   resolveSnap,
+  MIN_VISIBLE,
   snapOffsets,
   stepSnap,
 } from "./sheetSnap";
@@ -19,6 +20,9 @@ describe("snapOffsets", () => {
 
   it("never lets half sit lower than peek on a tiny sheet", () => {
     expect(snapOffsets(150, 100)).toEqual({ full: 0, half: 50, peek: 50 });
+    expect(snapOffsets(300, 0)).toEqual({ full: 0, half: 150, peek: 260 });
+    expect(snapOffsets(300, 10).peek).toBe(300 - MIN_VISIBLE);
+    expect(snapOffsets(30, 0)).toEqual({ full: 0, half: 0, peek: 0 });
     expect(snapOffsets(0, 100)).toEqual({ full: 0, half: 0, peek: 0 });
   });
 });

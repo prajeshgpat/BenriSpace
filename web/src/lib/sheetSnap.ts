@@ -21,12 +21,17 @@ export const VELOCITY_WINDOW_MS = 100;
 /** A pointer that moves less than this (px) between down and up was a tap. */
 export const TAP_SLOP = 6;
 
+/** The least of the sheet (px) that stays on screen: its drag handle. */
+export const MIN_VISIBLE = 40;
+
 /**
  * Offsets for a sheet of `height` px of which `peekVisible` px show when
- * collapsed and half of it shows at the middle snap.
+ * collapsed and half of it shows at the middle snap. At least the handle
+ * (MIN_VISIBLE px, or the whole sheet if shorter) always stays on screen.
  */
 export function snapOffsets(height: number, peekVisible: number): SnapOffsets {
-  const peek = Math.max(0, height - peekVisible);
+  const visible = Math.min(height, Math.max(peekVisible, MIN_VISIBLE));
+  const peek = Math.max(0, height - visible);
   return { full: 0, half: Math.min(height / 2, peek), peek };
 }
 

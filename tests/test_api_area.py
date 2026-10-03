@@ -15,6 +15,7 @@ from api.areas import (
     bounded_by_text,
     pick_area,
     point_in_polygon,
+    usable_areas,
 )
 from api.schemas import AreaScoreResponse
 from scoring.engine import CATEGORY_SPECS
@@ -214,10 +215,11 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 CLICK = (40.7484, -73.9857)
 
 
-def make_area(sq_m=1_000_000.0):
+def make_area(sq_m=1_000_000.0, extent_m=None):
     return {
         "id": 3,
         "area_sq_m": sq_m,
+        "extent_m": extent_m,
         "bounded_by": ["A St", "B Ave", "C Rd", "D Blvd", "E St"],
         "geometry": box(CLICK[1] - 0.01, CLICK[0] - 0.01, CLICK[1] + 0.01, CLICK[0] + 0.01),
     }
@@ -277,9 +279,36 @@ def test_route_404_tables_missing(client, monkeypatch):
 
 
 def test_route_404_cap_exceeded(client, monkeypatch):
-    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(10.01 * 2_589_988.11)])
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(1.51 * 2_589_988.11)])
     r = client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]})
     assert r.status_code == 404
+
+
+def test_route_404_extent_exceeded_and_ok_at_limit(client, monkeypatch):
+    params = {"lat": CLICK[0], "lon": CLICK[1]}
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=2.01 * 1609.344)])
+    assert client.get("/v1/area", params=params).status_code == 404
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=2.0 * 1609.344)])
+    assert client.get("/v1/area", params=params).status_code == 200
+    # legacy row (extent_m null) under the area cap is still served
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(1.49 * 2_589_988.11)])
+    assert client.get("/v1/area", params=params).status_code == 200
+
+
+def test_route_prefers_smallest_piece_and_skips_oversized(client, monkeypatch):
+    huge = make_area(9 * 2_589_988.11)
+    huge["id"] = 1
+    piece = make_area(0.8 * 2_589_988.11)
+    piece["id"] = 2
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [huge, piece])
+    assert client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]}).json()["areaId"] == 2
+    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [huge])
+    assert client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]}).status_code == 404
+
+
+def test_usable_areas_filters_by_area_and_extent():
+    ok = {"area_sq_m": 1e6, "extent_m": 1500.0}
+    assert usable_areas([ok, {"area_sq_m": 4e6}, {"area_sq_m": 1e6, "extent_m": 4000.0}]) == [ok]
 
 
 def test_route_404_no_scored_cells(client, monkeypatch):

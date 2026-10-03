@@ -13,8 +13,13 @@ from api.lookup import school_info_from_rows, sub_scores_from_score_row
 from api.schemas import AreaInfo, AreaScoreResponse
 from scoring.engine import CATEGORY_SPECS
 
-AREA_MAX_SQ_MI = 10.0
+# Mirrors ingestion/areas/limits.py (MAX_AREA_SQ_MI, MAX_EXTENT_MI); a test
+# asserts they stay equal. Areas built before the size limits (or with a
+# non-null extent_m above the cap) are treated as not found.
+AREA_MAX_SQ_MI = 1.5
+AREA_MAX_EXTENT_MI = 2.0
 SQ_M_PER_SQ_MI = 2_589_988.11
+M_PER_MI = 1609.344
 SNAP_M = 40.0
 _EARTH_R = 6_371_008.8
 
@@ -84,6 +89,21 @@ def distance_to_polygon_m(lon: float, lat: float, geometry: dict) -> float:
             for a, b in pairwise(ring):
                 best = min(best, _dist_to_segment_m(lon, lat, a, b))
     return best
+
+
+def area_too_big(area: dict) -> bool:
+    """True when the area breaks the size caps: over AREA_MAX_SQ_MI, or
+    (when extent_m is known) longer than AREA_MAX_EXTENT_MI across."""
+    if area["area_sq_m"] / SQ_M_PER_SQ_MI > AREA_MAX_SQ_MI:
+        return True
+    extent = area.get("extent_m")
+    return extent is not None and extent / M_PER_MI > AREA_MAX_EXTENT_MI
+
+
+def usable_areas(candidates: list[dict]) -> list[dict]:
+    """Candidates within the size caps (filter BEFORE pick_area, so an
+    oversized legacy polygon can neither win nor be snapped to)."""
+    return [c for c in candidates if not area_too_big(c)]
 
 
 def pick_area(lat: float, lon: float, candidates: list[dict], snap_m: float = SNAP_M) -> dict | None:

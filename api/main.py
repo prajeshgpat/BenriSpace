@@ -29,12 +29,11 @@ from fastapi.responses import JSONResponse
 
 from api.ai_explain import ai_explanation
 from api.areas import (
-    AREA_MAX_SQ_MI,
-    SQ_M_PER_SQ_MI,
     area_explanation,
     bounded_by_text,
     build_area_response,
     pick_area,
+    usable_areas,
 )
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.geocoding import geocode_address
@@ -69,10 +68,12 @@ from api.schemas import (
     RankedAddress,
     ReverseResponse,
     ScoreResponse,
+    SimilarResponse,
     SuggestResponse,
     TriangulateRequest,
     TriangulateResponse,
 )
+from api.similar import build_similar, fetch_neighbours, fetch_target, overfetch_limit
 from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses
 from api.triangulate import anchor_to_circle, rank_candidates
@@ -351,8 +352,8 @@ def _resolve_area(lat: float, lon: float):
         return _error(404, "area_not_found", "No road-bounded area found for this location.")
 
     with get_connection() as conn:
-        area = pick_area(lat, lon, get_area_candidates(conn, lat, lon))
-        if area is None or area["area_sq_m"] / SQ_M_PER_SQ_MI > AREA_MAX_SQ_MI:
+        area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
+        if area is None:
             return not_found()
         aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
         if aggregate is None:
@@ -468,6 +469,47 @@ def get_improve(
             conn, lat, lon, radius_mi, max_suggestions, sub_scores, composite, cells,
             geohash_encode(lat, lon, precision=6),
         )  # fmt: skip
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return result
+
+
+@app.get(
+    "/v1/similar",
+    response_model=SimilarResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
+)
+def get_similar(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+    k: int = Query(default=5, ge=1, le=10),
+    min_separation_mi: float = Query(default=1.0, ge=0, le=10, alias="minSeparationMi"),
+):
+    """Areas with a similar factor profile (pgvector), spread out geographically."""
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+    with get_connection() as conn:
+        geo_entity = get_geo_entity_by_geohash(conn, geohash_encode(lat, lon, precision=6))
+        if geo_entity is None:
+            min_lat, max_lat, min_lon, max_lon = bbox_around(lat, lon)
+            geo_entity = nearest_geo_entity(
+                lat, lon, get_geo_entities_in_bbox(conn, min_lat, max_lat, min_lon, max_lon)
+            )
+        target = (
+            fetch_target(conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION)
+            if geo_entity
+            else None
+        )
+        if target is None:
+            return _error(404, "not_found", "No similarity data for this location yet.")
+        candidates = fetch_neighbours(
+            conn,
+            str(geo_entity["id"]),
+            SCORING_WEIGHTS_VERSION,
+            geo_entity["metro_area"],
+            overfetch_limit(k),
+        )
+        result = build_similar(conn, lat, lon, target, candidates, k, min_separation_mi)
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return result
 

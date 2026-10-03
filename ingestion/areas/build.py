@@ -6,6 +6,11 @@ replaces the `areas` / `area_cells` tables.
   python -m ingestion.areas.build --source region --allow-network --write \\
       --build-version areas-v1-2026-10                 # the real run (needs approval)
 
+Size limits (limits.py): areas are at most 1.5 sq mi and 2 mi across; bigger
+faces are cut by a ~1 mi grid, tiny ones merged into a neighbour (see
+limits_apply.py). --write needs contracts/migrations/0006_area_shape.sql
+(areas.extent_m, areas.compactness) applied FIRST; it is not applied yet.
+
 Dry-run (default) never touches the network or the database and writes
 areas.geojson, metrics.json and areas_preview.png to --out-dir. --write
 replaces both tables in ONE transaction and is only allowed with
@@ -32,6 +37,12 @@ from ingestion.areas.hard_source import (
     parse_hard,
     region_bbox,
     street_points,
+)
+from ingestion.areas.limits import (
+    M_PER_MI,
+    MAX_AREA_SQ_MI,
+    MAX_EXTENT_M,
+    MIN_SLIVER_SQ_MI,
 )
 from ingestion.areas.osm_source import SAMPLE_BBOX, Projector, cache_path, parse_layers
 
@@ -91,6 +102,13 @@ def compute_metrics(
                 ["min", "p10", "p25", "median", "p75", "p90", "p99", "max"], q, strict=True)
         }
         m["total_area_sq_mi"] = round(float(areas_mi.sum()), 3)
+        m["share_over_max_area_pct"] = round(100.0 * float((areas_mi > MAX_AREA_SQ_MI).mean()), 3)
+        m["share_under_sliver_pct"] = round(100.0 * float((areas_mi < MIN_SLIVER_SQ_MI).mean()), 2)
+        ext = [f.extent_m for _, f in numbered if f.extent_m is not None]
+        if ext:
+            m["max_extent_mi"] = round(max(ext) / M_PER_MI, 3)
+            m["share_over_max_extent_pct"] = round(
+                100.0 * sum(e > MAX_EXTENT_M for e in ext) / len(ext), 3)
     metric_geoms = [_to_m(f.geometry, proj) for _, f in numbered]
     if street_pts and metric_geoms:
         tree = STRtree(metric_geoms)
@@ -120,6 +138,8 @@ def to_geojson(numbered: Numbered) -> dict:
                     "area_sq_m": round(f.area_sq_m, 1),
                     "bounded_by": list(f.bounded_by),
                     "cells": len(f.cells),
+                    "extent_m": None if f.extent_m is None else round(f.extent_m, 1),
+                    "compactness": None if f.compactness is None else round(f.compactness, 3),
                 },
                 "geometry": mapping(f.geometry),
             }
@@ -169,7 +189,8 @@ def read_geohashes(conn) -> frozenset[str]:
 
 INSERT_AREA_SQL = (
     "insert into areas (id, build_version, metro_area, min_lat, max_lat, min_lon, max_lon, "
-    "area_sq_m, geometry, bounded_by) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    "area_sq_m, geometry, bounded_by, extent_m, compactness) "
+    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
 INSERT_CELL_SQL = "insert into area_cells (area_id, geohash, overlap_sq_m) values (%s, %s, %s)"
 
@@ -183,7 +204,7 @@ def write_areas(conn, numbered: Numbered, build_version: str) -> dict:
         raise ValueError("refusing to replace areas with an empty build")
     area_rows = [
         (i, build_version, metro_of(f), f.bbox[0], f.bbox[1], f.bbox[2], f.bbox[3],
-         f.area_sq_m, Jsonb(mapping(f.geometry)), list(f.bounded_by))
+         f.area_sq_m, Jsonb(mapping(f.geometry)), list(f.bounded_by), f.extent_m, f.compactness)
         for i, f in numbered
     ]  # fmt: skip
     cell_rows = [(i, gh, ov) for i, f in numbered for gh, ov in f.cells]

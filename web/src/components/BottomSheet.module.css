@@ -22,11 +22,19 @@
 }
 
 .sheet[data-snap="peek"] {
-  transform: translateY(calc(100% - var(--sheet-peek)));
+  transform: translateY(max(0px, calc(100% - var(--sheet-peek))));
 }
 
 .sheet[data-snap="half"] {
-  transform: translateY(min(50%, calc(100% - var(--sheet-peek))));
+  transform: translateY(max(0px, min(50%, calc(100% - var(--sheet-peek)))));
+}
+
+/* Below 40rem there is no header and the floating menu button sits top-right,
+   so the fully open sheet stops under it and its handle stays reachable. */
+@media not all and (min-width: 40rem) {
+  .sheet {
+    height: calc(100% - var(--menu-clearance));
+  }
 }
 
 .sheet[data-snap="full"] {

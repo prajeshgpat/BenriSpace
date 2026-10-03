@@ -24,6 +24,14 @@
   --radius-lg: 20px;
   --content-width: 46rem;
   --header-height: 3.25rem;
+  /* Space the floating phone menu button takes at the top of the page. */
+  --menu-clearance: calc(3.75rem + env(safe-area-inset-top, 0px));
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --menu-clearance: 0px;
+  }
 }
 
 /* Dark tokens apply for an explicit choice, or for the OS preference when

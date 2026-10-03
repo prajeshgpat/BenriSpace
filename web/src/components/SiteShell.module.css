@@ -4,8 +4,9 @@
   min-height: 100dvh;
 }
 
+/* Phones have no header: the floating menu button (MobileMenu) replaces it. */
 .header {
-  display: flex;
+  display: none;
   flex: none;
   align-items: center;
   flex-wrap: wrap;
@@ -61,6 +62,8 @@
 
 .content {
   display: flex;
+  /* Keeps headings clear of the floating menu button; /app undoes it. */
+  padding-top: var(--menu-clearance);
   flex: 1;
   flex-direction: column;
   min-height: 0;
@@ -68,6 +71,7 @@
 
 @media (min-width: 40rem) {
   .header {
+    display: flex;
     flex-wrap: nowrap;
     height: var(--header-height);
     padding-inline: 1.5rem;

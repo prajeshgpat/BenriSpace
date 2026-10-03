@@ -18,6 +18,7 @@ describe("SiteShell", () => {
     render(<SiteShell>content</SiteShell>);
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getAllByRole("link")).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Menu" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Switch to dark mode" }),
     ).toBeInTheDocument();
