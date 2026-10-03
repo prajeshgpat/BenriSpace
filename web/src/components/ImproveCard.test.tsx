@@ -65,7 +65,7 @@ describe("ImproveCard", () => {
   it("renders suggestions, places and the best move", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => json(BODY));
     render(
-      <ImproveCard coordinates={POINT} client={clientWith(fetchMock)} onFocusPoint={vi.fn()} />,
+      <ImproveCard coordinates={POINT} client={clientWith(fetchMock)} onPreview={vi.fn()} />,
     );
 
     expect(await screen.findByText("Improve this area")).toBeInTheDocument();
@@ -79,7 +79,7 @@ describe("ImproveCard", () => {
   it("hides itself when the request fails", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => json({}, 500));
     const { container } = render(
-      <ImproveCard coordinates={POINT} client={clientWith(fetchMock)} onFocusPoint={vi.fn()} />,
+      <ImproveCard coordinates={POINT} client={clientWith(fetchMock)} onPreview={vi.fn()} />,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await waitFor(() =>
@@ -88,19 +88,23 @@ describe("ImproveCard", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("focuses the map on the better area and the best move", async () => {
-    const onFocusPoint = vi.fn();
+  it("previews the better area and the best move", async () => {
+    const onPreview = vi.fn();
     render(
       <ImproveCard
         coordinates={POINT}
         client={clientWith(async () => json(BODY))}
-        onFocusPoint={onFocusPoint}
+        onPreview={onPreview}
       />,
     );
     fireEvent.click(await screen.findByRole("button", { name: /better area for Grocery/ }));
-    expect(onFocusPoint).toHaveBeenLastCalledWith(40.2, -74.2);
+    expect(onPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lat: 40.2, lon: -74.2, kind: "improve" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: /best move nearby/i }));
-    expect(onFocusPoint).toHaveBeenLastCalledWith(40.3, -74.3);
+    expect(onPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ lat: 40.3, lon: -74.3, kind: "best-move" }),
+    );
   });
 
   it("ignores a stale response for a previous point", async () => {
@@ -119,10 +123,10 @@ describe("ImproveCard", () => {
     );
     const client = clientWith(fetchMock);
     const { rerender } = render(
-      <ImproveCard coordinates={POINT} client={client} onFocusPoint={vi.fn()} />,
+      <ImproveCard coordinates={POINT} client={client} onPreview={vi.fn()} />,
     );
     rerender(
-      <ImproveCard coordinates={{ lat: 41, lon: -74 }} client={client} onFocusPoint={vi.fn()} />,
+      <ImproveCard coordinates={{ lat: 41, lon: -74 }} client={client} onPreview={vi.fn()} />,
     );
     expect(await screen.findByText("Second point tip.")).toBeInTheDocument();
     resolveFirst(json({ ...BODY, suggestions: [{ ...BODY.suggestions[0], tip: "Stale tip." }] }));

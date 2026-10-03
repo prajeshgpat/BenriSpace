@@ -47,7 +47,7 @@ describe("SimilarCard", () => {
   it("renders up to five rows with name, distance, similarity, score and chips", async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => json(BODY));
     render(
-      <SimilarCard coordinates={POINT} client={clientWith(fetchMock)} onFocusPoint={vi.fn()} />,
+      <SimilarCard coordinates={POINT} client={clientWith(fetchMock)} onPreview={vi.fn()} />,
     );
 
     expect(await screen.findByText("Similar areas")).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("SimilarCard", () => {
       <SimilarCard
         coordinates={POINT}
         client={clientWith(async () => json({ ...BODY, results: [result(1, { areaLabel: null })] }))}
-        onFocusPoint={vi.fn()}
+        onPreview={vi.fn()}
       />,
     );
     expect(await screen.findByText("Area to the SE")).toBeInTheDocument();
@@ -79,29 +79,39 @@ describe("SimilarCard", () => {
       <SimilarCard
         coordinates={POINT}
         client={clientWith(() => new Promise<Response>(() => {}))}
-        onFocusPoint={vi.fn()}
+        onPreview={vi.fn()}
       />,
     );
     expect(screen.getByTestId("similar-skeleton")).toHaveAttribute("aria-busy", "true");
   });
 
-  it("focuses the map on the chosen row", async () => {
-    const onFocusPoint = vi.fn();
+  it("previews the chosen row on the map", async () => {
+    const onPreview = vi.fn();
     render(
       <SimilarCard
         coordinates={POINT}
         client={clientWith(async () => json(BODY))}
-        onFocusPoint={onFocusPoint}
+        onPreview={onPreview}
       />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Show similar area 2 on map" }));
-    expect(onFocusPoint).toHaveBeenCalledWith(40.2, -74);
+    expect(onPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lat: 40.2,
+        lon: -74,
+        kind: "similar",
+        label: "Area bounded by Road 2",
+        summary: expect.objectContaining({ compositeScore: 71.4, distanceLabel: "2 mi", direction: "SE" }),
+      }),
+    );
+    const summary = onPreview.mock.calls[0][0].summary;
+    expect(summary.differences).toHaveLength(3);
   });
 
   it("hides itself on error and when there are no results", async () => {
     const failing = vi.fn<typeof fetch>(async () => json({}, 404));
     const a = render(
-      <SimilarCard coordinates={POINT} client={clientWith(failing)} onFocusPoint={vi.fn()} />,
+      <SimilarCard coordinates={POINT} client={clientWith(failing)} onPreview={vi.fn()} />,
     );
     await waitFor(() => expect(failing).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByTestId("similar-skeleton")).not.toBeInTheDocument());
@@ -112,7 +122,7 @@ describe("SimilarCard", () => {
       <SimilarCard
         coordinates={POINT}
         client={clientWith(async () => json({ ...BODY, results: [] }))}
-        onFocusPoint={vi.fn()}
+        onPreview={vi.fn()}
       />,
     );
     await waitFor(() => expect(screen.queryByTestId("similar-skeleton")).not.toBeInTheDocument());
@@ -130,10 +140,10 @@ describe("SimilarCard", () => {
     );
     const client = clientWith(fetchMock);
     const { rerender } = render(
-      <SimilarCard coordinates={POINT} client={client} onFocusPoint={vi.fn()} />,
+      <SimilarCard coordinates={POINT} client={client} onPreview={vi.fn()} />,
     );
     rerender(
-      <SimilarCard coordinates={{ lat: 41, lon: -74 }} client={client} onFocusPoint={vi.fn()} />,
+      <SimilarCard coordinates={{ lat: 41, lon: -74 }} client={client} onPreview={vi.fn()} />,
     );
     expect(await screen.findByText("Second point")).toBeInTheDocument();
     resolveFirst(json({ ...BODY, results: [result(1, { areaLabel: "Stale point" })] }));
@@ -148,7 +158,7 @@ describe("SimilarCard", () => {
         coordinates={POINT}
         client={clientWith(fetchMock)}
         priorities={{ factors: ["transit", "cafe"] }}
-        onFocusPoint={vi.fn()}
+        onPreview={vi.fn()}
       />,
     );
     await screen.findByText("Similar areas");

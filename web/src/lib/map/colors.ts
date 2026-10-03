@@ -24,6 +24,12 @@ export const AREA_STYLE = {
   dark: { fillOpacity: 0.18, line: "#93c5fd", casing: "#0b1020" },
 } as const;
 
+/** A previewed (not selected) area: dashed orange, distinct from the blue selection. */
+export const PREVIEW_STYLE = {
+  light: { fillOpacity: 0.14, line: "#c2410c", casing: "#ffffff" },
+  dark: { fillOpacity: 0.2, line: "#fdba74", casing: "#0b1020" },
+} as const;
+
 export const RAMP_GRADIENT = `linear-gradient(to right, ${RAMP_STOPS.map(
   ([score, color]) => `${color} ${(score / SCORE_MAX) * 100}%`,
 ).join(", ")})`;

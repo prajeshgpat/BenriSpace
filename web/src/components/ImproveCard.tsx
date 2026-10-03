@@ -5,6 +5,7 @@ import { useImprove } from "@/hooks/useImprove";
 import type { ApiClient } from "@/lib/api/client";
 import type { PriorityQuery } from "@/lib/api/types";
 import { FactorIcon } from "@/lib/factorIcons";
+import type { Preview } from "@/lib/map/preview";
 import { roundScore } from "@/lib/score/presentation";
 
 import styles from "./ImproveCard.module.css";
@@ -13,7 +14,7 @@ export interface ImproveCardProps {
   coordinates: { lat: number; lon: number } | null;
   client: Pick<ApiClient, "getImprove">;
   priorities?: PriorityQuery;
-  onFocusPoint: (lat: number, lon: number) => void;
+  onPreview: (preview: Preview) => void;
 }
 
 function signed(value: number): string {
@@ -21,7 +22,7 @@ function signed(value: number): string {
   return `${rounded >= 0 ? "+" : "−"}${Math.abs(rounded)}`;
 }
 
-export function ImproveCard({ coordinates, client, priorities, onFocusPoint }: ImproveCardProps) {
+export function ImproveCard({ coordinates, client, priorities, onPreview }: ImproveCardProps) {
   const { status, data, updating } = useImprove(coordinates, client, priorities);
   // Tall content stays a single summary row on phones until opened.
   const mobile = useIsMobile();
@@ -61,7 +62,19 @@ export function ImproveCard({ coordinates, client, priorities, onFocusPoint }: I
             type="button"
             className={styles.action}
             aria-label={`Show best move nearby on map`}
-            onClick={() => onFocusPoint(best.latitude, best.longitude)}
+            onClick={() =>
+              onPreview({
+                lat: best.latitude,
+                lon: best.longitude,
+                label: "Best move nearby",
+                kind: "best-move",
+                summary: {
+                  compositeScore: best.compositeScore,
+                  distanceLabel: best.distanceLabel,
+                  direction: best.direction,
+                },
+              })
+            }
           >
             Show on map
           </button>
@@ -91,9 +104,20 @@ export function ImproveCard({ coordinates, client, priorities, onFocusPoint }: I
                 type="button"
                 className={styles.action}
                 aria-label={`Show better area for ${s.label} on map`}
-                onClick={() =>
-                  onFocusPoint(s.betterArea!.latitude, s.betterArea!.longitude)
-                }
+                onClick={() => {
+                  const area = s.betterArea!;
+                  onPreview({
+                    lat: area.latitude,
+                    lon: area.longitude,
+                    label: `Better area for ${s.label}`,
+                    kind: "improve",
+                    summary: {
+                      compositeScore: area.compositeScore,
+                      distanceLabel: area.distanceLabel,
+                      direction: area.direction,
+                    },
+                  });
+                }}
               >
                 Show on map
               </button>

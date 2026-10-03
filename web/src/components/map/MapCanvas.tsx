@@ -15,7 +15,12 @@ import { useEffect, useRef, useState } from "react";
 import { useLatest } from "@/hooks/useLatest";
 import type { AreaGeometry, Bbox } from "@/lib/api/types";
 import { BASEMAP_STYLE_URLS } from "@/lib/config";
-import { AREA_STYLE, CELL_OPACITY, FILL_COLOR_EXPRESSION } from "@/lib/map/colors";
+import {
+  AREA_STYLE,
+  CELL_OPACITY,
+  FILL_COLOR_EXPRESSION,
+  PREVIEW_STYLE,
+} from "@/lib/map/colors";
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
@@ -29,6 +34,7 @@ setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
 
 const VIEWPORT_DEBOUNCE_MS = 300;
 const FOCUS_ZOOM = 12;
+const PREVIEW_MAX_ZOOM = 15;
 const SOURCE_ID = "cells";
 const FILL_LAYER = "cells-fill";
 const OUTLINE_LAYER = "cells-outline";
@@ -38,6 +44,11 @@ const AREA_SOURCE_ID = "area";
 const AREA_FILL_LAYER = "area-fill";
 const AREA_CASING_LAYER = "area-outline-casing";
 const AREA_LINE_LAYER = "area-outline";
+
+const PREVIEW_SOURCE_ID = "preview-area";
+const PREVIEW_FILL_LAYER = "preview-area-fill";
+const PREVIEW_CASING_LAYER = "preview-area-outline-casing";
+const PREVIEW_LINE_LAYER = "preview-area-outline";
 
 const EMPTY_AREA = { type: "FeatureCollection", features: [] } as never;
 
@@ -80,6 +91,8 @@ export interface FlyRequest {
   zoom?: number;
   /** Changes on every request so the same place can be targeted twice. */
   nonce: number;
+  /** [west, south, east, north] to fit instead of centring on the point. */
+  bounds?: Bbox;
 }
 
 export interface PinSpec {
@@ -95,6 +108,9 @@ interface MapCanvasProps {
   highlightGeohash: string | null;
   /** The secondary-road polygon to outline; while shown it replaces the cell highlight. */
   areaGeometry?: AreaGeometry | null;
+  /** A previewed (not selected) area: drawn dashed, in orange. */
+  previewAreaGeometry?: AreaGeometry | null;
+  previewPin?: PinSpec | null;
   theme: ResolvedTheme;
   pin: PinSpec | null;
   flyRequest: FlyRequest | null;
@@ -232,6 +248,63 @@ function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean)
   );
 }
 
+function addPreviewLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
+  const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
+  const style = PREVIEW_STYLE[theme];
+
+  map.addSource(PREVIEW_SOURCE_ID, { type: "geojson", data: EMPTY_AREA });
+  map.addLayer(
+    {
+      id: PREVIEW_FILL_LAYER,
+      type: "fill",
+      source: PREVIEW_SOURCE_ID,
+      paint: {
+        "fill-color": style.line,
+        "fill-opacity": visible ? style.fillOpacity : 0,
+        "fill-opacity-transition": {
+          duration: prefersReducedMotion() ? 0 : AREA_FADE_MS,
+          delay: 0,
+        },
+      },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: PREVIEW_CASING_LAYER,
+      type: "line",
+      source: PREVIEW_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: { "line-color": style.casing, "line-width": 5, "line-opacity": 0.85 },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: PREVIEW_LINE_LAYER,
+      type: "line",
+      source: PREVIEW_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": style.line,
+        "line-width": 2.5,
+        "line-dasharray": [2, 1.5],
+      },
+    },
+    firstLabel?.id,
+  );
+}
+
+/** Removes a marker without ever throwing: the map or its DOM may already be gone. */
+function safeRemove(marker: Marker) {
+  try {
+    marker.remove();
+  } catch {
+    // The element was detached by something else (a browser extension, a
+    // translation layer) or the map was torn down first; nothing is left to clean.
+  }
+}
+
 export function MapCanvas({
   initialView,
   cells,
@@ -239,6 +312,8 @@ export function MapCanvas({
   activeMarkerId,
   highlightGeohash,
   areaGeometry = null,
+  previewAreaGeometry = null,
+  previewPin = null,
   theme,
   pin,
   flyRequest,
@@ -264,13 +339,26 @@ export function MapCanvas({
     cells,
     highlightGeohash: areaGeometry ? null : highlightGeohash,
     areaGeometry,
+    previewAreaGeometry,
     theme,
   });
   const styleTheme = useRef(theme);
+  // Every live marker, so teardown can remove them in order before the map.
+  const liveMarkers = useRef(new Set<Marker>());
+  const track = (marker: Marker) => {
+    liveMarkers.current.add(marker);
+    return marker;
+  };
+  const release = (marker: Marker) => {
+    // After teardown the set is empty and the map is gone: nothing to do.
+    if (!liveMarkers.current.delete(marker)) return;
+    safeRemove(marker);
+  };
 
   useEffect(() => {
     const element = container.current;
     if (!element) return;
+    const registry = liveMarkers.current;
 
     let map: MaplibreMap;
     try {
@@ -335,6 +423,14 @@ export function MapCanvas({
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
       addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
+      addPreviewLayers(
+        map,
+        styleTheme.current,
+        Boolean(latest.current.previewAreaGeometry),
+      );
+      (map.getSource(PREVIEW_SOURCE_ID) as GeoJSONSource).setData(
+        areaData(latest.current.previewAreaGeometry),
+      );
       (map.getSource(AREA_SOURCE_ID) as GeoJSONSource).setData(
         areaData(latest.current.areaGeometry),
       );
@@ -370,10 +466,19 @@ export function MapCanvas({
     });
 
     return () => {
+      // One ordered teardown: markers first (their DOM lives inside the map's
+      // container), then the map. Later effect cleanups find nothing to do.
       clearTimeout(timer);
       setReady(false);
-      map.remove();
       mapRef.current = null;
+      const markers = Array.from(registry);
+      registry.clear();
+      markers.forEach(safeRemove);
+      try {
+        map.remove();
+      } catch {
+        // Already torn down.
+      }
     };
   }, [callbacks, latest]);
 
@@ -417,7 +522,41 @@ export function MapCanvas({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource(PREVIEW_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
+      areaData(previewAreaGeometry),
+    );
+    if (map.getLayer(PREVIEW_FILL_LAYER)) {
+      map.setPaintProperty(
+        PREVIEW_FILL_LAYER,
+        "fill-opacity",
+        previewAreaGeometry ? PREVIEW_STYLE[latest.current.theme].fillOpacity : 0,
+      );
+    }
+  }, [previewAreaGeometry, ready, latest]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !flyRequest) return;
+    if (flyRequest.bounds) {
+      const [west, south, east, north] = flyRequest.bounds;
+      const height = map.getContainer().clientHeight || 600;
+      // Keep the fitted places clear of the floating card and the sheet.
+      const bottom = Math.min(height * 0.4, window.innerWidth < 720 ? 240 : 150);
+      map.fitBounds(
+        [
+          [west, south],
+          [east, north],
+        ],
+        {
+          padding: { top: 70, left: 40, right: 60, bottom },
+          maxZoom: PREVIEW_MAX_ZOOM,
+          animate: !prefersReducedMotion(),
+          essential: false,
+        },
+      );
+      return;
+    }
     const target = {
       center: [flyRequest.lon, flyRequest.lat] as [number, number],
       zoom: Math.max(map.getZoom(), flyRequest.zoom ?? FOCUS_ZOOM),
@@ -441,11 +580,11 @@ export function MapCanvas({
         event.stopPropagation();
         callbacks.current.onMarkerClick(spec.id);
       });
-      return new Marker({ element: button })
-        .setLngLat([spec.lon, spec.lat])
-        .addTo(map);
+      return track(
+        new Marker({ element: button }).setLngLat([spec.lon, spec.lat]).addTo(map),
+      );
     });
-    return () => created.forEach((marker) => marker.remove());
+    return () => created.forEach(release);
   }, [callbacks, markers, ready]);
 
   useEffect(() => {
@@ -468,13 +607,29 @@ export function MapCanvas({
     element.className = styles.pinAnchor;
     element.setAttribute("aria-hidden", "true");
     element.appendChild(document.createElement("div")).className = styles.pin;
-    const marker = new Marker({ element, anchor: "bottom" })
-      .setLngLat([pinLon, pinLat])
-      .addTo(map);
-    return () => {
-      marker.remove();
-    };
+    const marker = track(
+      new Marker({ element, anchor: "bottom" }).setLngLat([pinLon, pinLat]).addTo(map),
+    );
+    return () => release(marker);
   }, [pinLat, pinLon, ready]);
+
+  const previewLat = previewPin?.lat;
+  const previewLon = previewPin?.lon;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || previewLat === undefined || previewLon === undefined) return;
+    const element = document.createElement("div");
+    element.className = styles.pinAnchor;
+    element.setAttribute("aria-hidden", "true");
+    element.appendChild(document.createElement("div")).className =
+      `${styles.pin} ${styles.pinPreview}`;
+    const marker = track(
+      new Marker({ element, anchor: "bottom" })
+        .setLngLat([previewLon, previewLat])
+        .addTo(map),
+    );
+    return () => release(marker);
+  }, [previewLat, previewLon, ready]);
 
   return (
     <div className={styles.wrapper}>

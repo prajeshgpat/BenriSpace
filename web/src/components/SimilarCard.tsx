@@ -4,6 +4,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
 import type { PriorityQuery, SimilarDifference } from "@/lib/api/types";
+import type { Preview } from "@/lib/map/preview";
 import { roundScore } from "@/lib/score/presentation";
 
 import styles from "./SimilarCard.module.css";
@@ -12,7 +13,7 @@ export interface SimilarCardProps {
   coordinates: { lat: number; lon: number } | null;
   client: Pick<ApiClient, "getSimilar">;
   priorities?: PriorityQuery;
-  onFocusPoint: (lat: number, lon: number) => void;
+  onPreview: (preview: Preview) => void;
 }
 
 const MAX_ROWS = 5;
@@ -39,7 +40,7 @@ export function SimilarCard({
   coordinates,
   client,
   priorities,
-  onFocusPoint,
+  onPreview,
 }: SimilarCardProps) {
   const { status, data, updating } = useSimilar(coordinates, client, priorities);
   // Tall content stays a single summary row on phones until opened.
@@ -99,7 +100,22 @@ export function SimilarCard({
                 type="button"
                 className={styles.action}
                 aria-label={`Show similar area ${index + 1} on map`}
-                onClick={() => onFocusPoint(area.latitude, area.longitude)}
+                onClick={() =>
+                  onPreview({
+                    lat: area.latitude,
+                    lon: area.longitude,
+                    label: name,
+                    kind: "similar",
+                    summary: {
+                      compositeScore: area.compositeScore,
+                      differences: area.differences
+                        .slice(0, MAX_CHIPS)
+                        .map(({ label, delta }) => ({ label, delta })),
+                      distanceLabel: area.distanceLabel,
+                      direction: area.direction,
+                    },
+                  })
+                }
               >
                 Show on map
               </button>

@@ -1,3 +1,4 @@
+import { scorePillColor } from "@/lib/score/pillColors";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -38,6 +39,9 @@ describe("ScoreHeader", () => {
     render(<ScoreHeader address="x" score={makeScore()} />);
 
     expect(screen.getByTestId("composite-score")).toHaveTextContent("63");
+    expect(
+      screen.getByTestId("composite-score").closest("div")!.querySelector("circle[stroke-dasharray]"),
+    ).toHaveAttribute("stroke", scorePillColor(63));
     expect(screen.getByText(/Good/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
     expect(screen.queryByText("Factor breakdown")).not.toBeInTheDocument();

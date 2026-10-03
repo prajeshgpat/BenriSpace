@@ -12,7 +12,7 @@ import {
   GREATSCHOOLS_LINK_LABEL,
 } from "@/lib/schoolLinks";
 
-import { scoreColor } from "@/lib/map/colors";
+import { scorePillColor } from "@/lib/score/pillColors";
 
 import { CopyLinkButton } from "./CopyLinkButton";
 
@@ -114,7 +114,7 @@ function ScoreRing({ value, title }: { value: number; title?: string }) {
             cx="60"
             cy="60"
             r={RING_RADIUS}
-            stroke={scoreColor(rounded)}
+            stroke={scorePillColor(rounded)}
             strokeDasharray={RING_CIRCUMFERENCE}
             strokeDashoffset={offset}
           />

@@ -1,0 +1,28 @@
+.fill {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.fallback {
+  display: grid;
+  flex: 1;
+  place-content: center;
+  justify-items: center;
+  gap: 0.75rem;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.button {
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

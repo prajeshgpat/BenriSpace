@@ -16,6 +16,13 @@ describe("HomePage", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
+  it("marks the Japanese word as untranslatable Japanese", () => {
+    render(<HomePage />);
+    const word = screen.getByText("便利");
+    expect(word).toHaveAttribute("lang", "ja");
+    expect(word).toHaveAttribute("translate", "no");
+  });
+
   it("has a no-JS address search that submits to the app", () => {
     const { container } = render(<HomePage />);
     const form = container.querySelector("form")!;
