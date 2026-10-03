@@ -31,9 +31,9 @@ variable "lambda_zip_path" {
 }
 
 variable "scoring_weights_version" {
-  description = "Scores weights_version the API serves (map, /score, /area). Moves to v2-handtuned once the v2 scoring run has populated it."
+  description = "Scores weights_version the API serves (map, /score, /area). v2-handtuned since the 2026-10 cutover; set back to v1-handtuned to roll back."
   type        = string
-  default     = "v1-handtuned"
+  default     = "v2-handtuned"
 }
 
 variable "lambda_memory_mb" {
