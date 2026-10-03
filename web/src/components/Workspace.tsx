@@ -54,6 +54,7 @@ import { APP_PATH, EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site
 
 import { AddressSearch } from "./AddressSearch";
 import { BottomSheet } from "./BottomSheet";
+import { ImproveCard } from "./ImproveCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
@@ -392,6 +393,20 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     navigate(next);
   }
 
+  // Fly the map to a suggested spot and pin it as the selected location.
+  function focusPoint(lat: number, lon: number) {
+    const next: ScoreTarget = {
+      kind: "coordinates",
+      lat: roundCoordinate(lat),
+      lon: roundCoordinate(lon),
+      label: formatLatLon({ lat, lon }),
+    };
+    flownKey.current = targetKey(next);
+    setPicked(null);
+    setFlyRequest({ lat, lon, zoom: PLACE_ZOOM, nonce: Date.now() });
+    navigate(next);
+  }
+
   function selectTop(result: MapTopResult) {
     if (activeTop?.geohash === result.geohash) {
       close();
@@ -521,6 +536,13 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               score={state.score}
               area={state.area}
               explanation={state.explanation}
+            />
+          ) : null}
+          {state.status === "success" ? (
+            <ImproveCard
+              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
+              client={client}
+              onFocusPoint={focusPoint}
             />
           ) : null}
         </section>

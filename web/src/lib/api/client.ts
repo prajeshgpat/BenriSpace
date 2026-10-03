@@ -7,6 +7,11 @@ import type {
   AreaExplanation,
   AreaScore,
   Explanation,
+  Improve,
+  ImproveBestNearby,
+  ImproveBetterArea,
+  ImprovePlace,
+  ImproveSuggestion,
   ExplanationSource,
   Position,
   FactorKey,
@@ -79,6 +84,8 @@ export interface ApiClient {
     lon: number,
     signal?: AbortSignal,
   ): Promise<AreaExplanation>;
+  /** What would raise the score nearby: named places and better spots. */
+  getImprove(lat: number, lon: number, signal?: AbortSignal): Promise<Improve>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -254,6 +261,118 @@ export function parseExplanation(body: unknown): Explanation {
     explanation: body.explanation,
     computedAt: body.computedAt,
     ...(parseSource(body.source) ? { source: parseSource(body.source) } : {}),
+  };
+}
+
+function parsePlace(raw: unknown): ImprovePlace[] {
+  if (
+    !isObject(raw) ||
+    !isNonEmptyString(raw.name) ||
+    !isFiniteNumber(raw.distanceMi) ||
+    typeof raw.distanceLabel !== "string" ||
+    typeof raw.direction !== "string" ||
+    !isFiniteNumber(raw.latitude) ||
+    !isFiniteNumber(raw.longitude)
+  ) {
+    return [];
+  }
+  return [
+    {
+      name: raw.name,
+      brand: isNonEmptyString(raw.brand) ? raw.brand : null,
+      distanceMi: raw.distanceMi,
+      distanceLabel: raw.distanceLabel,
+      direction: raw.direction,
+      latitude: raw.latitude,
+      longitude: raw.longitude,
+    },
+  ];
+}
+
+function parseBetterArea(raw: unknown): ImproveBetterArea | null {
+  if (
+    !isObject(raw) ||
+    !isFiniteNumber(raw.latitude) ||
+    !isFiniteNumber(raw.longitude) ||
+    typeof raw.direction !== "string" ||
+    !isFiniteNumber(raw.distanceMi) ||
+    typeof raw.distanceLabel !== "string" ||
+    !isFiniteNumber(raw.factorScore) ||
+    !isFiniteNumber(raw.factorGain) ||
+    !isFiniteNumber(raw.compositeScore) ||
+    !isFiniteNumber(raw.compositeGain)
+  ) {
+    return null;
+  }
+  return {
+    latitude: raw.latitude,
+    longitude: raw.longitude,
+    direction: raw.direction,
+    distanceMi: raw.distanceMi,
+    distanceLabel: raw.distanceLabel,
+    factorScore: raw.factorScore,
+    factorGain: raw.factorGain,
+    compositeScore: raw.compositeScore,
+    compositeGain: raw.compositeGain,
+  };
+}
+
+function parseBestNearby(raw: unknown): ImproveBestNearby | null {
+  if (
+    !isObject(raw) ||
+    !isFiniteNumber(raw.latitude) ||
+    !isFiniteNumber(raw.longitude) ||
+    typeof raw.direction !== "string" ||
+    typeof raw.distanceLabel !== "string" ||
+    !isFiniteNumber(raw.compositeScore) ||
+    !isFiniteNumber(raw.compositeGain)
+  ) {
+    return null;
+  }
+  return {
+    latitude: raw.latitude,
+    longitude: raw.longitude,
+    direction: raw.direction,
+    distanceLabel: raw.distanceLabel,
+    compositeScore: raw.compositeScore,
+    compositeGain: raw.compositeGain,
+  };
+}
+
+export function parseImprove(body: unknown): Improve {
+  if (
+    !isObject(body) ||
+    !isFiniteNumber(body.composite) ||
+    !isFiniteNumber(body.radiusMi) ||
+    !Array.isArray(body.suggestions)
+  ) {
+    throw invalidResponse("improve");
+  }
+  const suggestions = body.suggestions.flatMap((item): ImproveSuggestion[] =>
+    isObject(item) &&
+    isFactorKey(item.factor) &&
+    isNonEmptyString(item.label) &&
+    isFiniteNumber(item.score) &&
+    typeof item.tip === "string"
+      ? [
+          {
+            factor: item.factor,
+            label: item.label,
+            score: item.score,
+            places: Array.isArray(item.places)
+              ? item.places.flatMap(parsePlace)
+              : [],
+            betterArea: parseBetterArea(item.betterArea),
+            tip: item.tip,
+          },
+        ]
+      : [],
+  );
+  return {
+    composite: body.composite,
+    radiusMi: body.radiusMi,
+    suggestions,
+    bestNearby: parseBestNearby(body.bestNearby),
   };
 }
 
@@ -479,6 +598,16 @@ export function createApiClient({
       return parseAreaExplanation(
         await getJson(`/area/explanation?${params}`, { signal }),
       );
+    },
+
+    async getImprove(lat, lon, signal) {
+      const params = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        radiusMi: "1",
+        maxSuggestions: "3",
+      });
+      return parseImprove(await getJson(`/improve?${params}`, { signal }));
     },
 
     async getScoreExplanation(geoEntityId, options) {

@@ -190,3 +190,50 @@ class PlacesResponse(CamelModel):
     factor: str
     radius_mi: float
     places: list[PlaceOut]
+
+
+class ImprovePlace(CamelModel):
+    name: str
+    brand: str | None = None
+    distance_mi: float
+    distance_label: str | None
+    direction: str
+    latitude: float
+    longitude: float
+
+
+class BetterArea(CamelModel):
+    latitude: float
+    longitude: float
+    direction: str
+    distance_mi: float
+    distance_label: str | None
+    factor_score: int
+    factor_gain: int
+    composite_score: int
+    composite_gain: int
+
+
+class ImproveSuggestion(CamelModel):
+    factor: str
+    label: str
+    score: int
+    places: list[ImprovePlace]
+    better_area: BetterArea | None = None
+    tip: str
+
+
+class BestNearby(CamelModel):
+    latitude: float
+    longitude: float
+    direction: str
+    distance_label: str | None
+    composite_score: int
+    composite_gain: int
+
+
+class ImproveResponse(CamelModel):
+    composite: float
+    radius_mi: float
+    suggestions: list[ImproveSuggestion]
+    best_nearby: BestNearby | None = None

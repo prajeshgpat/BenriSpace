@@ -38,6 +38,7 @@ from api.areas import (
 )
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.geocoding import geocode_address
+from api.improve import build_improve, search_box
 from api.lookup import (
     bbox_around,
     build_score_response,
@@ -61,6 +62,7 @@ from api.schemas import (
     AreaScoreResponse,
     Error,
     ExplanationResponse,
+    ImproveResponse,
     MapCellsResponse,
     MapTopResponse,
     PlacesResponse,
@@ -84,6 +86,7 @@ from common.db import (
     get_geo_entity_by_geohash,
     get_latest_score,
     get_map_cells,
+    get_scored_cells_in_bbox,
 )
 from common.geo import encode as geohash_encode
 from common.units import mi_to_km
@@ -97,7 +100,12 @@ app.add_middleware(
     allow_origins=CORS_ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
-    expose_headers=["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+    expose_headers=[
+        "Retry-After",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+    ],
 )
 
 
@@ -169,9 +177,7 @@ def get_score(
                 404, "not_found", "No geo entity within ingestion coverage for this location."
             )
 
-        score_row = get_latest_score(
-            conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION
-        )
+        score_row = get_latest_score(conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION)
         if score_row is None:
             return _error(404, "not_found", "No score on file for this geo entity yet.")
         feature_row = get_feature_row(conn, str(geo_entity["id"]))
@@ -277,13 +283,13 @@ def suggest(
 ):
     q = normalize_query(q)
     if len(q) < MIN_QUERY_LENGTH:
-        return _error(
-            400, "invalid_request", f"q must be at least {MIN_QUERY_LENGTH} characters."
-        )
+        return _error(400, "invalid_request", f"q must be at least {MIN_QUERY_LENGTH} characters.")
     try:
         suggestions = suggest_addresses(q, limit)
     except SuggestUnavailable:
-        return _error(503, "suggest_unavailable", "Address suggestions are temporarily unavailable.")
+        return _error(
+            503, "suggest_unavailable", "Address suggestions are temporarily unavailable."
+        )
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return SuggestResponse(suggestions=suggestions)
 
@@ -419,6 +425,51 @@ def get_area_explanation(
         source = "rules"
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return AreaExplanationResponse(explanation=text, source=source, area_id=area["id"])
+
+
+@app.get(
+    "/v1/improve",
+    response_model=ImproveResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}, 422: {"model": Error}},
+)
+def get_improve(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+    radius_mi: float = Query(default=1.0, gt=0, le=3, alias="radiusMi"),
+    max_suggestions: int = Query(default=3, ge=1, le=5, alias="maxSuggestions"),
+):
+    """Deterministic suggestions for the weakest place-based factors."""
+    resolved = _resolve_area(lat, lon)
+    base_row = None
+    if isinstance(resolved, JSONResponse):
+        if resolved.status_code != 404:
+            return resolved
+        # No road-bounded area here: fall back to the grid cell's own score row.
+        with get_connection() as conn:
+            geo_entity = get_geo_entity_by_geohash(conn, geohash_encode(lat, lon, precision=6))
+            if geo_entity is None:
+                min_lat, max_lat, min_lon, max_lon = bbox_around(lat, lon)
+                geo_entity = nearest_geo_entity(
+                    lat, lon, get_geo_entities_in_bbox(conn, min_lat, max_lat, min_lon, max_lon)
+                )
+            if geo_entity is not None:
+                base_row = get_latest_score(conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION)
+        if base_row is None:
+            return resolved
+    else:
+        base_row = resolved[1]
+    sub_scores = sub_scores_from_score_row(base_row).model_dump(by_alias=True)
+    composite = float(base_row["composite_score"])
+    box = search_box(lat, lon, radius_mi)
+    with get_connection() as conn:
+        cells = get_scored_cells_in_bbox(conn, *box, SCORING_WEIGHTS_VERSION)
+        result = build_improve(
+            conn, lat, lon, radius_mi, max_suggestions, sub_scores, composite, cells,
+            geohash_encode(lat, lon, precision=6),
+        )  # fmt: skip
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return result
 
 
 @app.get(

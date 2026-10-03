@@ -446,3 +446,29 @@ def get_area_aggregate(
     if row is None or not row.get("cell_count") or row.get("composite_score") is None:
         return None
     return row
+
+
+def get_scored_cells_in_bbox(
+    conn: psycopg.Connection,
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+    weights_version: str | None,
+) -> list[dict]:
+    """Latest scores row (preferring `weights_version`) for every geo_entity
+    inside a lat/lon box, with the cell's geohash/latitude/longitude. One
+    query, no per-row lookups."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select distinct on (s.geo_entity_id)
+                s.*, ge.geohash, ge.latitude, ge.longitude
+            from scores s
+            join geo_entities ge on ge.id = s.geo_entity_id
+            where ge.latitude between %s and %s and ge.longitude between %s and %s
+            order by s.geo_entity_id, (s.weights_version = %s) desc nulls last, s.computed_at desc
+            """,
+            (min_lat, max_lat, min_lon, max_lon, weights_version),
+        )
+        return [dict(r) for r in cur]
