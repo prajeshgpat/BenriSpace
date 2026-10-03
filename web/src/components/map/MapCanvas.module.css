@@ -43,6 +43,10 @@
   transform: translateY(0.1rem) rotate(-45deg);
 }
 
+.pinPreview {
+  background: #ea580c;
+}
+
 /* MapLibre positions markers with an inline transform, so emphasis cannot use one. */
 .marker[data-active="true"] {
   z-index: 2;

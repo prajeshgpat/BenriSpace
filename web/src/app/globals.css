@@ -19,6 +19,12 @@
   --positive: #1b6e3c;
   --positive-bg: #e1f3e8;
   --focus-ring: #256abf;
+  /* Quality ramp for score rings (lib/score/pillColors.ts), >= 3:1 on surfaces. */
+  --score-0: #cc3333;
+  --score-35: #c85e14;
+  --score-55: #a67b00;
+  --score-75: #4f8f1c;
+  --score-100: #1c7f35;
   --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 8px 24px rgba(11, 11, 11, 0.05);
 
   --radius-sm: 8px;
@@ -59,6 +65,11 @@
   --positive: #7fd49c;
   --positive-bg: #17301f;
   --focus-ring: #86b6ef;
+  --score-0: #ff6b61;
+  --score-35: #ff9a4a;
+  --score-55: #f5c518;
+  --score-75: #9be15d;
+  --score-100: #4cd470;
   --shadow: none;
 }
 
@@ -86,6 +97,11 @@
     --positive: #7fd49c;
     --positive-bg: #17301f;
     --focus-ring: #86b6ef;
+    --score-0: #ff6b61;
+    --score-35: #ff9a4a;
+    --score-55: #f5c518;
+    --score-75: #9be15d;
+    --score-100: #4cd470;
     --shadow: none;
   }
 }

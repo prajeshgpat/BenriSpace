@@ -22,7 +22,7 @@ import {
 } from "@/lib/map/selection";
 
 import { FactorIcon } from "@/lib/factorIcons";
-import { scoreColor } from "@/lib/map/colors";
+import { scorePillColor } from "@/lib/score/pillColors";
 import { SCORE_MAX, roundScore } from "@/lib/score/presentation";
 
 import styles from "./FactorControls.module.css";
@@ -66,7 +66,7 @@ function ScoreBadge({ value }: { value: number | null }) {
             cx="16"
             cy="16"
             r={RING_RADIUS}
-            stroke={scoreColor(rounded)}
+            stroke={scorePillColor(rounded)}
             strokeDasharray={RING_CIRCUMFERENCE}
             strokeDashoffset={RING_CIRCUMFERENCE * (1 - rounded / SCORE_MAX)}
           />

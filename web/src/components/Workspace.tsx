@@ -41,6 +41,7 @@ import {
 } from "@/lib/geolocation";
 import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
+import { originBounds, previewBounds, type Preview } from "@/lib/map/preview";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import { priorityQuery } from "@/lib/map/selection";
 import {
@@ -51,10 +52,16 @@ import {
   PLACE_ZOOM,
 } from "@/lib/map/url";
 import { bandLabel, roundScore } from "@/lib/score/presentation";
-import { APP_PATH, EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site";
+import {
+  APP_PATH,
+  EXAMPLE_ADDRESSES,
+  SITE_TITLE,
+  resultTitle,
+} from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { BottomSheet } from "./BottomSheet";
+import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
 import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
@@ -63,7 +70,9 @@ import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { BestAreas } from "./map/BestAreas";
+import { MapErrorBoundary } from "./map/MapErrorBoundary";
 import { FactorControls } from "./map/FactorControls";
+import type { AreaGeometry } from "@/lib/api/types";
 import type { FlyRequest, Viewport } from "./map/MapCanvas";
 import { MapLegend } from "./map/MapLegend";
 import { MapNotices } from "./map/MapNotices";
@@ -226,6 +235,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // fly-to moves, which would otherwise re-rank the list under their cursor.
   const [topViewport, setTopViewport] = useState<Viewport | null>(null);
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
+  // A candidate place shown on the map; it never changes the selected target.
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewArea, setPreviewArea] = useState<{
+    key: string;
+    geometry: AreaGeometry;
+  } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
 
   const [start] = useState(() => {
@@ -243,16 +258,20 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const mobile = useIsMobile();
   // Phones show the panel as a bottom sheet: collapsed until there is a place
   // to show, and back to collapsed when it is closed.
-  const [snap, setSnap] = useState<SheetSnap>(
-    initial.target ? "half" : "peek",
-  );
+  const [snap, setSnap] = useState<SheetSnap>(initial.target ? "half" : "peek");
   const [sheetKey, setSheetKey] = useState(placeKey);
   if (sheetKey !== placeKey) {
     setSheetKey(placeKey);
     setSnap(placeKey ? "half" : "peek");
   }
+  const [previewPlaceKey, setPreviewPlaceKey] = useState(placeKey);
+  if (previewPlaceKey !== placeKey) {
+    setPreviewPlaceKey(placeKey);
+    if (preview) setPreview(null);
+  }
   // Let a click on the map show the map, not the sheet covering it.
-  const revealMap = () => setSnap((current) => (current === "full" ? "half" : current));
+  const revealMap = () =>
+    setSnap((current) => (current === "full" ? "half" : current));
 
   const panelRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -279,6 +298,39 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         : null;
   const pointLat = point?.lat;
   const pointLon = point?.lon;
+
+  const previewLat = preview?.lat;
+  const previewLon = preview?.lon;
+  const previewKey =
+    previewLat === undefined || previewLon === undefined
+      ? null
+      : `${previewLat},${previewLon}`;
+  // The preview's road-bounded polygon is an upgrade over the pin: failures
+  // are ignored, and a superseded request is cancelled.
+  useEffect(() => {
+    if (
+      previewKey === null ||
+      previewLat === undefined ||
+      previewLon === undefined
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    client
+      .getAreaByCoordinates(
+        { lat: previewLat, lon: previewLon },
+        { signal: controller.signal },
+      )
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setPreviewArea({ key: previewKey, geometry: result.area.geometry });
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [client, previewKey, previewLat, previewLon]);
+  const previewGeometry =
+    previewArea && previewArea.key === previewKey ? previewArea.geometry : null;
 
   useEffect(() => {
     if (placeKey === null) {
@@ -335,6 +387,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   }, [query, preserveUrl]);
 
   function navigate(next: ScoreTarget | null) {
+    setPreview(null);
     if (next && target && targetKey(next) === targetKey(target)) {
       retry();
       if (point) {
@@ -399,18 +452,44 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     navigate(next);
   }
 
-  // Fly the map to a suggested spot and pin it as the selected location.
-  function focusPoint(lat: number, lon: number) {
-    const next: ScoreTarget = {
-      kind: "coordinates",
-      lat: roundCoordinate(lat),
-      lon: roundCoordinate(lon),
-      label: formatLatLon({ lat, lon }),
-    };
-    flownKey.current = targetKey(next);
+  // Show a suggested spot on the map without leaving the selected location.
+  function showPreview(next: Preview) {
+    setPreview(next);
+    // The sheet would cover the map the preview is meant to show.
+    setSnap("peek");
+    setFlyRequest({
+      lat: next.lat,
+      lon: next.lon,
+      nonce: Date.now(),
+      bounds: previewBounds(next, point),
+    });
+  }
+
+  function backToOrigin() {
+    setPreview(null);
+    if (!point) return;
+    setFlyRequest({
+      ...point,
+      nonce: Date.now(),
+      bounds: originBounds(
+        point,
+        state.status === "success" ? (state.area?.geometry ?? null) : null,
+      ),
+    });
+  }
+
+  // Make the previewed spot the selected location; history keeps the old one.
+  function promotePreview() {
+    if (!preview) return;
+    const lat = roundCoordinate(preview.lat);
+    const lon = roundCoordinate(preview.lon);
     setPicked(null);
-    setFlyRequest({ lat, lon, zoom: PLACE_ZOOM, nonce: Date.now() });
-    navigate(next);
+    navigate({
+      kind: "coordinates",
+      lat,
+      lon,
+      label: formatLatLon({ lat, lon }),
+    });
   }
 
   function selectTop(result: MapTopResult) {
@@ -478,7 +557,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     <>
       <div ref={searchRef} className={styles.search}>
         <AddressSearch
-          initialValue={rawAddress ?? (address ?? "")}
+          initialValue={rawAddress ?? address ?? ""}
           initialError={urlError}
           onSearch={handleSearch}
           onSelectSuggestion={handleSelectSuggestion}
@@ -562,16 +641,22 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           <>
             <ScoreSummary score={state.score} explanation={state.explanation} />
             <ImproveCard
-              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
               client={client}
               priorities={priorities}
-              onFocusPoint={focusPoint}
+              onPreview={showPreview}
             />
             <SimilarCard
-              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
               client={client}
               priorities={priorities}
-              onFocusPoint={focusPoint}
+              onPreview={showPreview}
             />
           </>
         ) : null}
@@ -601,34 +686,49 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     </div>
   ) : (
     <>
-      <MapCanvas
-        initialView={start.view}
-        cells={features}
-        markers={markers}
-        activeMarkerId={activeTop?.geohash ?? null}
-        highlightGeohash={highlightGeohash}
-        areaGeometry={state.status === "success" ? (state.area?.geometry ?? null) : null}
-        theme={theme}
-        pin={target ? point : null}
-        flyRequest={flyRequest}
-        onViewportChange={(next) => {
-          setViewport(next);
-          if (next.user) {
-            setTopViewport(next);
-            setViewShared(true);
-          } else setTopViewport((current) => current ?? next);
-        }}
-        onCellClick={(cell) => {
-          revealMap();
-          selectCell(cell);
-        }}
-        onMarkerClick={(geohash) => {
-          revealMap();
-          const result = topResults?.find((r) => r.geohash === geohash);
-          if (result) selectTop(result);
-        }}
-        onUnavailable={() => setMapUnavailable(true)}
-      />
+      <MapErrorBoundary>
+        <MapCanvas
+          initialView={start.view}
+          cells={features}
+          markers={markers}
+          activeMarkerId={activeTop?.geohash ?? null}
+          highlightGeohash={highlightGeohash}
+          areaGeometry={
+            state.status === "success" ? (state.area?.geometry ?? null) : null
+          }
+          theme={theme}
+          previewAreaGeometry={preview ? previewGeometry : null}
+          previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
+          pin={target ? point : null}
+          flyRequest={flyRequest}
+          onViewportChange={(next) => {
+            setViewport(next);
+            if (next.user) {
+              setTopViewport(next);
+              setViewShared(true);
+            } else setTopViewport((current) => current ?? next);
+          }}
+          onCellClick={(cell) => {
+            revealMap();
+            selectCell(cell);
+          }}
+          onMarkerClick={(geohash) => {
+            revealMap();
+            const result = topResults?.find((r) => r.geohash === geohash);
+            if (result) selectTop(result);
+          }}
+          onUnavailable={() => setMapUnavailable(true)}
+        />
+      </MapErrorBoundary>
+      {preview ? (
+        <PreviewCard
+          preview={preview}
+          originLabel={address}
+          onBack={backToOrigin}
+          onPromote={promotePreview}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
       {locator.unsupported ? null : (
         <div className={styles.mapLocate}>
           <LocateButton

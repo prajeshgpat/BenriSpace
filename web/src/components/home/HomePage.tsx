@@ -78,7 +78,7 @@ export function HomePage() {
       <main id="main" className={styles.main}>
         <header className={styles.hero}>
           <Backdrop />
-          <p className={styles.eyebrow}>Benri (便利) means convenient</p>
+          <p className={styles.eyebrow}>Benri (<span lang="ja" translate="no">便利</span>) means convenient</p>
           <h1 className={styles.title}>How convenient is that address?</h1>
           <p className={styles.lead}>
             A score out of 100 for any place in the New York metro area.

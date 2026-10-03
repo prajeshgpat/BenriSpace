@@ -1,3 +1,4 @@
+import { scorePillColor } from "@/lib/score/pillColors";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -155,7 +156,15 @@ describe("FactorControls score rings", () => {
 
     const grocery = screen.getByRole("checkbox", { name: /Grocery/ });
     expect(within(grocery.closest("label")!).getByTestId("factor-ring")).toHaveTextContent("98");
-    expect(grocery.closest("label")!.querySelector("circle[stroke-dasharray]")).not.toBeNull();
+    const arc = grocery.closest("label")!.querySelector("circle[stroke-dasharray]");
+    expect(arc).not.toBeNull();
+    // Quality ramp (not the map's viridis): near-top scores are blended toward green.
+    expect(arc).toHaveAttribute("stroke", scorePillColor(98));
+    expect(arc!.getAttribute("stroke")).toContain("--score-100");
+    const cafe = screen.getByRole("checkbox", { name: /Cafes/ });
+    expect(
+      cafe.closest("label")!.querySelector("circle[stroke-dasharray]"),
+    ).toHaveAttribute("stroke", scorePillColor(12));
 
     const bar = screen.getByRole("checkbox", { name: /Bars/ });
     expect(within(bar.closest("label")!).queryByTestId("factor-ring")).toBeNull();
@@ -175,6 +184,8 @@ describe("FactorControls score rings", () => {
     const ring = within(school.closest("label")!).getByTestId("factor-ring");
     expect(ring).toHaveTextContent("n/a");
     expect(ring).toHaveAttribute("data-state", "none");
+    expect(ring.querySelector("circle[stroke-dasharray='3 3']")).toBeNull();
+    expect(ring.querySelector("[stroke*='--score']")).toBeNull();
     // A factor missing from the map counts as no data too.
     expect(screen.getAllByText("n/a")).toHaveLength(2);
   });
