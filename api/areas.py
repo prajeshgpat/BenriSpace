@@ -185,8 +185,8 @@ def bounded_by_text(names: list[str]) -> str:
     return f"Area bounded by {', '.join(names[:-1])} and {names[-1]}"
 
 
-def area_explanation(sub_scores, feature_row: dict | None) -> str:
-    text = build_explanation(sub_scores, nearest_m_by_factor(feature_row))
+def area_explanation(sub_scores, feature_row: dict | None, priorities: list[str] | None = None) -> str:
+    text = build_explanation(sub_scores, nearest_m_by_factor(feature_row), priorities)
     text = text.replace("This location's", "This area's", 1)
     return text.replace("Nearest feature:", "Nearest feature from this spot:")
 

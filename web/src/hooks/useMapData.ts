@@ -7,7 +7,7 @@ import { useResource } from "@/hooks/useResource";
 import type { ApiClient } from "@/lib/api/client";
 import { EMPTY_CELLS, cellsToFeatures, scoreRange } from "@/lib/map/features";
 import {
-  isAllSelected,
+  priorityQuery,
   learnDefaults,
   resolveWeights,
   type DefaultWeights,
@@ -47,7 +47,7 @@ export function useMapData({
     () => resolveWeights(selection, defaults),
     [selection, defaults],
   );
-  const factorsParam = isAllSelected(selection) ? undefined : selection.factors;
+  const factorsParam = priorityQuery(selection, weights).factors;
   const selectionKey = `${selection.factors.join(",")}|${JSON.stringify(weights ?? {})}`;
 
   const cellBbox = useMemo(
@@ -110,5 +110,5 @@ export function useMapData({
     [top.data, noFactors],
   );
 
-  return { noFactors, cells, top, features, range, topResults };
+  return { noFactors, cells, top, features, range, topResults, weights };
 }

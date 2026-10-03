@@ -42,6 +42,7 @@ import {
 import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
+import { priorityQuery } from "@/lib/map/selection";
 import {
   explorerHref,
   initialView,
@@ -55,10 +56,11 @@ import { APP_PATH, EXAMPLE_ADDRESSES, SITE_TITLE, resultTitle } from "@/lib/site
 import { AddressSearch } from "./AddressSearch";
 import { BottomSheet } from "./BottomSheet";
 import { ImproveCard } from "./ImproveCard";
+import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
-import { ScoreResult } from "./ScoreResult";
+import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { BestAreas } from "./map/BestAreas";
 import { FactorControls } from "./map/FactorControls";
@@ -218,8 +220,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const address = readableAddress ?? (target ? targetLabel(target) : null);
   const placeKey = target ? targetKey(target) : null;
 
-  const { state, retry } = useScoreLookup(target, client);
-
   const [selection, setSelection] = useState(initial.selection);
   const [viewport, setViewport] = useState<Viewport | null>(null);
   // The best-areas list follows what the user is looking at, not the app's own
@@ -258,12 +258,18 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const searchRef = useRef<HTMLDivElement>(null);
   const flownKey = useRef<string | null>(start.key);
 
-  const { noFactors, cells, top, features, range, topResults } = useMapData({
-    client,
-    selection,
-    viewport,
-    topViewport,
-  });
+  const { noFactors, cells, top, features, range, topResults, weights } =
+    useMapData({
+      client,
+      selection,
+      viewport,
+      topViewport,
+    });
+  // The same selection the map sends, so every card talks about the factors
+  // the colours are drawn from.
+  const priorities = priorityQuery(selection, weights);
+
+  const { state, retry } = useScoreLookup(target, client, priorities);
 
   const point: LatLon | null =
     target?.kind === "coordinates"
@@ -519,39 +525,56 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
-            Close result
+            <span className="sr-only">Close result</span>
           </button>
-          {state.status === "loading" ? <ResultSkeleton /> : null}
-          {state.status === "error" ? (
-            <ErrorNotice
-              address={state.address}
-              error={state.error}
-              onRetry={retry}
-            />
-          ) : null}
-          {state.status === "success" ? (
-            <ScoreResult
-              address={readableAddress ?? state.address}
-              readableAddress={readableAddress}
-              score={state.score}
-              area={state.area}
-              explanation={state.explanation}
-            />
-          ) : null}
-          {state.status === "success" ? (
-            <ImproveCard
-              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
-              client={client}
-              onFocusPoint={focusPoint}
-            />
-          ) : null}
+          {/* Fixed-height slot: loading, success and error share it, so the
+              filters below never move when a result arrives. */}
+          <div className={styles.headerSlot}>
+            {state.status === "loading" ? <ResultSkeleton /> : null}
+            {state.status === "error" ? (
+              <ErrorNotice
+                address={state.address}
+                error={state.error}
+                onRetry={retry}
+              />
+            ) : null}
+            {state.status === "success" ? (
+              <ScoreHeader
+                address={readableAddress ?? state.address}
+                readableAddress={readableAddress}
+                score={state.score}
+                area={state.area}
+              />
+            ) : null}
+          </div>
         </section>
       ) : mobile && snap === "peek" ? null : (
         <Welcome onExample={handleSearch} />
       )}
 
       <div className={styles.controls}>
-        <FactorControls selection={selection} onChange={setSelection} />
+        <FactorControls
+          selection={selection}
+          onChange={setSelection}
+          scores={state.status === "success" ? state.score.subScores : null}
+        />
+        {state.status === "success" ? (
+          <>
+            <ScoreSummary score={state.score} explanation={state.explanation} />
+            <ImproveCard
+              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
+              client={client}
+              priorities={priorities}
+              onFocusPoint={focusPoint}
+            />
+            <SimilarCard
+              coordinates={{ lat: state.score.latitude, lon: state.score.longitude }}
+              client={client}
+              priorities={priorities}
+              onFocusPoint={focusPoint}
+            />
+          </>
+        ) : null}
         <BestAreas
           status={top.status}
           results={topResults}

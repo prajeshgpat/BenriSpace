@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
-import { ALL_FACTORS, type FactorSelection } from "@/lib/map/selection";
+import { ALL_FACTORS, createSelection, type FactorSelection } from "@/lib/map/selection";
 import { FACTOR_KEYS } from "@/lib/score/factors";
 
 import { FactorControls } from "./FactorControls";
@@ -129,5 +129,53 @@ describe("factor icons", () => {
       expect(label.firstElementChild).toBe(box);
       expect(box.nextElementSibling).toBe(svg);
     }
+  });
+});
+
+describe("FactorControls score rings", () => {
+  const SCORES = { grocery: 97.6, cafe: 12, school: null } as const;
+
+  function renderWith(selection: FactorSelection, scores: typeof SCORES | null) {
+    return render(
+      <FactorControls selection={selection} onChange={() => {}} scores={scores} />,
+    );
+  }
+
+  it("shows no rings without a result", () => {
+    renderWith(ALL_FACTORS, null);
+    expect(screen.queryAllByTestId("factor-ring")).toHaveLength(0);
+  });
+
+  it("rings only selected factors, with the number printed and the ring hidden from AT", () => {
+    renderWith(createSelection(["grocery", "cafe"]), SCORES);
+
+    const rings = screen.getAllByTestId("factor-ring");
+    expect(rings).toHaveLength(2);
+    for (const ring of rings) expect(ring).toHaveAttribute("aria-hidden", "true");
+
+    const grocery = screen.getByRole("checkbox", { name: /Grocery/ });
+    expect(within(grocery.closest("label")!).getByTestId("factor-ring")).toHaveTextContent("98");
+    expect(grocery.closest("label")!.querySelector("circle[stroke-dasharray]")).not.toBeNull();
+
+    const bar = screen.getByRole("checkbox", { name: /Bars/ });
+    expect(within(bar.closest("label")!).queryByTestId("factor-ring")).toBeNull();
+  });
+
+  it("names the score in the toggle's accessible name", () => {
+    renderWith(createSelection(["grocery"]), SCORES);
+    expect(
+      screen.getByRole("checkbox", { name: "Grocery stores, on, scored 98 out of 100" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Bars & pubs" })).toBeInTheDocument();
+  });
+
+  it("shows a muted n/a ring for a selected factor with no data", () => {
+    renderWith(createSelection(["school", "road"]), SCORES);
+    const school = screen.getByRole("checkbox", { name: /^Schools, on, no data/ });
+    const ring = within(school.closest("label")!).getByTestId("factor-ring");
+    expect(ring).toHaveTextContent("n/a");
+    expect(ring).toHaveAttribute("data-state", "none");
+    // A factor missing from the map counts as no data too.
+    expect(screen.getAllByText("n/a")).toHaveLength(2);
   });
 });

@@ -20,6 +20,7 @@ All three endpoints are unauthenticated for now per this task's scope --
 the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
 """
 
+import contextlib
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request, Response
@@ -52,7 +53,9 @@ from api.mapdata import (
     parse_bbox,
     parse_score_spec,
 )
+from api.metro_stats import get_stats
 from api.places import FACTOR_CATEGORIES, places_for_factor
+from api.priorities import parse_priorities
 from api.reverse import ReverseUnavailable
 from api.reverse import reverse as reverse_geocode
 from api.schemas import (
@@ -85,12 +88,19 @@ from common.db import (
     get_connection,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
+    get_geo_entity_by_id,
     get_latest_score,
     get_map_cells,
     get_scored_cells_in_bbox,
 )
 from common.geo import encode as geohash_encode
 from common.units import mi_to_km
+
+FACTORS_DOC = (
+    "Comma-separated factor keys the user cares about (same keys as /map/top). "
+    "Omitted means the 12 toggleable factors."
+)
+WEIGHTS_DOC = "Optional importance overrides as factor:number,... (same as /map/top)."
 
 app = FastAPI(title="BenriSpace API", version="0.5.0")
 
@@ -191,7 +201,15 @@ def get_score(
     response_model=ExplanationResponse,
     responses={404: {"model": Error}},
 )
-def get_score_explanation(geo_entity_id: UUID):
+def get_score_explanation(
+    geo_entity_id: UUID,
+    factors: str | None = Query(default=None, description=FACTORS_DOC),
+    weights: str | None = Query(default=None, description=WEIGHTS_DOC),
+):
+    try:
+        priorities = parse_priorities(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
     with get_connection() as conn:
         score_row = get_latest_score(conn, str(geo_entity_id), SCORING_WEIGHTS_VERSION)
         feature_row = get_feature_row(conn, str(geo_entity_id)) if score_row else None
@@ -203,6 +221,12 @@ def get_score_explanation(geo_entity_id: UUID):
     # metric internally and rendered in feet/miles.
     nearest_m = nearest_m_by_factor(feature_row)
     with get_connection() as conn:
+        entity = None
+        try:
+            entity = get_geo_entity_by_id(conn, str(geo_entity_id))
+        except Exception:  # noqa: BLE001 - only used for the named-places evidence
+            with contextlib.suppress(Exception):
+                conn.rollback()
         explanation = ai_explanation(
             conn,
             str(geo_entity_id),
@@ -211,10 +235,15 @@ def get_score_explanation(geo_entity_id: UUID):
             float(score_row["composite_score"]),
             "this location",
             score_row.get("weights_version") or SCORING_WEIGHTS_VERSION,
+            priorities=priorities,
+            lat=entity["latitude"] if entity else None,
+            lon=entity["longitude"] if entity else None,
         )
     source = "ai"
     if explanation is None:
-        explanation = build_explanation(sub_scores, nearest_m)
+        explanation = build_explanation(
+            sub_scores, nearest_m, priorities.factors if priorities.explicit else None
+        )
         source = "rules"
     return ExplanationResponse(
         geo_entity_id=geo_entity_id,
@@ -222,6 +251,7 @@ def get_score_explanation(geo_entity_id: UUID):
         source=source,
         computed_at=score_row["computed_at"],
         nearest_mi=nearest_mi_by_factor(feature_row),
+        priorities=priorities.factors,
     )
 
 
@@ -401,9 +431,15 @@ def get_area_explanation(
     response: Response,
     lat: float = Query(ge=-90, le=90, description="Latitude."),
     lon: float = Query(ge=-180, le=180, description="Longitude."),
+    factors: str | None = Query(default=None, description=FACTORS_DOC),
+    weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
     """AI-written explanation for the area under a point; rule-based text when
     the LLM layer is unavailable. Kept separate from /v1/area so that stays fast."""
+    try:
+        priorities = parse_priorities(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
     resolved = _resolve_area(lat, lon)
     if isinstance(resolved, JSONResponse):
         return resolved
@@ -419,13 +455,20 @@ def get_area_explanation(
             float(aggregate["composite_score"]),
             bounded_by_text(list(area.get("bounded_by") or [])),
             aggregate.get("weights_version") or SCORING_WEIGHTS_VERSION,
+            priorities=priorities,
+            lat=lat,
+            lon=lon,
         )
     source = "ai"
     if text is None:
-        text = area_explanation(sub_scores, feature_row)
+        text = area_explanation(
+            sub_scores, feature_row, priorities.factors if priorities.explicit else None
+        )
         source = "rules"
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
-    return AreaExplanationResponse(explanation=text, source=source, area_id=area["id"])
+    return AreaExplanationResponse(
+        explanation=text, source=source, area_id=area["id"], priorities=priorities.factors
+    )
 
 
 @app.get(
@@ -439,8 +482,14 @@ def get_improve(
     lon: float = Query(ge=-180, le=180, description="Longitude."),
     radius_mi: float = Query(default=1.0, gt=0, le=3, alias="radiusMi"),
     max_suggestions: int = Query(default=3, ge=1, le=5, alias="maxSuggestions"),
+    factors: str | None = Query(default=None, description=FACTORS_DOC),
+    weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
-    """Deterministic suggestions for the weakest place-based factors."""
+    """Deterministic suggestions for the weakest selected place-based factors."""
+    try:
+        priorities = parse_priorities(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
     resolved = _resolve_area(lat, lon)
     base_row = None
     if isinstance(resolved, JSONResponse):
@@ -467,7 +516,7 @@ def get_improve(
         cells = get_scored_cells_in_bbox(conn, *box, SCORING_WEIGHTS_VERSION)
         result = build_improve(
             conn, lat, lon, radius_mi, max_suggestions, sub_scores, composite, cells,
-            geohash_encode(lat, lon, precision=6),
+            geohash_encode(lat, lon, precision=6), priorities,
         )  # fmt: skip
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return result
@@ -484,8 +533,14 @@ def get_similar(
     lon: float = Query(ge=-180, le=180, description="Longitude."),
     k: int = Query(default=5, ge=1, le=10),
     min_separation_mi: float = Query(default=1.0, ge=0, le=10, alias="minSeparationMi"),
+    factors: str | None = Query(default=None, description=FACTORS_DOC),
+    weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
     """Areas with a similar factor profile (pgvector), spread out geographically."""
+    try:
+        priorities = parse_priorities(factors, weights)
+    except InvalidMapRequest as exc:
+        return _error(400, "invalid_request", str(exc))
     if not in_coverage(lat, lon):
         return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
     with get_connection() as conn:
@@ -507,9 +562,16 @@ def get_similar(
             str(geo_entity["id"]),
             SCORING_WEIGHTS_VERSION,
             geo_entity["metro_area"],
-            overfetch_limit(k),
+            overfetch_limit(k, wide=priorities.explicit),
         )
-        result = build_similar(conn, lat, lon, target, candidates, k, min_separation_mi)
+        stats = (
+            get_stats(conn, SCORING_WEIGHTS_VERSION, geo_entity["metro_area"])
+            if priorities.explicit
+            else None
+        )
+        result = build_similar(
+            conn, lat, lon, target, candidates, k, min_separation_mi, priorities, stats
+        )
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return result
 

@@ -115,6 +115,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/area/explanation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plain-language explanation for the area under a point (AI or rules).
+         * @description Separate from `/area` so that never waits on an LLM call. With `factors`, the text speaks to those priorities first.
+         */
+        get: operations["getAreaExplanation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/improve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What would raise the score nearby, for the selected factors. */
+        get: operations["getImprove"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Areas elsewhere in the metro with a similar factor profile. */
+        get: operations["getSimilar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Nearest named places for one factor. */
+        get: operations["getPlaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/map/cells": {
         parameters: {
             query?: never;
@@ -230,6 +301,9 @@ export interface components {
             nearestMi?: {
                 [key: string]: number | null;
             } | null;
+            /** @enum {string} */
+            source?: "ai" | "rules";
+            priorities?: components["schemas"]["Priorities"];
         };
         /** @description A single user-provided anchor (job, school, landmark, etc). */
         AnchorPoint: {
@@ -332,6 +406,93 @@ export interface components {
             weightsVersion: string;
             results: components["schemas"]["MapTopResult"][];
         };
+        /** @description The factors the response was computed for. */
+        Priorities: components["schemas"]["FactorKey"][];
+        AreaExplanationResponse: {
+            explanation: string;
+            /** @enum {string} */
+            source: "ai" | "rules";
+            areaId: number | null;
+            priorities?: components["schemas"]["Priorities"];
+        };
+        Place: {
+            name: string;
+            brand?: string | null;
+            category?: string;
+            distanceMi: number;
+            distanceLabel: string;
+            direction: string;
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+        };
+        PlacesResponse: {
+            factor: components["schemas"]["FactorKey"];
+            radiusMi: number;
+            places: components["schemas"]["Place"][];
+        };
+        ImproveBetterArea: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            direction: string;
+            distanceMi: number;
+            distanceLabel: string;
+            factorScore: number;
+            factorGain: number;
+            compositeScore: number;
+            compositeGain: number;
+        };
+        ImproveSuggestion: {
+            factor: components["schemas"]["FactorKey"];
+            label: string;
+            score: number;
+            places: components["schemas"]["Place"][];
+            betterArea?: components["schemas"]["ImproveBetterArea"] | null;
+            tip: string;
+        };
+        ImproveResponse: {
+            composite: number;
+            radiusMi: number;
+            suggestions: components["schemas"]["ImproveSuggestion"][];
+            bestNearby?: {
+                /** Format: double */
+                latitude: number;
+                /** Format: double */
+                longitude: number;
+                direction: string;
+                distanceLabel: string;
+                compositeScore: number;
+                compositeGain: number;
+            } | null;
+            priorities?: components["schemas"]["Priorities"];
+        };
+        SimilarDifference: {
+            factor: components["schemas"]["FactorKey"];
+            label: string;
+            /** @description Signed; positive means the similar area scores higher. */
+            delta: number;
+        };
+        SimilarResult: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            direction: string;
+            distanceLabel: string;
+            similarity: number;
+            compositeScore: number;
+            areaLabel?: string | null;
+            differences: components["schemas"]["SimilarDifference"][];
+            summary: string;
+        };
+        SimilarResponse: {
+            minSeparationMi: number;
+            results: components["schemas"]["SimilarResult"][];
+            priorities?: components["schemas"]["Priorities"];
+        };
     };
     responses: {
         /** @description Missing or invalid session token / API key. */
@@ -358,7 +519,12 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+        PriorityFactors: string;
+        /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
+        PriorityWeights: string;
+    };
     requestBodies: never;
     headers: {
         /** @description Requests allowed in the current window for this account's tier. */
@@ -472,7 +638,12 @@ export interface operations {
     };
     getScoreExplanation: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                factors?: components["parameters"]["PriorityFactors"];
+                /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
+                weights?: components["parameters"]["PriorityWeights"];
+            };
             header?: never;
             path: {
                 geoEntityId: string;
@@ -622,6 +793,225 @@ export interface operations {
             };
             /** @description The geocoding provider is unavailable. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAreaExplanation: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                factors?: components["parameters"]["PriorityFactors"];
+                /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
+                weights?: components["parameters"]["PriorityWeights"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AreaExplanationResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Nothing found for this point. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Point outside the coverage area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getImprove: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                radiusMi?: number;
+                maxSuggestions?: number;
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                factors?: components["parameters"]["PriorityFactors"];
+                /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
+                weights?: components["parameters"]["PriorityWeights"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImproveResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Nothing found for this point. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Point outside the coverage area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSimilar: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                k?: number;
+                minSeparationMi?: number;
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                factors?: components["parameters"]["PriorityFactors"];
+                /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
+                weights?: components["parameters"]["PriorityWeights"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Nothing found for this point. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Point outside the coverage area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getPlaces: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                factor: components["schemas"]["FactorKey"];
+                radiusMi?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacesResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Nothing found for this point. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Point outside the coverage area. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -68,6 +68,18 @@
   white-space: nowrap;
 }
 
+/* On phones the hint is read by screen readers only, so the filters fit at half. */
+@media (max-width: 56.1875rem) {
+  .search p[id$="-hint"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .placeholder {
   display: grid;
   flex: 1;
@@ -165,12 +177,26 @@
   cursor: pointer;
 }
 
-/* On a finished card the button shares the eyebrow's row instead of adding one. */
-.result[data-state="success"] .close {
+/* Close sits in the header's corner in every state, so it never adds a row. */
+.close {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  min-height: 2.5rem;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 1;
+  justify-self: auto;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  justify-content: center;
+}
+
+/* Reserved so skeleton, score and error occupy the same box. */
+.headerSlot {
+  display: grid;
+  min-height: 8.5rem;
+}
+
+.headerSlot > * {
+  min-height: 100%;
 }
 
 .close:hover {

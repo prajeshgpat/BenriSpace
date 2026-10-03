@@ -2,6 +2,7 @@
 Pure functions over already-fetched rows; distances are imperial on the wire."""
 
 from api.places import places_for_factor
+from api.priorities import TOGGLEABLE_FACTORS, Priorities
 from common.geo import haversine_m
 from common.places import bbox_around, compass
 from common.units import M_PER_MI, format_distance, m_to_mi
@@ -20,8 +21,9 @@ IMPROVABLE: dict[str, tuple[str, str]] = {
     "bar": ("bar_score", "Bar"),
     "transit": ("transit_score", "Transit"),
     "school": ("school_score", "School"),
-    "premiumRetail": ("premium_retail_score", "Premium retail"),
 }
+# premiumRetail is an underlying metric with no toggle of its own, so it is never
+# suggested as a pill; it only feeds the composite.
 
 _WORDS = {
     "N": "north", "NE": "northeast", "E": "east", "SE": "southeast",
@@ -29,16 +31,32 @@ _WORDS = {
 }  # fmt: skip
 
 
-def weak_factors(sub_scores: dict, limit: int) -> list[tuple[str, float]]:
+def weak_factors(
+    sub_scores: dict, limit: int, selected: list[str] | None = None
+) -> list[tuple[str, float]]:
     """Lowest-scoring improvable factors below WEAK_BELOW, ascending (ties
-    keep IMPROVABLE order). `sub_scores` maps wire keys to scores."""
+    keep IMPROVABLE order). `sub_scores` maps wire keys to scores; `selected`
+    (wire keys) restricts the candidates, None means no restriction."""
     weak = [
         (key, float(sub_scores[key]))
         for key in IMPROVABLE
-        if sub_scores.get(key) is not None and float(sub_scores[key]) < WEAK_BELOW
+        if (selected is None or key in selected)
+        and sub_scores.get(key) is not None
+        and float(sub_scores[key]) < WEAK_BELOW
     ]
     weak.sort(key=lambda item: item[1])  # stable
     return weak[:limit]
+
+
+def _with_selected_composite(cells: list[dict], priorities: Priorities) -> list[dict]:
+    """Cells with composite_score replaced by the selected-factor composite
+    (cells with no selected score are dropped)."""
+    out = []
+    for cell in cells:
+        value = priorities.composite_from_columns(cell)
+        if value is not None:
+            out.append({**cell, "composite_score": value})
+    return out
 
 
 def neighbour_cells(cells: list[dict], lat: float, lon: float, radius_mi: float, own_geohash: str):
@@ -129,10 +147,21 @@ def build_improve(
     composite: float,
     cells,
     own_geohash,
+    priorities: Priorities | None = None,
 ) -> dict:
+    """With an explicit `priorities`, only selected factors can be suggested and
+    the composite (the area's and every neighbour cell's) is the weighted
+    average over the selected factors; otherwise the stored composites are used."""
+    selected = None
+    if priorities is not None:
+        selected = priorities.factors
+        if priorities.explicit:
+            own = priorities.composite_from_keys(sub_scores)
+            composite = composite if own is None else round(own, 1)
+            cells = _with_selected_composite(cells, priorities)
     neighbours = neighbour_cells(cells, lat, lon, radius_mi, own_geohash)
     suggestions = []
-    for rank, (key, score) in enumerate(weak_factors(sub_scores, max_suggestions)):
+    for rank, (key, score) in enumerate(weak_factors(sub_scores, max_suggestions, selected)):
         column, label = IMPROVABLE[key]
         places = [
             {
@@ -165,6 +194,7 @@ def build_improve(
         "radius_mi": radius_mi,
         "suggestions": suggestions,
         "best_nearby": best_nearby(neighbours, lat, lon, composite),
+        "priorities": list(selected if selected is not None else TOGGLEABLE_FACTORS),
     }
 
 

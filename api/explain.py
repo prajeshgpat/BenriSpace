@@ -16,6 +16,8 @@ ExplanationResponse, so this is a one-file replacement, not a route
 rewrite.
 """
 
+import re
+
 from api.schemas import SubScores
 from common.units import format_distance, m_to_mi
 
@@ -82,8 +84,29 @@ FACTOR_LABELS: dict[str, str] = {
 }
 
 
+def _priority_sentence(values: dict[str, float], priorities: list[str]) -> str | None:
+    """Lead sentence naming the user's strongest and weakest selected factors."""
+    chosen = {to_snake(k): values[to_snake(k)] for k in priorities if to_snake(k) in values}
+    if not chosen:
+        return None
+    best, worst = max(chosen, key=chosen.get), min(chosen, key=chosen.get)
+    if best == worst:
+        return f"For your priorities, {FACTOR_LABELS.get(best, best)} scores {chosen[best]:.0f}/100."
+    return (
+        f"For your priorities, {FACTOR_LABELS.get(best, best)} is strongest "
+        f"({chosen[best]:.0f}/100) and {FACTOR_LABELS.get(worst, worst)} is weakest "
+        f"({chosen[worst]:.0f}/100)."
+    )
+
+
+def to_snake(camel: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", camel).lower()
+
+
 def build_explanation(
-    sub_scores: SubScores, nearest_m: dict[str, float | None] | None = None
+    sub_scores: SubScores,
+    nearest_m: dict[str, float | None] | None = None,
+    priorities: list[str] | None = None,
 ) -> str:
     """Rule-based explanation: calls out the strongest and weakest
     normalized sub-scores by name, then lists the rest. All SubScores
@@ -105,7 +128,12 @@ def build_explanation(
     best_label, best_value = FACTOR_LABELS.get(best_field, best_field), values[best_field]
     worst_label, worst_value = FACTOR_LABELS.get(worst_field, worst_field), values[worst_field]
 
-    sentences = [f"This location's strongest factor is {best_label} ({best_value:.0f}/100)."]
+    sentences = []
+    if priorities:
+        lead = _priority_sentence(values, priorities)
+        if lead:
+            sentences.append(lead)
+    sentences += [f"This location's strongest factor is {best_label} ({best_value:.0f}/100)."]
     if worst_field != best_field:
         sentences.append(f"Its weakest factor is {worst_label} ({worst_value:.0f}/100).")
 

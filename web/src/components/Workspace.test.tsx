@@ -150,6 +150,9 @@ function setup(
     getImprove: vi.fn(async () => {
       throw new Error("improve unavailable");
     }),
+    getSimilar: vi.fn(async () => {
+      throw new Error("similar unavailable");
+    }),
     ...overrides,
   };
   return {
@@ -254,7 +257,15 @@ describe("Workspace: scoring an address", () => {
       await screen.findByRole("heading", { level: 2, name: "350 5th Ave, New York, NY" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("composite-score")).toHaveTextContent("63");
-    expect(screen.getAllByText("No data")).toHaveLength(11);
+    // Selected filters show their score (or a muted n/a ring); others show none.
+    expect(
+      screen.getByRole("checkbox", { name: /^Grocery stores, on, no data/ }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByTestId("factor-ring")).toHaveLength(12);
+    expect(screen.queryByText("No data")).not.toBeInTheDocument();
+    expect(screen.queryByText("Factor breakdown")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Weights/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/grid squares?/)).not.toBeInTheDocument();
     expect(
       await screen.findByText(/strongest factor is airport drive time/),
     ).toBeInTheDocument();
@@ -263,6 +274,26 @@ describe("Workspace: scoring an address", () => {
     );
     expect(document.title).toBe("350 5th Ave, New York, NY · BenriSpace");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves the header slot while loading and when loaded, with the filters after it", async () => {
+    setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
+
+    const slot = () => screen.getByTestId("result-skeleton").closest("div[class*=headerSlot]");
+    const loadingSlot = slot();
+    expect(loadingSlot).not.toBeNull();
+    const filters = screen.getByRole("heading", { name: "Factors" });
+    expect(
+      loadingSlot!.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const score = await screen.findByTestId("composite-score");
+    expect(score.closest("div[class*=headerSlot]")).toBe(loadingSlot);
+    // Summary comes after the filters, not before.
+    const summary = await screen.findByRole("heading", { name: "Summary" });
+    expect(
+      filters.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows the out-of-coverage state for a 404, with no retry", async () => {
@@ -1067,7 +1098,7 @@ describe("area polygon", () => {
 
   it("re-resolves the area for a shared coordinates URL", async () => {
     setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
-    expect(await screen.findByTestId("area-note")).toBeInTheDocument();
+    expect(await screen.findByText(/^Area bounded by/)).toBeInTheDocument();
     expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
   });
 
@@ -1087,10 +1118,76 @@ describe("area polygon", () => {
   it("clears the polygon when the result is closed", async () => {
     const user = userEvent.setup();
     setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
-    await screen.findByTestId("area-note");
+    await screen.findByText(/^Area bounded by/);
 
     await user.click(screen.getByRole("button", { name: "Close result" }));
 
     expect(map().areaGeometry ?? null).toBeNull();
+  });
+});
+
+describe("selection reaches the point endpoints", () => {
+  const improveBody = { composite: 60, radiusMi: 1, suggestions: [], bestNearby: null, priorities: [] };
+  const similarBody = {
+    minSeparationMi: 1,
+    priorities: [],
+    results: [
+      {
+        latitude: 40.8,
+        longitude: -74,
+        direction: "N",
+        distanceLabel: "3 mi",
+        similarity: 90,
+        compositeScore: 70,
+        areaLabel: "Area bounded by Test Rd",
+        differences: [{ factor: "transit" as const, label: "transit", delta: 8 }],
+        summary: "",
+      },
+    ],
+  };
+
+  function setupPoint() {
+    const getImprove = vi.fn<ApiClient["getImprove"]>(async () => improveBody);
+    const getSimilar = vi.fn<ApiClient["getSimilar"]>(async () => similarBody);
+    const getAreaExplanation = vi.fn<ApiClient["getAreaExplanation"]>(async () => ({
+      explanation: "AI text.",
+      source: "ai",
+      areaId: 1,
+      priorities: [],
+    }));
+    const rendered = setup(
+      "lat=40.7&lon=-74",
+      liveApi,
+      { getImprove, getSimilar, getAreaExplanation },
+      () => jsonResponse(makeAreaBody()),
+    );
+    return { getImprove, getSimilar, getAreaExplanation, ...rendered };
+  }
+
+  it("omits factors while all are selected, then sends the narrowed list once", async () => {
+    const user = userEvent.setup();
+    const { getImprove, getSimilar, getAreaExplanation } = setupPoint();
+
+    expect(await screen.findByText("Similar areas")).toBeInTheDocument();
+    await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(1));
+    for (const call of [getImprove.mock.calls[0], getSimilar.mock.calls[0], getAreaExplanation.mock.calls[0]]) {
+      expect((call[2] as { factors?: unknown }).factors).toBeUndefined();
+    }
+    expect(screen.getByRole("button", { name: "Show similar area 1 on map" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /Cafes/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Gyms/ }));
+
+    await waitFor(() => expect(getSimilar).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    expect(getSimilar.mock.calls[1][2]).toMatchObject({
+      factors: expect.not.arrayContaining(["cafe", "gym"]),
+    });
+    expect((getSimilar.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(10);
+    await waitFor(() => expect(getImprove).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(2));
+    expect(getImprove.mock.calls[1][2]).toMatchObject({ factors: expect.any(Array) });
+    expect((getAreaExplanation.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(10);
+    // Two toggles, one request each.
+    expect(getSimilar).toHaveBeenCalledTimes(2);
   });
 });

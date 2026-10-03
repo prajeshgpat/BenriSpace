@@ -8,9 +8,12 @@ import {
   activePresetId,
   applyPreset,
   createSelection,
+  hasNoFactors,
   importanceOf,
   isAllSelected,
   learnDefaults,
+  priorityKey,
+  priorityQuery,
   resolveWeights,
   setImportance,
   toggleFactor,
@@ -134,5 +137,26 @@ describe("learnDefaults", () => {
 
   it("ignores unknown keys and non-positive weights", () => {
     expect(learnDefaults({}, { bogus: 1, gym: 0 }, undefined)).toEqual({});
+  });
+});
+
+describe("priorityQuery", () => {
+  it("omits factors when all are selected and keeps them otherwise", () => {
+    expect(priorityQuery(ALL_FACTORS, undefined).factors).toBeUndefined();
+    const some = createSelection(["transit", "cafe"]);
+    expect(priorityQuery(some, { transit: 2 })).toEqual({
+      factors: some.factors,
+      weights: { transit: 2 },
+    });
+  });
+
+  it("keys equal queries equally and flags an empty selection", () => {
+    expect(priorityKey({})).toBe(priorityKey({ factors: undefined, weights: undefined }));
+    expect(priorityKey({ factors: ["cafe"] })).not.toBe(priorityKey({}));
+    expect(priorityKey({ weights: { cafe: 1, grocery: 2 } })).toBe(
+      priorityKey({ weights: { grocery: 2, cafe: 1 } }),
+    );
+    expect(hasNoFactors({ factors: [] })).toBe(true);
+    expect(hasNoFactors({})).toBe(false);
   });
 });

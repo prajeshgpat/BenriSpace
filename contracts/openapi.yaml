@@ -133,6 +133,8 @@ paths:
           schema:
             type: string
             format: uuid
+        - $ref: "#/components/parameters/PriorityFactors"
+        - $ref: "#/components/parameters/PriorityWeights"
       responses:
         "200":
           description: Explanation generated from the stored factor breakdown.
@@ -297,6 +299,194 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: The geocoding provider is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /area/explanation:
+    get:
+      summary: Plain-language explanation for the area under a point (AI or rules).
+      description: >
+        Separate from `/area` so that never waits on an LLM call. With
+        `factors`, the text speaks to those priorities first.
+      operationId: getAreaExplanation
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - $ref: "#/components/parameters/PriorityFactors"
+        - $ref: "#/components/parameters/PriorityWeights"
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AreaExplanationResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Nothing found for this point.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Point outside the coverage area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /improve:
+    get:
+      summary: What would raise the score nearby, for the selected factors.
+      operationId: getImprove
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: radiusMi
+          in: query
+          schema: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 3, default: 1 }
+        - name: maxSuggestions
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 5, default: 3 }
+        - $ref: "#/components/parameters/PriorityFactors"
+        - $ref: "#/components/parameters/PriorityWeights"
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImproveResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Nothing found for this point.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Point outside the coverage area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /similar:
+    get:
+      summary: Areas elsewhere in the metro with a similar factor profile.
+      operationId: getSimilar
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: k
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10, default: 5 }
+        - name: minSeparationMi
+          in: query
+          schema: { type: number, minimum: 0, maximum: 10, default: 1 }
+        - $ref: "#/components/parameters/PriorityFactors"
+        - $ref: "#/components/parameters/PriorityWeights"
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimilarResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Nothing found for this point.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Point outside the coverage area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /places:
+    get:
+      summary: Nearest named places for one factor.
+      operationId: getPlaces
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: lon
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: factor
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/FactorKey"
+        - name: radiusMi
+          in: query
+          schema: { type: number, exclusiveMinimum: true, minimum: 0, maximum: 5, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+      responses:
+        "200":
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlacesResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Nothing found for this point.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Point outside the coverage area.
           content:
             application/json:
               schema:
@@ -473,6 +663,24 @@ components:
       description: >
         Business-tier programmatic access. Key is account-scoped and hashed
         at rest (see `api_keys` table, Phase 4).
+
+  parameters:
+    PriorityFactors:
+      name: factors
+      in: query
+      description: >
+        Comma-separated factors the user cares about (see `FactorKey`).
+        Omit for the 12 toggleable factors. Must not be empty if present.
+      schema:
+        type: string
+        example: "grocery,transit,cafe"
+    PriorityWeights:
+      name: weights
+      in: query
+      description: Optional `factor:weight` importance overrides, as in `/map/cells`.
+      schema:
+        type: string
+        example: "transit:2,cafe:0.5"
 
   headers:
     RateLimitLimit:
@@ -651,6 +859,11 @@ components:
           additionalProperties:
             type: number
             nullable: true
+        source:
+          type: string
+          enum: [ai, rules]
+        priorities:
+          $ref: "#/components/schemas/Priorities"
 
     AnchorPoint:
       type: object
@@ -859,3 +1072,145 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MapTopResult"
+
+    Priorities:
+      type: array
+      description: The factors the response was computed for.
+      items:
+        $ref: "#/components/schemas/FactorKey"
+
+    AreaExplanationResponse:
+      type: object
+      required: [explanation, source, areaId]
+      properties:
+        explanation:
+          type: string
+        source:
+          type: string
+          enum: [ai, rules]
+        areaId:
+          type: integer
+          nullable: true
+        priorities:
+          $ref: "#/components/schemas/Priorities"
+
+    Place:
+      type: object
+      required: [name, distanceMi, distanceLabel, direction, latitude, longitude]
+      properties:
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        category: { type: string }
+        distanceMi: { type: number }
+        distanceLabel: { type: string }
+        direction: { type: string }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+
+    PlacesResponse:
+      type: object
+      required: [factor, radiusMi, places]
+      properties:
+        factor:
+          $ref: "#/components/schemas/FactorKey"
+        radiusMi: { type: number }
+        places:
+          type: array
+          items:
+            $ref: "#/components/schemas/Place"
+
+    ImproveBetterArea:
+      type: object
+      required: [latitude, longitude, direction, distanceMi, distanceLabel, factorScore, factorGain, compositeScore, compositeGain]
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        direction: { type: string }
+        distanceMi: { type: number }
+        distanceLabel: { type: string }
+        factorScore: { type: number }
+        factorGain: { type: number }
+        compositeScore: { type: number }
+        compositeGain: { type: number }
+
+    ImproveSuggestion:
+      type: object
+      required: [factor, label, score, places, tip]
+      properties:
+        factor:
+          $ref: "#/components/schemas/FactorKey"
+        label: { type: string }
+        score: { type: number }
+        places:
+          type: array
+          items:
+            $ref: "#/components/schemas/Place"
+        betterArea:
+          allOf:
+            - $ref: "#/components/schemas/ImproveBetterArea"
+          nullable: true
+        tip: { type: string }
+
+    ImproveResponse:
+      type: object
+      required: [composite, radiusMi, suggestions]
+      properties:
+        composite: { type: number }
+        radiusMi: { type: number }
+        suggestions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImproveSuggestion"
+        bestNearby:
+          type: object
+          nullable: true
+          required: [latitude, longitude, direction, distanceLabel, compositeScore, compositeGain]
+          properties:
+            latitude: { type: number, format: double }
+            longitude: { type: number, format: double }
+            direction: { type: string }
+            distanceLabel: { type: string }
+            compositeScore: { type: number }
+            compositeGain: { type: number }
+        priorities:
+          $ref: "#/components/schemas/Priorities"
+
+    SimilarDifference:
+      type: object
+      required: [factor, label, delta]
+      properties:
+        factor:
+          $ref: "#/components/schemas/FactorKey"
+        label: { type: string }
+        delta:
+          type: number
+          description: Signed; positive means the similar area scores higher.
+
+    SimilarResult:
+      type: object
+      required: [latitude, longitude, direction, distanceLabel, similarity, compositeScore, differences, summary]
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        direction: { type: string }
+        distanceLabel: { type: string }
+        similarity: { type: number, minimum: 0, maximum: 100 }
+        compositeScore: { type: number }
+        areaLabel: { type: string, nullable: true }
+        differences:
+          type: array
+          items:
+            $ref: "#/components/schemas/SimilarDifference"
+        summary: { type: string }
+
+    SimilarResponse:
+      type: object
+      required: [minSeparationMi, results]
+      properties:
+        minSeparationMi: { type: number }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SimilarResult"
+        priorities:
+          $ref: "#/components/schemas/Priorities"

@@ -30,6 +30,8 @@ export interface AreaExplanation {
   explanation: string;
   source: ExplanationSource;
   areaId: number | null;
+  /** The factors the text was written for; empty when the API did not say. */
+  priorities: FactorKey[];
 }
 
 export interface ImprovePlace {
@@ -78,6 +80,39 @@ export interface Improve {
   radiusMi: number;
   suggestions: ImproveSuggestion[];
   bestNearby: ImproveBestNearby | null;
+  priorities: FactorKey[];
+}
+
+/** The user's selection as the API takes it. `factors` is omitted for all 12. */
+export interface PriorityQuery {
+  factors?: readonly FactorKey[];
+  weights?: Readonly<Partial<Record<FactorKey, number>>>;
+}
+
+export interface SimilarDifference {
+  factor: FactorKey;
+  label: string;
+  /** Signed; positive means the similar area scores higher. */
+  delta: number;
+}
+
+export interface SimilarArea {
+  latitude: number;
+  longitude: number;
+  direction: string;
+  distanceLabel: string;
+  /** 0 to 100. */
+  similarity: number;
+  compositeScore: number;
+  areaLabel: string | null;
+  differences: SimilarDifference[];
+  summary: string;
+}
+
+export interface Similar {
+  minSeparationMi: number;
+  results: SimilarArea[];
+  priorities: FactorKey[];
 }
 
 export type ApiErrorBody = Schemas["Error"];

@@ -214,7 +214,7 @@ describe("useScoreLookup", () => {
     });
 
     describe("AI explanation upgrade", () => {
-      const aiBody = { explanation: "AI text.", source: "ai", areaId: 7 } as const;
+      const aiBody = { explanation: "AI text.", source: "ai", areaId: 7, priorities: [] as never[] } as const;
 
       it("shows the rules text at once, then swaps in the AI text", async () => {
         const ai = deferred<AreaExplanation>();
@@ -233,7 +233,7 @@ describe("useScoreLookup", () => {
         expect(client.getAreaExplanation).toHaveBeenCalledWith(
           40.725,
           -73.995,
-          expect.any(AbortSignal),
+          expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
 
         await act(async () => ai.resolve(aiBody));
@@ -362,5 +362,114 @@ describe("useScoreLookup", () => {
       await waitFor(() => expect(result.current.state.status).toBe("success"));
       expect(client.getAreaByCoordinates).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("useScoreLookup: explanation follows the selected factors", () => {
+  const click: ScoreTarget = { kind: "coordinates", lat: 40.725, lon: -73.995, label: "x" };
+  const ai = (text: string): AreaExplanation => ({
+    explanation: text,
+    source: "ai",
+    areaId: 7,
+    priorities: [],
+  });
+
+  it("re-requests only the explanation, debounced, keeping the old text marked updating", async () => {
+    vi.useFakeTimers();
+    try {
+      const next = deferred<AreaExplanation>();
+      const getAreaExplanation = vi
+        .fn<ApiClient["getAreaExplanation"]>()
+        .mockResolvedValueOnce(ai("All factors text."))
+        .mockReturnValueOnce(next.promise);
+      const client = makeClient({
+        getAreaByCoordinates: vi.fn(async () => makeAreaScore()),
+        getAreaExplanation,
+      });
+      const { result, rerender } = renderHook(
+        ({ factors }: { factors?: ("transit" | "cafe")[] }) =>
+          useScoreLookup(click, client, { factors }),
+        { initialProps: { factors: undefined as ("transit" | "cafe")[] | undefined } },
+      );
+      await act(async () => {});
+      expect(result.current.state).toMatchObject({
+        explanation: { text: "All factors text.", explanationSource: "ai" },
+      });
+
+      rerender({ factors: ["transit"] });
+      act(() => vi.advanceTimersByTime(200));
+      rerender({ factors: ["transit", "cafe"] });
+      act(() => vi.advanceTimersByTime(399));
+      expect(getAreaExplanation).toHaveBeenCalledTimes(1);
+      expect(result.current.state).toMatchObject({
+        explanation: { text: "All factors text.", updating: true },
+      });
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(getAreaExplanation).toHaveBeenCalledTimes(2);
+      expect(getAreaExplanation.mock.calls[1][2]).toMatchObject({ factors: ["transit", "cafe"] });
+      // Still the previous AI text, not the rules text.
+      expect(result.current.state).toMatchObject({
+        explanation: { text: "All factors text.", explanationSource: "ai", updating: true },
+      });
+
+      await act(async () => next.resolve(ai("Transit and cafe text.")));
+      const state = result.current.state;
+      expect(state).toMatchObject({
+        explanation: { text: "Transit and cafe text.", explanationSource: "ai" },
+      });
+      expect(state.status === "success" && state.explanation).not.toHaveProperty("updating");
+      expect(client.getAreaByCoordinates).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses priority-aware rules text for a narrowed selection, but not the default", async () => {
+    vi.useFakeTimers();
+    try {
+      const rules = (text: string): AreaExplanation => ({
+        explanation: text,
+        source: "rules",
+        areaId: 7,
+        priorities: [],
+      });
+      const client = makeClient({
+        getAreaByCoordinates: vi.fn(async () => makeAreaScore()),
+        getAreaExplanation: vi
+          .fn<ApiClient["getAreaExplanation"]>()
+          .mockResolvedValueOnce(rules("Default rules from the AI endpoint."))
+          .mockResolvedValueOnce(rules("Rules about transit.")),
+      });
+      const area = makeAreaScore();
+      const { result, rerender } = renderHook(
+        ({ factors }: { factors?: "transit"[] }) => useScoreLookup(click, client, { factors }),
+        { initialProps: { factors: undefined as "transit"[] | undefined } },
+      );
+      await act(async () => {});
+      expect(result.current.state).toMatchObject({ explanation: { text: area.explanation } });
+
+      rerender({ factors: ["transit"] });
+      await act(async () => vi.advanceTimersByTime(400));
+      expect(result.current.state).toMatchObject({
+        explanation: { text: "Rules about transit.", explanationSource: "rules" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("passes the selection to the grid-square explanation too", async () => {
+    const client = makeClient({
+      getAreaByCoordinates: vi.fn(async () => Promise.reject(new ApiError("not-found", "n"))),
+    });
+    renderHook(() =>
+      useScoreLookup(click, client, { factors: ["transit"], weights: { transit: 2 } }),
+    );
+    await waitFor(() => expect(client.getScoreExplanation).toHaveBeenCalled());
+    expect(client.getScoreExplanation).toHaveBeenCalledWith(
+      makeScore().geoEntityId,
+      expect.objectContaining({ factors: ["transit"], weights: { transit: 2 } }),
+    );
   });
 });

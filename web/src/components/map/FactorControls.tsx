@@ -22,6 +22,8 @@ import {
 } from "@/lib/map/selection";
 
 import { FactorIcon } from "@/lib/factorIcons";
+import { scoreColor } from "@/lib/map/colors";
+import { SCORE_MAX, roundScore } from "@/lib/score/presentation";
 
 import styles from "./FactorControls.module.css";
 
@@ -33,12 +35,53 @@ const IMPORTANCE_LABELS: Record<Importance, string> = {
 
 const GROUPS = Object.keys(FACTOR_GROUPS) as FactorGroup[];
 
+/** Per-factor 0-100 scores for the place on screen; `null` means no data there. */
+export type FactorScores = Partial<Record<FactorKey, number | null>>;
+
 interface FactorControlsProps {
   selection: FactorSelection;
   onChange: (selection: FactorSelection) => void;
+  /** When set, each selected factor shows its score on its toggle. */
+  scores?: FactorScores | null;
 }
 
-export function FactorControls({ selection, onChange }: FactorControlsProps) {
+const RING_RADIUS = 14;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+/** Decorative score ring; the number is also in the toggle's accessible name. */
+function ScoreBadge({ value }: { value: number | null }) {
+  const rounded = value === null ? null : roundScore(value);
+  return (
+    <span
+      className={styles.badge}
+      data-testid="factor-ring"
+      data-state={rounded === null ? "none" : "scored"}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 32 32" focusable="false">
+        <circle className={styles.badgeTrack} cx="16" cy="16" r={RING_RADIUS} />
+        {rounded !== null && rounded > 0 ? (
+          <circle
+            className={styles.badgeFill}
+            cx="16"
+            cy="16"
+            r={RING_RADIUS}
+            stroke={scoreColor(rounded)}
+            strokeDasharray={RING_CIRCUMFERENCE}
+            strokeDashoffset={RING_CIRCUMFERENCE * (1 - rounded / SCORE_MAX)}
+          />
+        ) : null}
+      </svg>
+      <span className={styles.badgeValue}>{rounded ?? "n/a"}</span>
+    </span>
+  );
+}
+
+export function FactorControls({
+  selection,
+  onChange,
+  scores = null,
+}: FactorControlsProps) {
   const preset = activePresetId(selection);
   const allOn = selection.factors.length === FACTOR_KEYS.length;
   const noneOn = selection.factors.length === 0;
@@ -100,21 +143,36 @@ export function FactorControls({ selection, onChange }: FactorControlsProps) {
             <legend className={styles.legend}>{FACTOR_GROUPS[group]}</legend>
             <div className={styles.chips}>
               {FACTOR_KEYS.filter((key) => FACTORS[key].group === group).map(
-                (key) => (
-                  <label
-                    key={key}
-                    className={styles.toggle}
-                    title={FACTORS[key].description}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selection.factors.includes(key)}
-                      onChange={() => onChange(toggleFactor(selection, key))}
-                    />
-                    <FactorIcon factor={key} className={styles.icon} />
-                    <span>{FACTORS[key].label}</span>
-                  </label>
-                ),
+                (key) => {
+                  const on = selection.factors.includes(key);
+                  const shown = scores !== null && on;
+                  const value = scores?.[key] ?? null;
+                  return (
+                    <label
+                      key={key}
+                      className={styles.toggle}
+                      title={FACTORS[key].description}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => onChange(toggleFactor(selection, key))}
+                      />
+                      <FactorIcon factor={key} className={styles.icon} />
+                      <span className={styles.name}>{FACTORS[key].label}</span>
+                      {shown ? (
+                        <>
+                          <span className="sr-only">
+                            {value === null
+                              ? ", on, no data for this place"
+                              : `, on, scored ${roundScore(value)} out of ${SCORE_MAX}`}
+                          </span>
+                          <ScoreBadge value={value} />
+                        </>
+                      ) : null}
+                    </label>
+                  );
+                },
               )}
             </div>
           </fieldset>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -134,9 +134,20 @@ describe("BottomSheet", () => {
         value: scrollTop,
         configurable: true,
       });
-      fireEvent.touchStart(body(), { touches: [{ clientY: startY }] });
-      fireEvent.touchMove(body(), { touches: [{ clientY: endY }] });
-      fireEvent.touchEnd(body(), { changedTouches: [{ clientY: endY }] });
+      // Explicit timestamps: a slow, deliberate swipe (about 0.2 px per ms, no flick): the release velocity must not depend on how fast
+      // the test machine happens to dispatch three events.
+      const dispatch = (
+        make: typeof createEvent.touchStart,
+        init: object,
+        timeStamp: number,
+      ) => {
+        const event = make(body(), init);
+        Object.defineProperty(event, "timeStamp", { value: timeStamp });
+        fireEvent(body(), event);
+      };
+      dispatch(createEvent.touchStart, { touches: [{ clientY: startY }] }, 0);
+      dispatch(createEvent.touchMove, { touches: [{ clientY: endY }] }, 2000);
+      dispatch(createEvent.touchEnd, { changedTouches: [{ clientY: endY }] }, 2020);
     }
 
     it("shrinks the sheet when the body is scrolled to the top", () => {

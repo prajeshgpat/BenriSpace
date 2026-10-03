@@ -208,6 +208,20 @@ def get_geo_entity_by_geohash(conn: psycopg.Connection, geohash: str) -> dict | 
         return cur.fetchone()
 
 
+def get_geo_entity_by_id(conn: psycopg.Connection, geo_entity_id: str) -> dict | None:
+    """One grid cell by primary key (None when unknown)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, geohash, latitude, longitude, formatted_address, metro_area
+            from geo_entities
+            where id = %s
+            """,
+            (geo_entity_id,),
+        )
+        return cur.fetchone()
+
+
 def get_geo_entities_in_bbox(
     conn: psycopg.Connection, min_lat: float, max_lat: float, min_lon: float, max_lon: float
 ) -> list[dict]:
