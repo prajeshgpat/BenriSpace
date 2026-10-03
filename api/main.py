@@ -44,6 +44,7 @@ from api.mapdata import (
     parse_bbox,
     parse_score_spec,
 )
+from api.places import FACTOR_CATEGORIES, places_for_factor
 from api.reverse import ReverseUnavailable
 from api.reverse import reverse as reverse_geocode
 from api.schemas import (
@@ -53,6 +54,7 @@ from api.schemas import (
     ExplanationResponse,
     MapCellsResponse,
     MapTopResponse,
+    PlacesResponse,
     RankedAddress,
     ReverseResponse,
     ScoreResponse,
@@ -280,6 +282,33 @@ def reverse(
         return _error(503, "reverse_unavailable", "Address lookup is temporarily unavailable.")
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return ReverseResponse(label=label, latitude=lat, longitude=lon)
+
+
+@app.get(
+    "/v1/places",
+    response_model=PlacesResponse,
+    responses={400: {"model": Error}, 422: {"model": Error}},
+)
+def get_places(
+    response: Response,
+    lat: float = Query(ge=-90, le=90, description="Latitude."),
+    lon: float = Query(ge=-180, le=180, description="Longitude."),
+    factor: str = Query(description="Factor key, e.g. grocery, gasStation, premiumRetail."),
+    radius_mi: float = Query(default=1.0, gt=0, le=5, alias="radiusMi"),
+    limit: int = Query(default=5, ge=1, le=20),
+):
+    if factor not in FACTOR_CATEGORIES:
+        return _error(
+            400,
+            "invalid_request",
+            f"factor must be one of: {', '.join(FACTOR_CATEGORIES)}.",
+        )
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+    with get_connection() as conn:
+        places = places_for_factor(conn, lat, lon, factor, radius_mi, limit)
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return PlacesResponse(factor=factor, radius_mi=radius_mi, places=places)
 
 
 @app.get(

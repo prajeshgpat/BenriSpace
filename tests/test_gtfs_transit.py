@@ -134,3 +134,68 @@ def test_fetch_agency_stops_routes_nj_transit_through_stub():
     nj_transit = next(a for a in AGENCIES if a.name == "nj_transit")
     with pytest.raises(RuntimeError, match="NJ_TRANSIT_API_KEY"):
         fetch_agency_stops(nj_transit)
+
+
+def test_parse_stops_named_dedupes_platforms_and_skips_blank():
+    from common.places import Place
+    from ingestion.gtfs_transit import parse_stops_named
+
+    text = (
+        "stop_id,stop_name,stop_lat,stop_lon\n"
+        "A1,Main St,40.7000,-74.0000\n"
+        "A2,Main  St,40.7002,-74.0001\n"
+        "B1,Main St,40.7500,-74.0000\n"
+        "C1,,40.7,-74.0\n"
+        "D1,Bad,x,y\n"
+    )
+    assert parse_stops_named(text, "mta") == [
+        Place("gtfs:mta", "A1", "transit", "Main St", 40.7, -74.0),
+        Place("gtfs:mta", "B1", "transit", "Main St", 40.75, -74.0),
+    ]
+
+
+def test_named_places_write_through_replace_places():
+    from common.places import replace_places
+    from ingestion.gtfs_transit import parse_gtfs_zip_named
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("stops.txt", SAMPLE_STOPS_TXT)
+    places = parse_gtfs_zip_named(buf.getvalue(), "lirr")
+    assert [p.name for p in places] == ["Stop A", "Stop B"]
+
+    class Cur:
+        def __init__(self, log):
+            self.log = log
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            self.log.append(("execute", params))
+
+        def executemany(self, sql, rows):
+            self.log.append(("many", list(rows)))
+
+    class Conn:
+        def __init__(self):
+            self.log = []
+
+        def cursor(self):
+            return Cur(self.log)
+
+        def commit(self):
+            self.log.append(("commit",))
+
+        def rollback(self):
+            self.log.append(("rollback",))
+
+    conn = Conn()
+    assert replace_places(conn, "gtfs", places) == 2
+    assert conn.log[0] == ("execute", ("gtfs", "gtfs:%"))
+    assert conn.log[-1] == ("commit",)
+    with pytest.raises(ValueError):
+        replace_places(Conn(), "gtfs", [])

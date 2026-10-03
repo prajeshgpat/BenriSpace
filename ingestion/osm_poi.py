@@ -65,6 +65,7 @@ from common.db import get_connection, iter_geo_entities, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
 from common.overpass import fetch_with_quadrant_split, post_overpass_query
+from common.places import Place, clean_name, replace_places
 from ingestion.grid import BOUNDING_BOXES
 
 OVERPASS_TIMEOUT_S = 180  # server-side [timeout:] in the query itself
@@ -228,6 +229,38 @@ def categorize_poi_all(tags: dict) -> list[str]:
         if _brand_matches(tags, rule):
             cats.append(brand)
     return cats
+
+
+def extract_places(data: dict) -> list[Place]:
+    """Named places from a raw Overpass response: one Place per (element,
+    category). Unnamed/blank-named elements and elements without a location
+    are skipped. source_id is "<type>/<id>"."""
+    places: list[Place] = []
+    for el in data.get("elements", []):
+        tags = el.get("tags") or {}
+        name = clean_name(tags.get("name"))
+        if name is None or el.get("id") is None:
+            continue
+        if el.get("type") == "node":
+            lat, lon = el.get("lat"), el.get("lon")
+        else:
+            center = el.get("center") or {}
+            lat, lon = center.get("lat"), center.get("lon")
+        if lat is None or lon is None:
+            continue
+        for category in categorize_poi_all(tags):
+            places.append(
+                Place(
+                    source="osm",
+                    source_id=f"{el.get('type')}/{el['id']}",
+                    category=category,
+                    name=name,
+                    latitude=float(lat),
+                    longitude=float(lon),
+                    brand=tags.get("brand"),
+                )
+            )
+    return places
 
 
 def premium_retail_raw(
@@ -400,15 +433,18 @@ def compute_cell_features(
 # --------------------------------------------------------------------------
 
 
-def fetch_pois_for_bbox(
-    min_lat: float, max_lat: float, min_lon: float, max_lon: float
-) -> list[tuple[float, float, dict]]:
+def fetch_overpass_data(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> dict:
     def fetch(lat0: float, lat1: float, lon0: float, lon1: float) -> dict:
         query = build_overpass_query(lat0, lat1, lon0, lon1)
         return post_overpass_query(query, timeout=HTTP_TIMEOUT_S)
 
-    data = fetch_with_quadrant_split(fetch, min_lat, max_lat, min_lon, max_lon)
-    return parse_overpass_response(data)
+    return fetch_with_quadrant_split(fetch, min_lat, max_lat, min_lon, max_lon)
+
+
+def fetch_pois_for_bbox(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[tuple[float, float, dict]]:
+    return parse_overpass_response(fetch_overpass_data(min_lat, max_lat, min_lon, max_lon))
 
 
 def run() -> None:
@@ -418,6 +454,7 @@ def run() -> None:
             cells_by_metro.setdefault(cell["metro_area"], []).append(cell)
 
         rows_written = 0
+        places_by_key: dict[tuple[str, str], Place] = {}
         for metro_area, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES:
             cells = cells_by_metro.get(metro_area, [])
             if not cells:
@@ -428,7 +465,10 @@ def run() -> None:
                 f"({len(cells)} cells)...",
                 file=sys.stderr,
             )
-            pois = fetch_pois_for_bbox(min_lat, max_lat, min_lon, max_lon)
+            data = fetch_overpass_data(min_lat, max_lat, min_lon, max_lon)
+            pois = parse_overpass_response(data)
+            for place in extract_places(data):
+                places_by_key.setdefault((place.source_id, place.category), place)
             pois_by_category = group_pois_by_category(pois)
             indexes = {
                 category: build_bucket_index(coords)
@@ -443,6 +483,10 @@ def run() -> None:
                 rows_written += 1
             conn.commit()
             ctx.rows_affected = rows_written
+
+        if places_by_key:
+            n_places = replace_places(conn, "osm", list(places_by_key.values()))
+            print(f"osm_poi: wrote {n_places} named places.", file=sys.stderr)
 
     print(f"osm_poi: wrote feature_store rows for {rows_written} geo_entities.", file=sys.stderr)
 

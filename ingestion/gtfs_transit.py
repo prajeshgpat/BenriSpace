@@ -70,6 +70,7 @@ from common.config import NJ_TRANSIT_API_KEY, NJ_TRANSIT_API_USERNAME
 from common.db import get_connection, iter_geo_entities, log_ingestion_run, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
+from common.places import Place, clean_name, replace_places
 
 RADIUS_M = 800.0
 _TIE_EPSILON_M = 1e-6  # float-compare tolerance when picking agencies at the min distance
@@ -145,17 +146,65 @@ def parse_stops_txt(csv_text: str) -> list[tuple[float, float]]:
     return stops
 
 
-def parse_gtfs_zip(zip_bytes: bytes) -> list[tuple[float, float]]:
-    """Opens a GTFS static feed zip in memory and extracts stop
-    coordinates from stops.txt. stdlib zipfile/csv is enough for this --
-    no GTFS library needed just to pull one column pair out of one file."""
+PLACE_DEDUPE_M = 150.0  # platforms of one station collapse to one place within this
+
+
+def parse_stops_named(csv_text: str, agency_label: str) -> list[Place]:
+    """Named transit stops from a stops.txt as `places` rows. Blank names and
+    bad coordinates are skipped; stops with the same cleaned name within
+    PLACE_DEDUPE_M collapse to the first one (one station, many platforms)."""
+    places: list[Place] = []
+    for row in csv.DictReader(io.StringIO(csv_text)):
+        name = clean_name(row.get("stop_name"))
+        stop_id = (row.get("stop_id") or "").strip()
+        if name is None or not stop_id:
+            continue
+        try:
+            lat, lon = float(row.get("stop_lat") or ""), float(row.get("stop_lon") or "")
+        except ValueError:
+            continue
+        places.append(
+            Place(f"gtfs:{agency_label}", stop_id, "transit", name, lat, lon)
+        )
+    return dedupe_places(places)
+
+
+def dedupe_places(places: list[Place]) -> list[Place]:
+    """Drops later places sharing a case-insensitive name with an already kept
+    one within PLACE_DEDUPE_M."""
+    kept: list[Place] = []
+    by_name: dict[str, list[Place]] = {}
+    for p in places:
+        group = by_name.setdefault(p.name.casefold(), [])
+        if any(
+            haversine_m(p.latitude, p.longitude, q.latitude, q.longitude) <= PLACE_DEDUPE_M
+            for q in group
+        ):
+            continue
+        group.append(p)
+        kept.append(p)
+    return kept
+
+
+def _stops_text(zip_bytes: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         stops_name = next((n for n in zf.namelist() if n.endswith("stops.txt")), None)
         if stops_name is None:
             raise ValueError("stops.txt not found in GTFS feed zip")
         with zf.open(stops_name) as f:
-            text = f.read().decode("utf-8-sig")
-    return parse_stops_txt(text)
+            return f.read().decode("utf-8-sig")
+
+
+def parse_gtfs_zip_named(zip_bytes: bytes, agency_label: str) -> list[Place]:
+    """Like parse_gtfs_zip but returns named `Place` rows."""
+    return parse_stops_named(_stops_text(zip_bytes), agency_label)
+
+
+def parse_gtfs_zip(zip_bytes: bytes) -> list[tuple[float, float]]:
+    """Opens a GTFS static feed zip in memory and extracts stop
+    coordinates from stops.txt. stdlib zipfile/csv is enough for this --
+    no GTFS library needed just to pull one column pair out of one file."""
+    return parse_stops_txt(_stops_text(zip_bytes))
 
 
 def count_and_nearest(
@@ -266,15 +315,40 @@ def fetch_agency_stops(agency: AgencyFeed, client: httpx.Client | None = None) -
             client.close()
 
 
+def fetch_agency_stops_and_places(
+    agency: AgencyFeed, client: httpx.Client | None = None
+) -> tuple[list[tuple[float, float]], list[Place]]:
+    """fetch_agency_stops plus the named, deduped places, from one download of
+    each feed. NJ Transit (no credentials) raises like fetch_agency_stops."""
+    if agency.requires_auth:
+        return fetch_agency_stops(agency, client=client), []
+
+    owns_client = client is None
+    client = client or httpx.Client(timeout=HTTP_TIMEOUT_S, follow_redirects=True)
+    try:
+        stops: list[tuple[float, float]] = []
+        places: list[Place] = []
+        for url in agency.feed_urls:
+            resp = client.get(url)
+            resp.raise_for_status()
+            stops.extend(parse_gtfs_zip(resp.content))
+            places.extend(parse_gtfs_zip_named(resp.content, agency.name))
+        return stops, dedupe_places(places)
+    finally:
+        if owns_client:
+            client.close()
+
+
 def run() -> None:
     with get_connection() as conn, ingestion_job("gtfs_transit") as ctx:
         agency_stops: dict[str, list[tuple[float, float]]] = {}
+        all_places: list[Place] = []
 
         with httpx.Client(timeout=HTTP_TIMEOUT_S, follow_redirects=True) as client:
             for agency in AGENCIES:
                 run_id = log_ingestion_run(agency.ingestion_source, status="running")
                 try:
-                    stops = fetch_agency_stops(agency, client=client)
+                    stops, places = fetch_agency_stops_and_places(agency, client=client)
                 except Exception as exc:  # noqa: BLE001 -- isolate one agency's failure
                     log_ingestion_run(
                         agency.ingestion_source,
@@ -286,6 +360,7 @@ def run() -> None:
                     continue
 
                 agency_stops[agency.name] = stops
+                all_places.extend(places)
                 log_ingestion_run(
                     agency.ingestion_source,
                     status="success",
@@ -305,6 +380,7 @@ def run() -> None:
             upsert_feature_store(conn, cell["id"], fields)
             rows_updated += 1
         conn.commit()
+        replace_places(conn, "gtfs", all_places)
         ctx.rows_affected = rows_updated
 
     print(

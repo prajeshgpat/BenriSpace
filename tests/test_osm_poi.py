@@ -300,6 +300,7 @@ import pytest
 from common import overpass
 from ingestion.osm_poi import (
     categorize_poi_all,
+    extract_places,
     fetch_pois_for_bbox,
     premium_retail_raw,
 )
@@ -422,3 +423,29 @@ def test_split_gives_up_at_max_depth(monkeypatch):
 def test_merge_overpass_elements_keeps_idless():
     m = overpass.merge_overpass_elements([{"elements": [_el(1), {"type": "node"}]}, {"elements": [_el(1)]}])
     assert len(m["elements"]) == 2
+
+
+def test_extract_places():
+    data = {
+        "elements": [
+            {"type": "node", "id": 1, "lat": 40.1, "lon": -73.1,
+             "tags": {"amenity": "cafe", "name": "  Joe's   Cafe "}},
+            {"type": "way", "id": 2, "center": {"lat": 40.2, "lon": -73.2},
+             "tags": {"shop": "supermarket", "name": "Whole Foods Market",
+                      "brand": "Whole Foods", "brand:wikidata": "Q1809448"}},
+            {"type": "node", "id": 3, "lat": 40.3, "lon": -73.3, "tags": {"amenity": "bar"}},
+            {"type": "node", "id": 4, "lat": 40.3, "lon": -73.3,
+             "tags": {"amenity": "bar", "name": "   "}},
+            {"type": "way", "id": 5, "tags": {"amenity": "bar", "name": "No Center"}},
+        ]
+    }
+    places = extract_places(data)
+    assert [(p.source_id, p.category) for p in places] == [
+        ("node/1", "cafe"),
+        ("way/2", "grocery"),
+        ("way/2", "whole_foods"),
+    ]
+    assert places[0].name == "Joe's Cafe" and places[0].source == "osm"
+    assert places[0].brand is None
+    assert (places[1].latitude, places[1].longitude) == (40.2, -73.2)
+    assert places[1].brand == "Whole Foods"
