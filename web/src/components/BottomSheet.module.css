@@ -1,0 +1,103 @@
+.sheet {
+  --sheet-peek: calc(6rem + env(safe-area-inset-bottom, 0px));
+
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  /* Leaves a strip of map above the sheet when fully open. */
+  height: calc(100% - 1rem);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--page);
+  box-shadow: 0 -2px 16px rgba(11, 11, 11, 0.18);
+  transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+
+.sheet:focus {
+  outline: none;
+}
+
+.sheet[data-snap="peek"] {
+  transform: translateY(calc(100% - var(--sheet-peek)));
+}
+
+.sheet[data-snap="half"] {
+  transform: translateY(min(50%, calc(100% - var(--sheet-peek))));
+}
+
+.sheet[data-snap="full"] {
+  transform: none;
+}
+
+/* The finger sets the position while dragging; the inline transform wins. */
+.dragging {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    transition: none;
+  }
+}
+
+/* Measured by the component to know the peek height in pixels. */
+.peekProbe {
+  position: absolute;
+  width: 0;
+  height: var(--sheet-peek);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.handle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--text-subtle);
+  cursor: grab;
+  /* Only the handle claims touch gestures; the rest of the page still pans. */
+  touch-action: none;
+}
+
+.handle:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -3px;
+}
+
+.grip {
+  width: 2.5rem;
+  height: 0.3125rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.handle:hover .grip {
+  opacity: 1;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 0;
+  padding: 0 1rem env(safe-area-inset-bottom, 0px);
+  overflow: hidden;
+}
+
+/* The body only scrolls once it is all the way open. */
+.sheet[data-snap="full"] .body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
