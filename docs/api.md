@@ -11,15 +11,15 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score` | Score for one address or coordinate | live |
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
-| `POST /triangulate` | Best locations that satisfy several commute anchors | live (placeholder geometry, see below) |
+| `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
-**Which examples are real.** Examples for `/score`, `/score/{id}/explanation`, `/triangulate`, `/suggest`, `/reverse`, `/map/cells` and `/map/top` are real responses captured when this guide was written. They predate the v2 data cutover, so they show `weightsVersion: "v1-handtuned"` and only the original eleven sub-scores. Examples marked "illustrative" (`/area` and the `school` and `nearestMi` shapes) show structure only; their values are made up.
+**Which examples are real.** The `/score`, `/area`, `/score/{id}/explanation`, `/reverse` and `/map/top` examples are real production responses captured after the v2 cutover (2026-10-03), with numbers rounded for readability (and the `/area` polygon shortened). The `/triangulate`, `/suggest` and `/map/cells` examples were captured earlier and still have the right shape; their numbers predate the v2 data and are for shape only.
 
-**v2 status.** The v2 code (fourteen factors, `/area`, `/reverse`, miles) is deployed. The v2 data ingestion and the switch of the API to `v2-handtuned` scores are still in progress. Until the cutover the API serves `v1-handtuned` scores, so restaurant, bar, premium retail and the facility-based noise corridor are absent or `null` ("No data" on the website), and school ratings are missing where not yet loaded.
+**v2 status.** The v2 cutover is complete. Production serves `weightsVersion: "v2-handtuned"` (64,320 score rows, fourteen factors), including restaurant, bar, premium retail, the facility-based noise corridor and click-to-polygon `/area`. `subScores.school` is `null` wherever no district rating exists (shown as "No data" on the website); any other factor can also be `null` if its data is missing for a cell.
 
 ## Conventions
 
@@ -43,7 +43,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 - Scores are **relative within a metro area**, not absolute. Each factor is min-max normalized across all cells in the same metro area (for example `nyc` or `northern_nj`), so 100 means "best in its metro area for this factor" and 0 means "worst". A suburban cell is compared with other suburban cells in its own area, not with Manhattan.
 - **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more gas stations, traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but 10 on distance from gas stations. A composite near 80 is exceptional.
 - Scores describe an **area**, not a single building. The underlying grid cells are about 0.6 by 0.4 miles, and the small road-bounded areas returned by `/area` are averages of the cells they overlap, so neighbouring small areas often share similar scores.
-- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`; the older `v1-handtuned` has eleven factors, without restaurant, bar and premiumRetail): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
+- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`, which production serves; the retired `v1-handtuned` had eleven factors, without restaurant, bar and premiumRetail): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
 ### The fourteen factors
@@ -65,7 +65,9 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `airport` | Short drive to a major airport |
 | `trailPopularity` | Mapped running trails close by (underlying metric) |
 
-Brand matching for `premiumRetail` uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v1-handtuned` until the v2 cutover), so rows from an older version lack the newer factors.
+Brand matching for `premiumRetail` uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, set to `v2-handtuned` in production), so rows from an older version are never mixed in.
+
+**Known limitation (v3 candidate).** Each factor is min-max normalized within its metro area, so a few extreme outlier distances stretch the scale and skew everyone else's scores. A visible symptom: remote cells with very little around them can still score high on `restaurant` and `bar`. A more robust normalization (percentile or log-scaled distances) is a scoring v3 candidate; see `PHASES.md`.
 
 **Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely. It is a rough proxy (default weight 0.75). The API key `emergencyCorridor` and the database columns keep their names.
 
@@ -118,31 +120,40 @@ Score for one place. Give either `address`, or `lat` and `lon`, not both.
 The point is snapped to its geohash6 cell; if that exact cell is not in the grid, the nearest covered cell within about 2 miles is used.
 
 ```bash
-curl "https://api.benrispace.com/v1/score?lat=40.7484&lon=-73.9857"
+curl "https://api.benrispace.com/v1/score?lat=40.7546&lon=-73.985"
 ```
 
 ```json
 {
-  "geoEntityId": "21c5d4bd-e66e-423b-8f4c-8e569604f187",
-  "address": "40.74920,-73.98500",
-  "latitude": 40.7492000000001,
-  "longitude": -73.9850000000001,
-  "compositeScore": 76.645099179088,
+  "geoEntityId": "3fd189bb-d488-427d-87ae-6753f0304789",
+  "address": "40.75460,-73.98500",
+  "latitude": 40.7546,
+  "longitude": -73.985,
+  "compositeScore": 81.7,
   "subScores": {
-    "grocery": 98.5056656164793,
-    "gym": 98.2984870221148,
-    "cafe": 99.4514400180914,
-    "gasStation": 10.2361735211859,
-    "convenienceStore": 1.84043553461295,
-    "transit": 99.9189755928139,
-    "school": 77.1920607191068,
-    "road": 84.8767104736265,
-    "emergencyCorridor": 95.0488509733435,
-    "airport": 62.7906976744186,
-    "trailPopularity": 78.6354208265756
+    "grocery": 99.7,
+    "gym": 99.8,
+    "cafe": 99.8,
+    "restaurant": 99.5,
+    "bar": 99.0,
+    "premiumRetail": 100.0,
+    "gasStation": 8.5,
+    "convenienceStore": 2.1,
+    "transit": 99.9,
+    "school": null,
+    "road": 89.0,
+    "emergencyCorridor": 96.5,
+    "airport": 63.4,
+    "trailPopularity": 79.8
   },
-  "weightsVersion": "v1-handtuned",
-  "computedAt": "2026-09-30T15:02:10.262476Z"
+  "weightsVersion": "v2-handtuned",
+  "computedAt": "2026-10-03T01:16:27Z",
+  "school": {
+    "proximity": 96.2,
+    "ratingAvailable": false,
+    "districtName": "New York City Department Of Education",
+    "source": null
+  }
 }
 ```
 
@@ -152,13 +163,9 @@ Everything user-facing is in feet and miles: distances in text, `nearestMi`, `mi
 
 ### `school`
 
-Shape only (illustrative). Alongside `subScores.school` (which is `null` when no school rating exists for the location) the response carries a `school` object, or `null` for rows scored before school data was ingested:
+Alongside `subScores.school` (which is `null` when no school rating exists for the location, as in the example above) the response carries a `school` object, or `null` for older rows scored before school data existed. In the example, the location has a school proximity of 96 but no district rating (`ratingAvailable: false`), so `subScores.school` is `null`.
 
-```json
-{ "school": { "proximity": 72.0, "ratingAvailable": false, "districtName": "Example UFSD", "source": "example-source" } }
-```
-
-`proximity` is 0-100 and counts schools nearby regardless of rating, so a client can show "proximity 72, rating unavailable". `ratingAvailable` is true when `subScores.school` is non-null. `districtName` and `source` come from the stored school-district data and may be `null`. The values above only illustrate the shape.
+`proximity` is 0-100 and counts schools nearby regardless of rating, so a client can show "proximity 96, rating unavailable". `ratingAvailable` is true when `subScores.school` is non-null. `districtName` and `source` come from the stored school-district data and may be `null`.
 
 `address` is the cell's formatted address when one is stored, otherwise its `"lat,lon"` string (as here). The coordinates are those of the matched grid cell, not necessarily the point you sent.
 
@@ -188,30 +195,43 @@ Score for the whole **road-bounded area** under a point: the block of land enclo
 The point picks the smallest area whose polygon contains it; a point within 40 m of an area's edge (a click on the road itself) snaps to that area. `geoEntityId`, `school` district and the nearest-feature distances in `explanation` come from the grid cell under the point; `address` is "Area bounded by ..." with up to four road names. `area.geometry` is a GeoJSON Polygon or MultiPolygon in `[lon, lat]`.
 
 ```bash
-curl "http://localhost:8000/v1/area?lat=40.7484&lon=-73.9857"
+curl "https://api.benrispace.com/v1/area?lat=40.672&lon=-73.978"
 ```
 
-Shape only (illustrative). The values below are made up, not real data, and `subScores` is shortened:
+Real response (Park Slope, Brooklyn); the polygon is shortened here to a few vertices, the real one has about 100:
 
 ```json
 {
-  "geoEntityId": "00000000-0000-0000-0000-000000000000",
-  "address": "Area bounded by Road A, Road B, Road C and Road D",
-  "latitude": 40.7484,
-  "longitude": -73.9857,
-  "compositeScore": 70.0,
-  "subScores": { "grocery": 70.0, "gym": 70.0, "...": 70.0 },
-  "weightsVersion": "v1-handtuned",
-  "computedAt": "2026-01-01T00:00:00Z",
-  "school": null,
-  "areaId": 1,
-  "area": {
-    "geometry": { "type": "Polygon", "coordinates": [[[-73.99, 40.74], [-73.98, 40.74], [-73.98, 40.75], [-73.99, 40.74]]] },
-    "areaSqMi": 0.5,
-    "boundedBy": ["Road A", "Road B", "Road C", "Road D"],
-    "cellCount": 3
+  "geoEntityId": "2cedabc0-6869-45a7-8799-760614d657d1",
+  "address": "Area bounded by Prospect Expy, 4th Ave, Flatbush Ave and Union St",
+  "latitude": 40.672,
+  "longitude": -73.978,
+  "compositeScore": 76.8,
+  "subScores": {
+    "grocery": 97.2, "gym": 98.0, "cafe": 98.4, "restaurant": 97.3, "bar": 97.2,
+    "premiumRetail": 43.4, "gasStation": 6.8, "convenienceStore": 1.9, "transit": 99.2,
+    "school": null, "road": 93.0, "emergencyCorridor": 98.0, "airport": 42.4,
+    "trailPopularity": 82.2
   },
-  "explanation": "This area's strongest factor is ... Nearest feature from this spot: ..."
+  "weightsVersion": "v2-handtuned",
+  "computedAt": "2026-10-03T01:16:27Z",
+  "school": {
+    "proximity": 92.3,
+    "ratingAvailable": false,
+    "districtName": "New York City Department Of Education",
+    "source": null
+  },
+  "areaId": 5432,
+  "area": {
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[[-73.97204, 40.65137], [-73.97545, 40.64976], [-73.99274, 40.66546], [-73.97295, 40.67349], [-73.96238, 40.6631], [-73.97204, 40.65137]]]
+    },
+    "areaSqMi": 1.78,
+    "boundedBy": ["Prospect Expy", "4th Ave", "Flatbush Ave", "Union St"],
+    "cellCount": 16
+  },
+  "explanation": "This area's strongest factor is transit access (99/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 98/100, gym access 98/100, distance from the noise corridor 98/100, restaurant access 97/100, bar and pub access 97/100, grocery access 97/100, road and traffic conditions 93/100, access to popular running and walking trails 82/100, access to premium retail (Whole Foods, Starbucks, Target) 43/100, airport drive time 42/100, distance from gas stations 7/100. Nearest feature from this spot: transit access 500 ft, distance from convenience stores 500 ft."
 }
 ```
 
@@ -225,25 +245,27 @@ Errors:
 
 ## `GET /score/{geoEntityId}/explanation`
 
-A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Currently generated from a template (RAG-written explanations are a later phase); an LLM-written explanation may replace it later without changing the shape.
+A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. Live today and rule-based (`api/explain.py`, no LLM involved). The LLM-written version is planned for Phase 3 and would not change the response shape.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `geoEntityId` | path | UUID | The `geoEntityId` from a `/score` response |
 
 ```bash
-curl "https://api.benrispace.com/v1/score/21c5d4bd-e66e-423b-8f4c-8e569604f187/explanation"
+curl "https://api.benrispace.com/v1/score/2cedabc0-6869-45a7-8799-760614d657d1/explanation"
 ```
 
 ```json
 {
-  "geoEntityId": "21c5d4bd-e66e-423b-8f4c-8e569604f187",
-  "explanation": "This location's strongest factor is transit access (100/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 99/100, grocery access 99/100, gym access 98/100, distance from the noise corridor 95/100, road and traffic conditions 85/100, access to popular running and walking trails 79/100, school quality and proximity 77/100, airport drive time 63/100, distance from gas stations 10/100.",
-  "computedAt": "2026-09-30T15:02:10.262476Z"
+  "geoEntityId": "2cedabc0-6869-45a7-8799-760614d657d1",
+  "explanation": "This location's strongest factor is transit access (99/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 98/100, gym access 98/100, distance from the noise corridor 98/100, restaurant access 97/100, bar and pub access 97/100, grocery access 97/100, road and traffic conditions 93/100, access to popular running and walking trails 82/100, access to premium retail (Whole Foods, Starbucks, Target) 43/100, airport drive time 42/100, distance from gas stations 7/100. Nearest feature from this spot: transit access 500 ft, distance from convenience stores 500 ft.",
+  "computedAt": "2026-10-03T01:16:27Z"
 }
 ```
 
-Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. For locations scored before the newer data was ingested the values are `null`, and the explanation omits its "Nearest feature" sentence. Shape (illustrative):
+(The text above is the explanation captured from production for this cell; the response also carries `nearestMi`, described next.)
+
+Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. Where a distance is unknown the value is `null`, and the explanation omits its "Nearest feature" sentence. Shape:
 
 ```json
 { "nearestMi": { "grocery": 0.2, "gym": null, "premiumRetail": 0.8 } }
@@ -257,7 +279,7 @@ Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no sco
 
 Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score. Candidate cells are prefiltered with a bounding box derived from the anchor circles.
 
-**This is a placeholder.** There is no routing engine yet, so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
+**This endpoint is live but uses placeholder geometry.** There is no routing engine yet (Valhalla arrives with Phase 2), so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
 
 Request body (JSON):
 
@@ -376,11 +398,11 @@ Turns a coordinate (for example a map click) into a short readable address. The 
 | `lon` | number | yes | Longitude, inside the covered area |
 
 ```bash
-curl "http://localhost:8000/v1/reverse?lat=40.7314&lon=-74.0635"
+curl "https://api.benrispace.com/v1/reverse?lat=40.758&lon=-73.9855"
 ```
 
 ```json
-{ "label": "9 Journal Square Concourse, Jersey City, NJ", "latitude": 40.7314, "longitude": -74.0635 }
+{ "label": "7th Avenue, New York, NY", "latitude": 40.758, "longitude": -73.9855 }
 ```
 
 Errors:
@@ -420,7 +442,7 @@ curl "http://localhost:8000/v1/map/cells?bbox=-73.99,40.74,-73.97,40.75&factors=
   "precision": 6,
   "factors": ["grocery", "transit"],
   "weights": { "grocery": 1.5, "transit": 2.0 },
-  "weightsVersion": "v1-handtuned",
+  "weightsVersion": "v2-handtuned",
   "count": 4,
   "truncated": false,
   "geohashes": ["dr5ru3", "dr5ru6", "dr5ru9", "dr5rud"],
@@ -454,40 +476,48 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all fourteen factors, whatever you selected for the ranking).
 
 ```bash
-curl "http://localhost:8000/v1/map/top?factors=transit,cafe&bbox=-74.05,40.68,-73.85,40.82&limit=2&minSeparationMi=2"
+curl "https://api.benrispace.com/v1/map/top?limit=2"
 ```
+
+With no `factors` or `weights`, all fourteen factors and their default weights are used (real response, rounded; the sub-scores are shown on one line each for space):
 
 ```json
 {
-  "factors": ["cafe", "transit"],
-  "weights": { "cafe": 1.0, "transit": 1.5 },
-  "weightsVersion": "v1-handtuned",
+  "factors": ["grocery", "gym", "cafe", "restaurant", "bar", "premiumRetail", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport", "trailPopularity"],
+  "weights": { "grocery": 1.5, "gym": 1.0, "cafe": 1.0, "restaurant": 1.0, "bar": 0.5, "premiumRetail": 0.75, "gasStation": 1.0, "convenienceStore": 0.75, "transit": 1.5, "school": 1.5, "road": 1.0, "emergencyCorridor": 0.75, "airport": 0.75, "trailPopularity": 1.25 },
+  "weightsVersion": "v2-handtuned",
   "results": [
     {
-      "geohash": "dr5ru0",
-      "latitude": 40.7384,
-      "longitude": -73.996,
-      "score": 99.9,
-      "metroArea": "nyc",
+      "geohash": "dr5xsj",
+      "latitude": 40.7228,
+      "longitude": -73.651,
+      "score": 83.0,
+      "metroArea": "long_island",
       "subScores": {
-        "grocery": 97.870276450581, "gym": 98.0771040262513, "cafe": 99.9721646287845,
-        "gasStation": 4.88646449790451, "convenienceStore": 2.07266078607431,
-        "transit": 99.9076271852118, "school": 81.9847697886939, "road": 91.4340718290933,
-        "emergencyCorridor": 95.2017961535992, "airport": 57.8641370869033,
-        "trailPopularity": 79.4262789427787
+        "grocery": 97.6, "gym": 96.7, "cafe": 99.9, "restaurant": 96.9, "bar": 96.5,
+        "premiumRetail": 62.6, "gasStation": 3.4, "convenienceStore": 3.1, "transit": 98.4,
+        "school": 89.9, "road": 90.9, "emergencyCorridor": 99.7, "airport": 95.2,
+        "trailPopularity": 98.5
       }
     },
     {
-      "geohash": "dr5reg",
-      "latitude": 40.7114,
-      "longitude": -74.007,
-      "score": 99.9,
-      "metroArea": "nyc",
-      "subScores": { "...": "trimmed, same fourteen keys as above" }
+      "geohash": "dr73hc",
+      "latitude": 40.9678,
+      "longitude": -73.968,
+      "score": 83.0,
+      "metroArea": "northern_nj",
+      "subScores": {
+        "grocery": 98.1, "gym": 94.9, "cafe": 96.4, "restaurant": 96.0, "bar": 87.0,
+        "premiumRetail": 56.5, "gasStation": 17.5, "convenienceStore": 10.1, "transit": 96.2,
+        "school": 95.0, "road": 97.9, "emergencyCorridor": 100.0, "airport": 88.2,
+        "trailPopularity": 89.4
+      }
     }
   ]
 }
 ```
+
+Note the second result: a spot at 40.97 N is far from the dense core yet scores 87 on `bar` and 96 on `restaurant`. That is the min-max normalization weakness described under "What a score means" (a v3 candidate), not a real nightlife hub.
 
 Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50, `minSeparationMi` outside 0-31 (or `minSeparationKm` outside 0-50), or both separation parameters at once. The response has no separation field; the spacing is applied, not echoed.
 
@@ -551,4 +581,4 @@ with httpx.Client(base_url=API, timeout=20) as client:
         print(error["code"], error["message"])
 ```
 
-The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally before the v2 deploy. After the data cutover, responses show `v2-handtuned` and fourteen sub-scores.
+The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally before the v2 deploy. Production now serves `v2-handtuned`, so `/score` responses carry fourteen sub-scores.

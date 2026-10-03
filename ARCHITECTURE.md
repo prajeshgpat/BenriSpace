@@ -9,15 +9,14 @@ reverse lookups are the only live provider calls, and they are cached).
 Diagrams are [Mermaid](https://mermaid.js.org/) and render on GitHub.
 
 **Status legend:** green = built and running · amber = code merged and deployed
-(or written and tested) but its data or output is not live yet. Planned work is
+(or written and tested) but its data or output is not live yet (nothing is amber after the v2 cutover). Planned work is
 listed in section 5.
 
-**Where things stand (2026-10-02).** The v2 code (14 factors, road-bounded
-areas, miles, Home/App site) is merged and deployed, and migrations `0002_v2`
-and `0003_areas` are applied to production. The v2 data ingestion and the
-Lambda `SCORING_WEIGHTS_VERSION` cutover from `v1-handtuned` to `v2-handtuned`
-are still in progress, so until then the new factors show "No data" and
-production keeps serving v1 scores. Area polygons are built and loaded (16,277
+**Where things stand (2026-10-03).** The v2 cutover is done. The v2 code (14
+factors, road-bounded areas, miles, Home/App site) is deployed, migrations
+`0002_v2` and `0003_areas` are applied, the v2 data ingestion has completed
+(64,320 `v2-handtuned` score rows), and the Lambda runs
+`SCORING_WEIGHTS_VERSION=v2-handtuned`. Area polygons are built and loaded (16,277
 areas, 101,540 area-to-cell mappings).
 
 ## 1. Runtime — how a request is served
@@ -67,10 +66,11 @@ flowchart LR
   one is larger than 10 sq mi), and the web app then falls back to the single
   cell rectangle.
 - **Serving version.** Score reads prefer the Lambda's `SCORING_WEIGHTS_VERSION`
-  (default `v1-handtuned` until the v2 cutover).
-- **Explanation** and **triangulate** are placeholders today (a template
-  sentence and a straight-line-distance circle, bbox-prefiltered in SQL) until
-  the RAG layer and the routing engine land.
+  (production sets `v2-handtuned`; the code default is still `v1-handtuned`).
+- **Explanation** is live and rule-based (`api/explain.py`: strongest and
+  weakest factors plus nearest-feature distances); the LLM version is Phase 3.
+  **Triangulate** is live but uses a placeholder geometry (a straight-line
+  distance circle, bbox-prefiltered in SQL) until the routing engine lands.
 - **Not on the request path:** scoring. Requests only read the `scores`,
   `areas` and `area_cells` tables.
 
@@ -105,12 +105,12 @@ flowchart LR
   classDef live fill:#d1fae5,stroke:#059669,color:#064e3b
   classDef pending fill:#fef3c7,stroke:#d97706,color:#78350f
   class grid,trails,transit,airports,fs,log,abuild,areas live
-  class poi,roads,schools,score,scores pending
+  class poi,roads,schools,score,scores live
 ```
 
-- Amber nodes are the v2 additions whose data run is still in progress
-  (restaurants, bars and brands in `osm_poi`; the facility-aware noise corridor
-  in `roads`; NCES schools and ratings; the `v2-handtuned` scoring run). The
+- The v2 additions (restaurants, bars and brands in `osm_poi`; the
+  facility-aware noise corridor in `roads`; NCES schools and ratings; the
+  `v2-handtuned` scoring run) have all been ingested and are live. The
   weekly workflow (`.github/workflows/ingestion.yml`) runs grid, then the
   sources one after another (airports, schools, gtfs_transit, osm_poi, roads,
   trails), then scoring. Sequential because every job updates the same
@@ -245,13 +245,12 @@ flowchart LR
   classDef live fill:#d1fae5,stroke:#059669,color:#064e3b
   classDef pending fill:#fef3c7,stroke:#d97706,color:#78350f
   class role,lam,amp,tfstate,tf,ci1,dep,tfci live
-  class ing pending
+  class ing live
 ```
 
-- Amber `ingestion.yml` is the weekly job whose v2 run (and its scoring step
-  writing `v2-handtuned` rows) is still in progress. Changing the version the
-  API serves is a Terraform variable (`scoring_weights_version`) applied by
-  hand after that run.
+- `ingestion.yml` is the weekly job; its v2 run (and scoring step writing
+  `v2-handtuned` rows) is complete. The version the API serves is a Terraform
+  variable (`scoring_weights_version`), now set to `v2-handtuned`.
 - No long-lived AWS keys exist anywhere: CI uses OIDC, the developer uses SSO.
 - The database URL lives only in SSM; Terraform writes a placeholder and never
   sees the real value.
@@ -263,7 +262,7 @@ flowchart LR
 | Phase | Addition | What it replaces today |
 | --- | --- | --- |
 | 2 | Valhalla routing engine on a small EC2 instance | straight-line-circle placeholder in `/triangulate`; straight-line airport drive times |
-| 3 | RAG layer (LLM over retrieved scores) + pgvector "similar neighborhoods" | template-based explanation |
+| 3 | RAG layer (LLM over retrieved scores) + pgvector "similar neighborhoods" | rule-based explanation |
 | 4 | Google sign-in (Supabase Auth), Free/Pro/Business tiers, rate limits, Stripe | unauthenticated API |
 | 5 | Commute-aware scoring, rent overlay, orchestrator | single metro on cron |
 | Later | Neighborhood clusters of 5-10 blocks scored per polygon (instead of averaged grid cells) | area scores averaged from ~0.6 x 0.4 mi cells; some sliver areas; water not clipped |

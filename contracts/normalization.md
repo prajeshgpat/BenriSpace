@@ -99,10 +99,16 @@ given response.
 
 **Current serving state.** The scorer writes `v2-handtuned` rows next to the
 existing `v1-handtuned` rows. The API serves whichever version its
-`SCORING_WEIGHTS_VERSION` setting names; that defaults to `v1-handtuned` and
-moves to `v2-handtuned` only after the v2 data ingestion and scoring run have
-populated it (in progress). Until then the v2-only factors (restaurant, bar,
-premium retail, facility-based noise corridor, school rating) show "No data".
+`SCORING_WEIGHTS_VERSION` setting names; the code default is `v1-handtuned`,
+but production has been set to `v2-handtuned` since the cutover (2026-10-03,
+64,320 rows). School rating is still `null` ("No data") where a district has
+no rating.
+
+**Known weakness (v3 candidate).** Min-max normalization is skewed by outlier
+distances: a few very far nearest-feature distances stretch the range, which
+compresses everyone else and lets remote cells with little around them score
+high on restaurant and bar. A more robust scheme (percentile ranks, or
+clipped/log-scaled distances) is a scoring v3 candidate.
 
 ## Cohorts and areas
 
