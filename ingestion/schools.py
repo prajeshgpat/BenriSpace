@@ -29,6 +29,7 @@ from pathlib import Path
 from common.db import get_connection, iter_geo_entities, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
+from common.places import Place, clean_name, replace_places
 
 NCES_LOCATIONS_URL = "https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2425.zip"
 METRO_STATES = {"NY": "36", "NJ": "34", "CT": "09"}
@@ -49,6 +50,7 @@ class SchoolRecord:
     lon: float
     name: str
     source: str
+    source_id: str | None = None  # NCESSCH when the shapefile carries it
 
 
 def parse_nces_row(attrs: dict, source: str = "nces_edge") -> SchoolRecord | None:
@@ -65,7 +67,31 @@ def parse_nces_row(attrs: dict, source: str = "nces_edge") -> SchoolRecord | Non
     lat_min, lat_max, lon_min, lon_max = METRO_BBOX
     if not (lat_min <= lat <= lat_max and lon_min <= lon <= lon_max):
         return None
-    return SchoolRecord(lat=lat, lon=lon, name=str(attrs.get("NAME") or ""), source=source)
+    source_id = str(attrs.get("NCESSCH") or "").strip() or None
+    return SchoolRecord(
+        lat=lat, lon=lon, name=str(attrs.get("NAME") or ""), source=source, source_id=source_id
+    )
+
+
+def schools_to_places(schools: Iterable[SchoolRecord]) -> list[Place]:
+    """Named NCES schools as `places` rows (category 'school'). Blank names are
+    skipped; a missing NCESSCH falls back to the coordinates as the id."""
+    places: list[Place] = []
+    for s in schools:
+        name = clean_name(s.name)
+        if name is None:
+            continue
+        places.append(
+            Place(
+                source="nces",
+                source_id=s.source_id or f"{s.lat:.5f},{s.lon:.5f}",
+                category="school",
+                name=name,
+                latitude=s.lat,
+                longitude=s.lon,
+            )
+        )
+    return places
 
 
 def _unwrap_shapefile_zip(path: Path) -> Path:
@@ -185,6 +211,8 @@ def run() -> None:
             upsert_feature_store(conn, entity["id"], fields)
             rows_updated += 1
         conn.commit()
+        nces_places = schools_to_places(s for s in all_schools if s.source == "nces_edge")
+        replace_places(conn, "nces", nces_places)
         ctx.rows_affected = rows_updated
 
     print(

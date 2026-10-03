@@ -73,3 +73,23 @@ def test_unwrap_shapefile_zip_extracts_nested_zip(tmp_path):
     with zipfile.ZipFile(flat, "w") as zf:
         zf.writestr("a.shp", b"x")
     assert _unwrap_shapefile_zip(flat) == flat
+
+
+def test_schools_to_places_uses_ncessch_or_coords_and_skips_blank():
+    from common.places import Place
+    from ingestion.schools import schools_to_places
+
+    schools = [
+        SchoolRecord(40.7, -74.0, "  PS   1 ", "nces_edge", "360001"),
+        SchoolRecord(40.71234567, -74.01, "No Id", "nces_edge"),
+        SchoolRecord(40.8, -74.0, "   ", "nces_edge", "9"),
+    ]
+    assert schools_to_places(schools) == [
+        Place("nces", "360001", "school", "PS 1", 40.7, -74.0),
+        Place("nces", "40.71235,-74.01000", "school", "No Id", 40.71234567, -74.01),
+    ]
+
+
+def test_parse_nces_row_carries_ncessch():
+    row = {"STATE": "NY", "LAT": 40.7, "LON": -74.0, "NAME": "X", "NCESSCH": "123"}
+    assert parse_nces_row(row).source_id == "123"

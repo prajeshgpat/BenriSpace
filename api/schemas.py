@@ -165,3 +165,20 @@ class AreaScoreResponse(ScoreResponse):
     area_id: int
     area: AreaInfo
     explanation: str
+
+
+class PlaceOut(CamelModel):
+    name: str
+    brand: str | None = None
+    category: str
+    distance_mi: float
+    distance_label: str | None
+    direction: str
+    latitude: float
+    longitude: float
+
+
+class PlacesResponse(CamelModel):
+    factor: str
+    radius_mi: float
+    places: list[PlaceOut]
