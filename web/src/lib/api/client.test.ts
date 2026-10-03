@@ -240,11 +240,11 @@ describe("getScoreExplanation", () => {
 describe("getAreaExplanation", () => {
   it("requests the point explanation and parses it", async () => {
     const { client, fetchMock } = clientReturning(
-      jsonResponse({ explanation: "Hi.", source: "ai", areaId: 3 }),
+      jsonResponse({ explanation: "Hi.", source: "ai", areaId: 3, priorities: ["grocery", "bogus"] }),
     );
     const result = await client.getAreaExplanation(40.7, -74);
     expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/area/explanation?lat=40.7&lon=-74`);
-    expect(result).toEqual({ explanation: "Hi.", source: "ai", areaId: 3 });
+    expect(result).toEqual({ explanation: "Hi.", source: "ai", areaId: 3, priorities: ["grocery"] });
   });
 
   it("accepts a null areaId and rejects an unknown source", async () => {
@@ -677,5 +677,144 @@ describe("getAreaByCoordinates", () => {
   it("maps a 500 to a server error", async () => {
     const { client } = clientReturning(jsonResponse({ message: "boom" }, 500));
     expect((await rejection(client.getAreaByCoordinates({ lat: 0, lon: 0 }))).kind).toBe("server");
+  });
+});
+
+const SIMILAR_ITEM = {
+  latitude: 40.69,
+  longitude: -73.94,
+  direction: "SE",
+  distanceLabel: "6.1 mi",
+  similarity: 88,
+  compositeScore: 71,
+  areaLabel: "Area bounded by Nostrand Ave and Atlantic Ave",
+  differences: [
+    { factor: "transit", label: "transit", delta: 14 },
+    { factor: "nonsense", label: "x", delta: 3 },
+    { factor: "grocery", label: "grocery", delta: "bad" },
+  ],
+  summary: "14 points better for transit.",
+};
+
+describe("getSimilar", () => {
+  it("requests k and spacing, omits factors by default, and parses the result", async () => {
+    const { client, fetchMock } = clientReturning(
+      jsonResponse({
+        minSeparationMi: 1,
+        results: [SIMILAR_ITEM],
+        priorities: ["transit", "bogus"],
+      }),
+    );
+
+    const similar = await client.getSimilar(40.7, -74);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/similar?lat=40.7&lon=-74&k=5&minSeparationMi=1`,
+    );
+    expect(similar.priorities).toEqual(["transit"]);
+    expect(similar.results).toEqual([
+      {
+        latitude: 40.69,
+        longitude: -73.94,
+        direction: "SE",
+        distanceLabel: "6.1 mi",
+        similarity: 88,
+        compositeScore: 71,
+        areaLabel: "Area bounded by Nostrand Ave and Atlantic Ave",
+        differences: [{ factor: "transit", label: "transit", delta: 14 }],
+        summary: "14 points better for transit.",
+      },
+    ]);
+  });
+
+  it("sends factors and weights when given", async () => {
+    const { client, fetchMock } = clientReturning(
+      jsonResponse({ minSeparationMi: 1, results: [] }),
+    );
+
+    await client.getSimilar(40.7, -74, {
+      factors: ["transit", "cafe"],
+      weights: { transit: 2 },
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("factors")).toBe("transit,cafe");
+    expect(url.searchParams.get("weights")).toBe("transit:2");
+  });
+
+  it("drops malformed results, nulls a missing label and rejects a bad body", async () => {
+    const { client } = clientReturning(
+      jsonResponse({
+        minSeparationMi: 1,
+        results: [
+          { ...SIMILAR_ITEM, areaLabel: null },
+          { ...SIMILAR_ITEM, similarity: "high" },
+          { ...SIMILAR_ITEM, latitude: null },
+          "junk",
+        ],
+      }),
+    );
+    const similar = await client.getSimilar(1, 2);
+    expect(similar.results).toHaveLength(1);
+    expect(similar.results[0].areaLabel).toBeNull();
+    expect(similar.priorities).toEqual([]);
+
+    const bad = clientReturning(jsonResponse({ results: "no" }));
+    expect((await rejection(bad.client.getSimilar(1, 2))).kind).toBe("invalid-response");
+  });
+
+  it("passes the abort signal through", async () => {
+    const controller = new AbortController();
+    const { client, fetchMock } = clientReturning(
+      jsonResponse({ minSeparationMi: 1, results: [] }),
+    );
+    await client.getSimilar(1, 2, { signal: controller.signal });
+    controller.abort();
+    expect(fetchMock.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+});
+
+describe("priorities on the point endpoints", () => {
+  const improveBody = { composite: 60, radiusMi: 1, suggestions: [], priorities: ["grocery"] };
+  const explanationBody = { explanation: "Hi.", source: "ai", areaId: 3 };
+
+  it("getImprove omits factors unless given and sends weights", async () => {
+    const plain = clientReturning(jsonResponse(improveBody));
+    const result = await plain.client.getImprove(40.7, -74);
+    expect(plain.fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/improve?lat=40.7&lon=-74&radiusMi=1&maxSuggestions=3`,
+    );
+    expect(result.priorities).toEqual(["grocery"]);
+
+    const narrowed = clientReturning(jsonResponse(improveBody));
+    await narrowed.client.getImprove(40.7, -74, {
+      factors: ["grocery", "transit"],
+      weights: { grocery: 1.5 },
+    });
+    const url = new URL(String(narrowed.fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("factors")).toBe("grocery,transit");
+    expect(url.searchParams.get("weights")).toBe("grocery:1.5");
+  });
+
+  it("getAreaExplanation sends factors and weights", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(explanationBody));
+    await client.getAreaExplanation(40.7, -74, { factors: ["cafe"], weights: { cafe: 0.5 } });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/area/explanation?lat=40.7&lon=-74&factors=cafe&weights=cafe%3A0.5`,
+    );
+  });
+
+  it("getScoreExplanation adds a query string only when narrowed", async () => {
+    const plain = clientReturning(jsonResponse(liveExplanationBody));
+    await plain.client.getScoreExplanation(GEO_ENTITY_ID, {});
+    expect(plain.fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation`,
+    );
+
+    const narrowed = clientReturning(jsonResponse(liveExplanationBody));
+    await narrowed.client.getScoreExplanation(GEO_ENTITY_ID, { factors: ["transit"] });
+    expect(narrowed.fetchMock.mock.calls[0][0]).toBe(
+      `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation?factors=transit`,
+    );
   });
 });

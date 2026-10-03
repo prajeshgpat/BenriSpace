@@ -2,7 +2,9 @@
 
 Each scored cell has a 14-dim z-scored embedding (scoring/embeddings.py). The
 nearest neighbours by L2 distance, spread out geographically, are returned with
-the factors on which they differ most. Distances shown are imperial.
+the factors on which they differ most. With `factors` the over-fetched pool is
+re-ranked on the selected factors only (z-scores from api/metro_stats.py, which
+match scoring/embeddings.py). Distances shown are imperial.
 """
 
 import math
@@ -11,19 +13,24 @@ import psycopg
 
 from api.areas import bounded_by_text, pick_area, usable_areas
 from api.explain import _snake_to_camel
+from api.metro_stats import MetroStats
+from api.priorities import Priorities
 from common.db import get_area_candidates
 from common.geo import haversine_m
 from common.places import compass
 from common.units import M_PER_MI, format_distance
-from scoring.embeddings import EMBEDDING_COLUMNS
+from scoring.embeddings import EMBEDDING_COLUMNS, EMBEDDING_DIM, zscore
 
 # L2 distance (in z-score units, 14 dims) at which similarity reaches 0. Two
 # unrelated cells sit roughly 5 apart, so 6.0 spreads 0..100 usefully.
 SIMILARITY_MAX_DIST = 6.0
-DIFF_MIN_POINTS = 10
+DIFF_MIN_POINTS = 6
 MAX_DIFFS = 3
 OVERFETCH_FACTOR = 20
 OVERFETCH_MAX = 200
+# Used for the z-score when metro stats cannot be loaded: a typical factor
+# spread (points), so re-ranking still works, just less precisely.
+FALLBACK_STD = 25.0
 
 # Short labels for the summary sentence, keyed by score column.
 SHORT_LABELS: dict[str, str] = {
@@ -46,8 +53,10 @@ SHORT_LABELS: dict[str, str] = {
 _SCORE_SELECT = ", ".join(f"s.{c}" for c in EMBEDDING_COLUMNS)
 
 
-def overfetch_limit(k: int) -> int:
-    return min(k * OVERFETCH_FACTOR, OVERFETCH_MAX)
+def overfetch_limit(k: int, wide: bool = False) -> int:
+    """Candidates pulled by full-embedding distance; re-ranking by a factor
+    subset needs the widest pool."""
+    return OVERFETCH_MAX if wide else min(k * OVERFETCH_FACTOR, OVERFETCH_MAX)
 
 
 def similarity(dist: float) -> int:
@@ -63,12 +72,15 @@ def factor_label(column: str) -> str:
     return SHORT_LABELS[column]
 
 
-def differences(target: dict, row: dict) -> list[dict]:
+def differences(target: dict, row: dict, columns: tuple[str, ...] | list[str] | None = None):
     """Up to MAX_DIFFS factors where `row` differs from `target` by at least
     DIFF_MIN_POINTS, largest gap first (ties keep dimension order). delta > 0
-    means `row` scores higher (better) than the target."""
+    means `row` scores higher (better) than the target. `columns` limits which
+    factors are compared (default all)."""
     found = []
     for column in EMBEDDING_COLUMNS:
+        if columns is not None and column not in columns:
+            continue
         a, b = target.get(column), row.get(column)
         if a is None or b is None:
             continue
@@ -84,6 +96,30 @@ def differences(target: dict, row: dict) -> list[dict]:
         }
         for _, column, delta in found[:MAX_DIFFS]
     ]
+
+
+def rerank(
+    target: dict, candidates: list[dict], priorities: Priorities, stats: MetroStats | None
+) -> list[dict]:
+    """Candidates re-ordered by weighted Euclidean distance over only the
+    selected factors, on the same z-scores the embedding uses (stats are the
+    metro's mean/std, a missing score counts as average). Weights are scaled to
+    sum to 14 so `dist` stays comparable with the full-embedding distance that
+    `similarity()` is calibrated on. Returns copies with `dist` replaced."""
+    spec = priorities.spec
+    scale = EMBEDDING_DIM / sum(spec.weights[f] for f in spec.factors)
+    dims = []
+    for factor, column in zip(spec.factors, priorities.columns, strict=True):
+        st = (stats or {}).get(column)
+        mean, std = (st.mean, st.std) if st else (0.0, FALLBACK_STD)
+        dims.append((column, mean, std, spec.weights[factor] * scale))
+    tz = {c: zscore(target.get(c), m, sd) for c, m, sd, _ in dims}
+    out = []
+    for cand in candidates:
+        total = sum(w * (zscore(cand.get(c), m, sd) - tz[c]) ** 2 for c, m, sd, w in dims)
+        out.append({**cand, "dist": math.sqrt(total)})
+    out.sort(key=lambda c: c["dist"])  # stable
+    return out
 
 
 def summary(diffs: list[dict]) -> str:
@@ -174,10 +210,19 @@ def build_similar(
     candidates: list[dict],
     k: int,
     min_separation_mi: float,
+    priorities: Priorities | None = None,
+    stats: MetroStats | None = None,
 ) -> dict:
+    """With an explicit `priorities` the over-fetched candidates are re-ranked on
+    the selected factors before spacing; differences only cover selected factors."""
+    columns = None
+    if priorities is not None:
+        columns = priorities.columns
+        if priorities.explicit:
+            candidates = rerank(target, candidates, priorities, stats)
     results = []
     for c in spread_out(lat, lon, candidates, k, min_separation_mi):
-        diffs = differences(target, c)
+        diffs = differences(target, c, columns)
         d = haversine_m(lat, lon, c["latitude"], c["longitude"])
         results.append(
             {
@@ -192,4 +237,8 @@ def build_similar(
                 "summary": summary(diffs),
             }
         )
-    return {"min_separation_mi": min_separation_mi, "results": results}
+    return {
+        "min_separation_mi": min_separation_mi,
+        "results": results,
+        "priorities": priorities.factors if priorities else [],
+    }

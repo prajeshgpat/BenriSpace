@@ -254,6 +254,8 @@ The explanation for the road-bounded area under a point, written by the LLM laye
 | --- | --- | --- | --- | --- |
 | `lat` | query | number | yes | Latitude, inside the covered area |
 | `lon` | query | number | yes | Longitude, inside the covered area |
+| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors. |
+| `weights` | query | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
 curl "https://api.benrispace.com/v1/area/explanation?lat=40.672&lon=-73.978"
@@ -265,9 +267,12 @@ Example response (invented, for shape only; not captured from production):
 {
   "explanation": "This area scores 77 overall, driven by excellent transit and everyday amenities close by. Strengths: transit access 99; cafe access 98. Weaknesses: distance from convenience stores is only 2.",
   "source": "ai",
-  "areaId": 5432
+  "areaId": 5432,
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
 }
 ```
+
+With `factors` the text speaks to those priorities first. The AI text (prompt version `expl-v2`) is written from an evidence packet: the selected factors, every factor's score with where it sits in the metro (for example "top 3% of the metro"), the road-bounded area name, up to two named nearby places per selected place-based factor with distances in feet or miles, and the selected factors that are strongest and weakest against the metro median. It names at least two of those places when they exist, states one tradeoff ("Tradeoff: ...") and one suggestion ("Tip: ..."), and runs 60 to 90 words. A reply is accepted only if every number comes from the evidence, only feet and miles are used, every capitalised proper noun is in the evidence (place and street names), and praise words such as "excellent" appear only for a selected factor in the top 5% of the metro; otherwise the rule-based text is returned, which also leads with the selected priorities. The server-side cache key includes the sorted selected factors.
 
 `source` is `"ai"` or `"rules"` (the same rule-based text `/area` returns in its `explanation` field). Errors are the same as `GET /area`: 400 `invalid_request`, 404 `area_not_found`, 422 `out_of_coverage`.
 
@@ -278,6 +283,8 @@ A short plain-language explanation of one score: the strongest factor, the weake
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `geoEntityId` | path | UUID | The `geoEntityId` from a `/score` response |
+| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors. |
+| `weights` | query | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
 curl "https://api.benrispace.com/v1/score/2cedabc0-6869-45a7-8799-760614d657d1/explanation"
@@ -291,7 +298,7 @@ curl "https://api.benrispace.com/v1/score/2cedabc0-6869-45a7-8799-760614d657d1/e
 }
 ```
 
-(The text above is the rule-based explanation captured from production for this cell, so `source` would be `"rules"`; the response also carries `source` and `nearestMi`, described next.)
+(The text above is the rule-based explanation captured from production for this cell, so `source` would be `"rules"`; the response also carries `source`, `priorities` (the factor keys used, as on `/area/explanation`) and `nearestMi`, described next. `factors`/`weights` work exactly as on `/area/explanation`.)
 
 Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. Where a distance is unknown the value is `null`, and the explanation omits its "Nearest feature" sentence. Shape:
 
@@ -474,6 +481,8 @@ Example response (invented for illustration, not a captured production response)
 }
 ```
 
+With `factors`, `composite` and `bestNearby` use the composite of the selected factors only (weighted average of the selected factors' non-null scores, for the area and for every neighbouring cell) instead of the stored overall composite. `priorities` lists the factor keys used. If no selected place-based factor is below 75, `suggestions` is `[]`, and `bestNearby` is still returned when a neighbouring cell gains at least 3 on the selected composite.
+
 `places` is an empty list when nothing is within the radius.
 
 Errors:
@@ -485,9 +494,15 @@ Errors:
 
 ---
 
+## Priorities (`factors`)
+
+`/improve`, `/similar`, `/area/explanation` and `/score/{geoEntityId}/explanation` accept the same optional `factors` (and `weights`) query parameters as `/map/top`: the factors the user selected, for example `factors=grocery,transit,cafe`. Everything those endpoints say is then about those factors only. Weights default to the scoring weights restricted to the selected factors and renormalised, and a missing (`null`) score is ignored. Each response echoes the factors it used in `priorities`. Omitting `factors` means the 12 toggleable factors, and the endpoints keep their previous behaviour.
+
+---
+
 ## `GET /improve`
 
-Deterministic "what could improve this score" suggestions for the area under a point. It finds the weakest place-based factors (grocery, gym, cafe, restaurant, bar, transit, school, premiumRetail; a score below 75, lowest first), and for each lists nearby named places and the best neighbouring cell that scores at least 10 points higher on that factor. Factors where less is better (gas stations, traffic, noise, airports) and trails are never suggested. Nothing is generated or guessed: every sentence comes from stored scores and places. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+Deterministic "what could improve this score" suggestions for the area under a point. It finds the weakest place-based factors among the selected ones (grocery, gym, cafe, restaurant, bar, transit, school; a score below 75, lowest first). `premiumRetail` is an underlying metric and is never suggested as its own factor, and for each lists nearby named places and the best neighbouring cell that scores at least 10 points higher on that factor. Factors where less is better (gas stations, traffic, noise, airports) and trails are never suggested. Nothing is generated or guessed: every sentence comes from stored scores and places. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
 
 The point is resolved like `/area` (the road-bounded area's score). If no area is found there, the grid cell's own score is used instead.
 
@@ -497,6 +512,8 @@ The point is resolved like `/area` (the road-bounded area's score). If no area i
 | `lon` | number | yes | Longitude, inside the covered area |
 | `radiusMi` | number | no | Search radius in miles, above 0 and up to 3. Default 1 |
 | `maxSuggestions` | integer | no | 1 to 5 factors. Default 3 |
+| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors (everything except `premiumRetail` and `trailPopularity`). Must not be empty if present; an unknown key is a 400. |
+| `weights` | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
 curl "https://api.benrispace.com/v1/improve?lat=40.758&lon=-73.9855&maxSuggestions=2"
@@ -520,7 +537,8 @@ Example response (invented for illustration, not a captured production response)
       "tip": "Grocery is your weakest factor (41). The closest option is Aldi, 0.3 mi west. The area about 0.4 mi north scores 66 on grocery."
     }
   ],
-  "bestNearby": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceLabel": "0.4 mi", "compositeScore": 72, "compositeGain": 4 }
+  "bestNearby": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceLabel": "0.4 mi", "compositeScore": 72, "compositeGain": 4 },
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
 }
 ```
 
@@ -530,7 +548,7 @@ Errors:
 
 | Status | `code` | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `radiusMi` outside (0, 3], or `maxSuggestions` outside 1..5 |
+| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `radiusMi` outside (0, 3], `maxSuggestions` outside 1..5, or an invalid `factors`/`weights` |
 | 404 | `area_not_found` | No area and no scored cell for this location |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
@@ -540,6 +558,8 @@ Errors:
 
 Areas elsewhere in the same metro with a similar factor profile. Each scored cell has a 14-dimension vector (one z-scored sub-score per factor, a missing school score counts as average), stored in pgvector. The nearest vectors are found in the database, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
 
+With `factors`, the closest 200 vectors are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the stored vectors, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
+
 Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404.
 
 | Parameter | Type | Required | Description |
@@ -548,6 +568,8 @@ Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddi
 | `lon` | number | yes | Longitude, inside the covered area |
 | `k` | integer | no | Number of results, 1 to 10. Default 5 |
 | `minSeparationMi` | number | no | Minimum spacing in miles from the point and between results, 0 to 10. Default 1 |
+| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors (everything except `premiumRetail` and `trailPopularity`). Must not be empty if present; an unknown key is a 400. |
+| `weights` | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
 curl "https://api.benrispace.com/v1/similar?lat=40.758&lon=-73.9855&k=3"
@@ -573,17 +595,18 @@ Example response (invented for illustration, not a captured production response)
       ],
       "summary": "14 points better for transit, 12 points weaker for noise."
     }
-  ]
+  ],
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
 }
 ```
 
-`similarity` is a whole number from 0 to 100: `100 * max(0, 1 - distance / 6)`, where `distance` is the straight-line gap between the two vectors. `differences` lists up to 3 factors where the result's score differs from the point's by at least 10, largest gap first; `delta` is signed (positive means the result scores higher, which is always better). `summary` is built from `differences`, or reads "Very similar across all factors." when there are none. `areaLabel` is the road-bounded area containing the result, or `null` when there is none. `results` can hold fewer than `k` entries when the spacing rule leaves too few.
+`similarity` is a whole number from 0 to 100: `100 * max(0, 1 - distance / 6)`, where `distance` is the straight-line gap between the two vectors. `differences` lists up to 3 selected factors where the result's score differs from the point's by at least 6, largest gap first; `delta` is signed (positive means the result scores higher, which is always better). `summary` is built from `differences`, or reads "Very similar across all factors." when there are none. `areaLabel` is the road-bounded area containing the result, or `null` when there is none. `results` can hold fewer than `k` entries when the spacing rule leaves too few.
 
 Errors:
 
 | Status | `code` | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `k` outside 1..10, or `minSeparationMi` outside 0..10 |
+| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `k` outside 1..10, `minSeparationMi` outside 0..10, or an invalid `factors`/`weights` |
 | 404 | `not_found` | The cell under the point has no embedding (or no score) yet |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 

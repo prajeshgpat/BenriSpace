@@ -1,4 +1,4 @@
-import type { FactorKey } from "@/lib/api/types";
+import type { FactorKey, PriorityQuery } from "@/lib/api/types";
 import { FACTOR_KEYS } from "@/lib/score/factors";
 
 export type Importance = "low" | "normal" | "high";
@@ -184,4 +184,32 @@ export function learnDefaults(
     next[key] = value;
   }
   return next;
+}
+
+/**
+ * The selection as the priority endpoints (`/improve`, `/similar`, the
+ * explanations) and the map endpoints take it. `factors` is left out when all
+ * are selected, which the API reads as "everything".
+ */
+export function priorityQuery(
+  selection: FactorSelection,
+  weights: DefaultWeights | undefined,
+): PriorityQuery {
+  return {
+    factors: isAllSelected(selection) ? undefined : selection.factors,
+    weights,
+  };
+}
+
+/** A string identity for a priorities query, for effect keys and debouncing. */
+export function priorityKey(query: PriorityQuery): string {
+  const weights = Object.entries(query.weights ?? {}).sort(([a], [b]) =>
+    a < b ? -1 : 1,
+  );
+  return `${query.factors ? query.factors.join(",") : "*"}|${JSON.stringify(weights)}`;
+}
+
+/** An explicit empty list is "no factors": the API rejects it, so callers skip the request. */
+export function hasNoFactors(query: PriorityQuery): boolean {
+  return query.factors !== undefined && query.factors.length === 0;
 }

@@ -82,7 +82,8 @@ def test_weak_selection_order_and_skips_negative(setup):
 
 def test_weak_factors_threshold_and_none():
     scores = {"grocery": 74.9, "gym": 75.0, "cafe": None, "premiumRetail": 10, "gasStation": 0}
-    assert [k for k, _ in weak_factors(scores, 5)] == ["premiumRetail", "grocery"]
+    # premiumRetail is never its own suggestion
+    assert [k for k, _ in weak_factors(scores, 5)] == ["grocery"]
 
 
 def test_no_weak_factors(setup):

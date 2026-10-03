@@ -1,7 +1,10 @@
+/* Same box as the score header so nothing below it moves. */
 .card {
-  display: grid;
+  display: flex;
+  align-items: center;
   gap: 1rem;
-  padding: 1.25rem;
+  height: 100%;
+  padding: 1rem 3rem 1rem 1rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -13,22 +16,10 @@
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-.heading {
-  width: min(22rem, 80%);
-  height: 1.75rem;
-}
-
-.summary {
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-  padding: 0.5rem 0;
-}
-
 .ring {
   flex: none;
-  width: 7.5rem;
-  height: 7.5rem;
+  width: 4.75rem;
+  height: 4.75rem;
   border-radius: 50%;
 }
 
@@ -38,17 +29,19 @@
   gap: 0.625rem;
 }
 
+.heading {
+  width: 90%;
+  height: 1.25rem;
+}
+
 .line {
-  height: 1rem;
+  width: 40%;
+  height: 0.75rem;
 }
 
 .lineShort {
-  width: 60%;
-  height: 1rem;
-}
-
-.row {
-  height: 2.75rem;
+  width: 65%;
+  height: 0.875rem;
 }
 
 @keyframes pulse {
@@ -57,8 +50,8 @@
   }
 }
 
-@media (min-width: 40rem) {
-  .card {
-    padding: 1.5rem;
+@media (prefers-reduced-motion: reduce) {
+  .block {
+    animation: none;
   }
 }

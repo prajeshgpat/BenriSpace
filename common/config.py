@@ -48,6 +48,6 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# Deployed default stays v1 until v2 data is ingested; the v2 constant is
-# for the ingestion workflow / local runs to opt in via the env var.
-SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", WEIGHTS_VERSION_V1)
+# v2 has been live since the 2026-10 cutover (restaurants, bars, premium retail,
+# noise corridor, school 20/80). Set SCORING_WEIGHTS_VERSION=v1-handtuned to roll back.
+SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", WEIGHTS_VERSION_V2)

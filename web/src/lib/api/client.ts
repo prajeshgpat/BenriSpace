@@ -14,6 +14,9 @@ import type {
   ImproveSuggestion,
   ExplanationSource,
   Position,
+  PriorityQuery,
+  Similar,
+  SimilarArea,
   FactorKey,
   MapCells,
   MapCellsQuery,
@@ -76,16 +79,26 @@ export interface ApiClient {
   getMapTop(query: MapTopQuery, options?: RequestOptions): Promise<MapTop>;
   getScoreExplanation(
     geoEntityId: string,
-    options?: RequestOptions,
+    options?: RequestOptions & PriorityQuery,
   ): Promise<Explanation>;
   /** Slower than `getAreaByCoordinates`: the text may be written by the LLM. */
   getAreaExplanation(
     lat: number,
     lon: number,
-    signal?: AbortSignal,
+    options?: RequestOptions & PriorityQuery,
   ): Promise<AreaExplanation>;
   /** What would raise the score nearby: named places and better spots. */
-  getImprove(lat: number, lon: number, signal?: AbortSignal): Promise<Improve>;
+  getImprove(
+    lat: number,
+    lon: number,
+    options?: RequestOptions & PriorityQuery,
+  ): Promise<Improve>;
+  /** Areas elsewhere in the metro with a similar profile for the selected factors. */
+  getSimilar(
+    lat: number,
+    lon: number,
+    options?: RequestOptions & PriorityQuery,
+  ): Promise<Similar>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -244,6 +257,7 @@ export function parseAreaExplanation(body: unknown): AreaExplanation {
     explanation: body.explanation,
     source: body.source,
     areaId: body.areaId,
+    priorities: parseFactors(body.priorities),
   };
 }
 
@@ -373,6 +387,52 @@ export function parseImprove(body: unknown): Improve {
     radiusMi: body.radiusMi,
     suggestions,
     bestNearby: parseBestNearby(body.bestNearby),
+    priorities: parseFactors(body.priorities),
+  };
+}
+
+export function parseSimilar(body: unknown): Similar {
+  if (!isObject(body) || !Array.isArray(body.results)) {
+    throw invalidResponse("similar areas");
+  }
+  const results = body.results.flatMap((item): SimilarArea[] =>
+    isObject(item) &&
+    isFiniteNumber(item.latitude) &&
+    isFiniteNumber(item.longitude) &&
+    typeof item.direction === "string" &&
+    typeof item.distanceLabel === "string" &&
+    isFiniteNumber(item.similarity) &&
+    isFiniteNumber(item.compositeScore)
+      ? [
+          {
+            latitude: item.latitude,
+            longitude: item.longitude,
+            direction: item.direction,
+            distanceLabel: item.distanceLabel,
+            similarity: item.similarity,
+            compositeScore: item.compositeScore,
+            areaLabel: isNonEmptyString(item.areaLabel) ? item.areaLabel : null,
+            differences: Array.isArray(item.differences)
+              ? item.differences.flatMap((d): SimilarArea["differences"] =>
+                  isObject(d) &&
+                  isFactorKey(d.factor) &&
+                  isNonEmptyString(d.label) &&
+                  isFiniteNumber(d.delta)
+                    ? [{ factor: d.factor, label: d.label, delta: d.delta }]
+                    : [],
+                )
+              : [],
+            summary: typeof item.summary === "string" ? item.summary : "",
+          },
+        ]
+      : [],
+  );
+  return {
+    minSeparationMi: isFiniteNumber(body.minSeparationMi)
+      ? body.minSeparationMi
+      : 0,
+    results,
+    priorities: parseFactors(body.priorities),
   };
 }
 
@@ -502,6 +562,14 @@ function formatNumber(value: number): string {
 function mapParams(query: MapCellsQuery | MapTopQuery): URLSearchParams {
   const params = new URLSearchParams();
   if (query.bbox) params.set("bbox", query.bbox.map(formatNumber).join(","));
+  return priorityParams(query, params);
+}
+
+/** `factors` and `weights`, shared by every endpoint that takes the user's selection. */
+function priorityParams(
+  query: PriorityQuery,
+  params: URLSearchParams,
+): URLSearchParams {
   if (query.factors) params.set("factors", query.factors.join(","));
   const weights = Object.entries(query.weights ?? {});
   if (weights.length > 0) {
@@ -593,25 +661,49 @@ export function createApiClient({
       return parseAreaScore(await getJson(`/area?${params}`, options));
     },
 
-    async getAreaExplanation(lat, lon, signal) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+    async getAreaExplanation(lat, lon, { factors, weights, ...options } = {}) {
+      const params = priorityParams(
+        { factors, weights },
+        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
+      );
       return parseAreaExplanation(
-        await getJson(`/area/explanation?${params}`, { signal }),
+        await getJson(`/area/explanation?${params}`, options),
       );
     },
 
-    async getImprove(lat, lon, signal) {
-      const params = new URLSearchParams({
-        lat: String(lat),
-        lon: String(lon),
-        radiusMi: "1",
-        maxSuggestions: "3",
-      });
-      return parseImprove(await getJson(`/improve?${params}`, { signal }));
+    async getImprove(lat, lon, { factors, weights, ...options } = {}) {
+      const params = priorityParams(
+        { factors, weights },
+        new URLSearchParams({
+          lat: String(lat),
+          lon: String(lon),
+          radiusMi: "1",
+          maxSuggestions: "3",
+        }),
+      );
+      return parseImprove(await getJson(`/improve?${params}`, options));
     },
 
-    async getScoreExplanation(geoEntityId, options) {
-      const path = `/score/${encodeURIComponent(geoEntityId)}/explanation`;
+    async getSimilar(lat, lon, { factors, weights, ...options } = {}) {
+      const params = priorityParams(
+        { factors, weights },
+        new URLSearchParams({
+          lat: String(lat),
+          lon: String(lon),
+          k: "5",
+          minSeparationMi: "1",
+        }),
+      );
+      return parseSimilar(await getJson(`/similar?${params}`, options));
+    },
+
+    async getScoreExplanation(geoEntityId, { factors, weights, ...options } = {}) {
+      const params = priorityParams(
+        { factors, weights },
+        new URLSearchParams(),
+      );
+      const query = params.size > 0 ? `?${params}` : "";
+      const path = `/score/${encodeURIComponent(geoEntityId)}/explanation${query}`;
       return parseExplanation(await getJson(path, options));
     },
 

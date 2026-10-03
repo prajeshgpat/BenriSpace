@@ -3,6 +3,7 @@
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useImprove } from "@/hooks/useImprove";
 import type { ApiClient } from "@/lib/api/client";
+import type { PriorityQuery } from "@/lib/api/types";
 import { FactorIcon } from "@/lib/factorIcons";
 import { roundScore } from "@/lib/score/presentation";
 
@@ -11,6 +12,7 @@ import styles from "./ImproveCard.module.css";
 export interface ImproveCardProps {
   coordinates: { lat: number; lon: number } | null;
   client: Pick<ApiClient, "getImprove">;
+  priorities?: PriorityQuery;
   onFocusPoint: (lat: number, lon: number) => void;
 }
 
@@ -19,8 +21,8 @@ function signed(value: number): string {
   return `${rounded >= 0 ? "+" : "−"}${Math.abs(rounded)}`;
 }
 
-export function ImproveCard({ coordinates, client, onFocusPoint }: ImproveCardProps) {
-  const { status, data } = useImprove(coordinates, client);
+export function ImproveCard({ coordinates, client, priorities, onFocusPoint }: ImproveCardProps) {
+  const { status, data, updating } = useImprove(coordinates, client, priorities);
   // Tall content stays a single summary row on phones until opened.
   const mobile = useIsMobile();
 
@@ -44,9 +46,10 @@ export function ImproveCard({ coordinates, client, onFocusPoint }: ImproveCardPr
   const best = data.bestNearby;
 
   return (
-    <details className={styles.card} open={!mobile}>
+    <details className={styles.card} open={!mobile} aria-busy={updating || undefined}>
       <summary className={styles.summary}>
         <h3 className={styles.title}>Improve this area</h3>
+        {updating ? <span className={styles.updating}>Updating…</span> : null}
       </summary>
       {best ? (
         <p className={styles.best}>

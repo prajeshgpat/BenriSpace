@@ -12,6 +12,13 @@
   min-height: 2.5rem;
   display: flex;
   align-items: center;
+  gap: 0.75rem;
+}
+
+.updating {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-style: italic;
 }
 
 .title {

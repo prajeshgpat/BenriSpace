@@ -70,10 +70,10 @@ def test_differences_threshold_order_and_cap():
     diffs = differences(target, row)
     assert [d["factor"] for d in diffs] == ["gym", "bar", "transit"]  # 20,20,14 ; cap 3
     assert diffs[0]["delta"] == 20 and diffs[1]["delta"] == -20
-    assert all(abs(d["delta"]) >= 10 for d in diffs)
-    # exactly 10 counts, 9.9 does not
-    assert differences(target, scores(cafe=60.0))[0]["delta"] == 10
-    assert differences(target, scores(cafe=59.9)) == []
+    assert all(abs(d["delta"]) >= 6 for d in diffs)
+    # exactly 6 counts (threshold lowered from 10), 5.9 does not
+    assert differences(target, scores(cafe=56.0))[0]["delta"] == 6
+    assert differences(target, scores(cafe=55.9)) == []
     # null on either side is skipped; camelCase wire key
     assert differences(scores(school=None), scores(school=90.0)) == []
     assert differences(target, scores(emergency_corridor=20.0))[0]["factor"] == "emergencyCorridor"

@@ -83,12 +83,14 @@ class ExplanationResponse(CamelModel):
     nearest_mi: dict[str, float | None] | None = None
     # 'ai' when written by the LLM layer, 'rules' for the rule-based text.
     source: Literal["ai", "rules"] | None = None
+    priorities: list[str] = []
 
 
 class AreaExplanationResponse(CamelModel):
     explanation: str
     source: Literal["ai", "rules"]
     area_id: int | None = None
+    priorities: list[str] = []
 
 
 class AnchorPoint(CamelModel):
@@ -237,6 +239,8 @@ class ImproveResponse(CamelModel):
     radius_mi: float
     suggestions: list[ImproveSuggestion]
     best_nearby: BestNearby | None = None
+    # Factor keys used (the request's `factors`, or the 12 toggleable ones).
+    priorities: list[str] = []
 
 
 class SimilarDifference(CamelModel):
@@ -260,3 +264,4 @@ class SimilarArea(CamelModel):
 class SimilarResponse(CamelModel):
     min_separation_mi: float
     results: list[SimilarArea]
+    priorities: list[str] = []

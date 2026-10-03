@@ -75,9 +75,9 @@ def test_validate_rejects_metric(text):
         {"summary": 5, "strengths": [], "weaknesses": []},
         {"summary": "ok", "strengths": "x", "weaknesses": []},
         {"summary": "ok", "strengths": [1], "weaknesses": []},
-        {"summary": "x" * 451, "strengths": [], "weaknesses": []},
+        {"summary": "x" * 651, "strengths": [], "weaknesses": []},
         {"summary": "ok", "strengths": ["x" * 141], "weaknesses": []},
-        {"summary": "ok", "strengths": ["a"] * 4, "weaknesses": []},
+        {"summary": "ok", "strengths": ["a"] * 3, "weaknesses": []},
     ],
 )
 def test_validate_rejects_bad_shape(bad):
