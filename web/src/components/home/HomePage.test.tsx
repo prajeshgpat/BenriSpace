@@ -2,8 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { FACTOR_GUIDE } from "@/lib/home/factorGuide";
-import { FACTOR_KEYS, FACTORS, UNDERLYING_FACTOR_KEYS } from "@/lib/score/factors";
-import { EXAMPLE_ADDRESSES } from "@/lib/site";
+import { FACTOR_KEYS, FACTORS } from "@/lib/score/factors";
 
 import { HomePage } from "./HomePage";
 
@@ -15,71 +14,52 @@ describe("HomePage", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
-  it("points the two calls to action at the app and the API", () => {
-    render(<HomePage />);
-    const open = screen.getAllByRole("link", { name: "Open the app" });
-    const api = screen.getAllByRole("link", { name: "See the API" });
-    expect(open.length).toBeGreaterThan(0);
-    for (const link of open) expect(link).toHaveAttribute("href", "/app");
-    for (const link of api) expect(link).toHaveAttribute("href", "/docs");
+  it("has a no-JS address search that submits to the app", () => {
+    const { container } = render(<HomePage />);
+    const form = container.querySelector("form")!;
+    expect(form).toHaveAttribute("action", "/app");
+    expect(form).toHaveAttribute("method", "get");
+    const input = screen.getByRole("searchbox", { name: "Address" });
+    expect(input).toHaveAttribute("name", "address");
+    expect(form).toContainElement(input);
+    expect(within(form).getByRole("button")).toHaveAttribute("type", "submit");
   });
 
-  it("explains the sections a visitor needs", () => {
-    render(<HomePage />);
-    for (const name of [
-      "How it works",
-      "How a score is built",
-      "Reading the map",
-      "Data sources and limits",
-    ]) {
-      expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
-    }
-    expect(screen.getByText("Missing data is left out")).toBeInTheDocument();
-  });
-
-  it("describes the twelve factors and the two behind-the-scenes signals with weights", () => {
-    render(<HomePage />);
-    const cards = screen.getAllByRole("listitem").filter((li) => li.hasAttribute("data-factor"));
-    expect(cards).toHaveLength(FACTOR_KEYS.length + UNDERLYING_FACTOR_KEYS.length);
-    expect(
-      screen.getByRole("heading", { level: 2, name: "Behind-the-scenes signals" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 3, name: "Running route popularity" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: "Noise corridor" })).toBeInTheDocument();
-    expect(screen.queryByText(/Strava|Emergency corridor|Trail popularity/)).toBeNull();
-    for (const key of [...FACTOR_KEYS, ...UNDERLYING_FACTOR_KEYS]) {
-      const card = cards.find((li) => li.getAttribute("data-factor") === key)!;
-      expect(
-        within(card).getByRole("heading", { level: 3, name: FACTORS[key].label }),
-      ).toBeInTheDocument();
-      expect(card).toHaveTextContent(`Weight: ${FACTOR_GUIDE[key].weight}`);
-    }
-  });
-
-  it("states the school rule, null policy and that GreatSchools is only linked", () => {
+  it("lists the twelve factors with icons, names and one sentence", () => {
     render(<HomePage />);
     expect(FACTOR_KEYS).toHaveLength(12);
-    expect(
-      screen.getByRole("heading", { level: 2, name: "The twelve factors" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Schools: 20% proximity, 80% rating"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/It is never counted as a zero/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/GreatSchools is linked, not used as a data source/),
-    ).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem").filter((li) => li.hasAttribute("data-factor"));
+    expect(items).toHaveLength(12);
+    for (const key of FACTOR_KEYS) {
+      const item = items.find((li) => li.getAttribute("data-factor") === key)!;
+      expect(
+        within(item).getByRole("heading", { level: 3, name: FACTORS[key].label }),
+      ).toBeInTheDocument();
+      expect(item).toHaveTextContent(FACTOR_GUIDE[key].blurb);
+      expect(item.querySelector("svg")).not.toBeNull();
+    }
+    expect(screen.getByRole("heading", { level: 3, name: "Noise corridor" })).toBeInTheDocument();
   });
 
-  it("links example addresses into the app", () => {
+  it("shows the three steps and mentions feet and miles", () => {
     render(<HomePage />);
-    for (const address of EXAMPLE_ADDRESSES) {
-      expect(screen.getByRole("link", { name: address })).toHaveAttribute(
-        "href",
-        `/app?${new URLSearchParams({ address })}`,
-      );
+    for (const name of ["Search", "See the score", "Understand why"]) {
+      expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
     }
+    expect(screen.getByText(/feet and miles/)).toBeInTheDocument();
+  });
+
+  it("lists what is coming soon", () => {
+    render(<HomePage />);
+    expect(screen.getByRole("heading", { level: 2, name: "Coming soon" })).toBeInTheDocument();
+    for (const item of ["AI explanations", "Similar areas", "Compare places"]) {
+      expect(screen.getByText(item)).toBeInTheDocument();
+    }
+  });
+
+  it("links to the app from the hero and the closing call to action", () => {
+    render(<HomePage />);
+    expect(screen.getByRole("link", { name: "Explore the map" })).toHaveAttribute("href", "/app");
+    expect(screen.getByRole("link", { name: "Open the app" })).toHaveAttribute("href", "/app");
   });
 });
