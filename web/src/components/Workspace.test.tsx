@@ -146,6 +146,10 @@ function setup(
       latitude: lat,
       longitude: lon,
     })),
+    // The improve card is optional; keep it out of the score-call counts.
+    getImprove: vi.fn(async () => {
+      throw new Error("improve unavailable");
+    }),
     ...overrides,
   };
   return {

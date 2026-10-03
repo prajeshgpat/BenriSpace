@@ -32,6 +32,54 @@ export interface AreaExplanation {
   areaId: number | null;
 }
 
+export interface ImprovePlace {
+  name: string;
+  brand: string | null;
+  distanceMi: number;
+  distanceLabel: string;
+  direction: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface ImproveBetterArea {
+  latitude: number;
+  longitude: number;
+  direction: string;
+  distanceMi: number;
+  distanceLabel: string;
+  factorScore: number;
+  factorGain: number;
+  compositeScore: number;
+  compositeGain: number;
+}
+
+export interface ImproveSuggestion {
+  factor: FactorKey;
+  label: string;
+  score: number;
+  places: ImprovePlace[];
+  betterArea: ImproveBetterArea | null;
+  tip: string;
+}
+
+export interface ImproveBestNearby {
+  latitude: number;
+  longitude: number;
+  direction: string;
+  distanceLabel: string;
+  compositeScore: number;
+  compositeGain: number;
+}
+
+/** What would make the surrounding area score higher. */
+export interface Improve {
+  composite: number;
+  radiusMi: number;
+  suggestions: ImproveSuggestion[];
+  bestNearby: ImproveBestNearby | null;
+}
+
 export type ApiErrorBody = Schemas["Error"];
 
 export type ScoreQuery = NonNullable<

@@ -15,6 +15,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
+| `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
@@ -35,7 +36,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
   `code` is stable and meant for programs; `message` is for humans and may change.
 - **`null` means "not measured", never 0.** A sub-score can be `null` when the underlying data does not exist for that spot yet. Treat it as unknown. Composites ignore `null` factors rather than counting them as zero.
 - **CORS:** browsers may call the API only from `https://benrispace.com`, `https://www.benrispace.com` and `http://localhost:3000`. From any other origin the browser will block the response. Server-side clients (curl, Python, Node) are not affected by CORS.
-- **Caching:** `/area`, `/area/explanation`, `/suggest`, `/reverse`, `/places`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
+- **Caching:** `/area`, `/area/explanation`, `/suggest`, `/reverse`, `/places`, `/improve`, `/map/cells` and `/map/top` send `Cache-Control: public, max-age=300`. Scores only change when the weekly data refresh runs.
 - **Rate limiting:** the API Gateway currently allows a steady 10 requests per second with bursts of 20, across all callers. Beyond that you get `429 Too Many Requests` (from API Gateway, not the application, so the body is not in the error shape above). Per-user quotas arrive with API keys.
 
 ## What a score means
@@ -479,6 +480,57 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | Missing or invalid `lat`/`lon`, unknown `factor`, `radiusMi` outside (0, 5], or `limit` outside 1..20 |
+| 422 | `out_of_coverage` | The point is outside the covered metro area |
+
+---
+
+## `GET /improve`
+
+Deterministic "what could improve this score" suggestions for the area under a point. It finds the weakest place-based factors (grocery, gym, cafe, restaurant, bar, transit, school, premiumRetail; a score below 75, lowest first), and for each lists nearby named places and the best neighbouring cell that scores at least 10 points higher on that factor. Factors where less is better (gas stations, traffic, noise, airports) and trails are never suggested. Nothing is generated or guessed: every sentence comes from stored scores and places. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+
+The point is resolved like `/area` (the road-bounded area's score). If no area is found there, the grid cell's own score is used instead.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `lat` | number | yes | Latitude, inside the covered area |
+| `lon` | number | yes | Longitude, inside the covered area |
+| `radiusMi` | number | no | Search radius in miles, above 0 and up to 3. Default 1 |
+| `maxSuggestions` | integer | no | 1 to 5 factors. Default 3 |
+
+```bash
+curl "https://api.benrispace.com/v1/improve?lat=40.758&lon=-73.9855&maxSuggestions=2"
+```
+
+Example response (invented for illustration, not a captured production response):
+
+```json
+{
+  "composite": 68.4,
+  "radiusMi": 1.0,
+  "suggestions": [
+    {
+      "factor": "grocery",
+      "label": "Grocery",
+      "score": 41,
+      "places": [
+        { "name": "Aldi", "brand": "Aldi", "distanceMi": 0.31, "distanceLabel": "0.3 mi", "direction": "W", "latitude": 40.758, "longitude": -73.9911 }
+      ],
+      "betterArea": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceMi": 0.42, "distanceLabel": "0.4 mi", "factorScore": 66, "factorGain": 25, "compositeScore": 72, "compositeGain": 4 },
+      "tip": "Grocery is your weakest factor (41). The closest option is Aldi, 0.3 mi west. The area about 0.4 mi north scores 66 on grocery."
+    }
+  ],
+  "bestNearby": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceLabel": "0.4 mi", "compositeScore": 72, "compositeGain": 4 }
+}
+```
+
+`places` is an empty list when nothing is within the radius, `betterArea` is `null` when no neighbouring cell gains 10 points, and `bestNearby` is `null` when no neighbouring cell raises the composite by at least 3. `suggestions` is empty when no factor is below 75. Up to 3 places are returned per factor. Gains are whole numbers.
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `radiusMi` outside (0, 3], or `maxSuggestions` outside 1..5 |
+| 404 | `area_not_found` | No area and no scored cell for this location |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ---
