@@ -104,6 +104,9 @@ interface MapCanvasProps {
   onUnavailable: () => void;
 }
 
+/** Fade-in for the area polygon fill. */
+const AREA_FADE_MS = 250;
+
 function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -185,7 +188,7 @@ function addCellLayers(map: MaplibreMap, theme: ResolvedTheme) {
   });
 }
 
-function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme) {
+function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
   const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
   const style = AREA_STYLE[theme];
 
@@ -195,7 +198,15 @@ function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme) {
       id: AREA_FILL_LAYER,
       type: "fill",
       source: AREA_SOURCE_ID,
-      paint: { "fill-color": style.line, "fill-opacity": style.fillOpacity },
+      paint: {
+        "fill-color": style.line,
+        // Transparent until an area exists; the area effect raises it to fade in.
+        "fill-opacity": visible ? style.fillOpacity : 0,
+        "fill-opacity-transition": {
+          duration: prefersReducedMotion() ? 0 : AREA_FADE_MS,
+          delay: 0,
+        },
+      },
     },
     firstLabel?.id,
   );
@@ -314,7 +325,7 @@ export function MapCanvas({
     // arrives without our layers, so they are put back on top of it.
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
-      addAreaLayers(map, styleTheme.current);
+      addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
       (map.getSource(AREA_SOURCE_ID) as GeoJSONSource).setData(
         areaData(latest.current.areaGeometry),
       );
@@ -386,7 +397,14 @@ export function MapCanvas({
     (map.getSource(AREA_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
       areaData(areaGeometry),
     );
-  }, [areaGeometry, ready]);
+    if (map.getLayer(AREA_FILL_LAYER)) {
+      map.setPaintProperty(
+        AREA_FILL_LAYER,
+        "fill-opacity",
+        areaGeometry ? AREA_STYLE[latest.current.theme].fillOpacity : 0,
+      );
+    }
+  }, [areaGeometry, ready, latest]);
 
   useEffect(() => {
     const map = mapRef.current;

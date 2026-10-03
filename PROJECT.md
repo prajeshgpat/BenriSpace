@@ -64,9 +64,12 @@ Scores are a **weighted composite of normalized sub-scores**, hand-tuned
 initially (no training data to fit against yet). Document weight rationale —
 it's the defensibility story for both users and future ML refinement.
 
-**Status (2026-10-02):** production serves v1 (11 factors). The v2 code is
-merged and its data ingestion plus the Lambda cutover
-(`SCORING_WEIGHTS_VERSION=v2-handtuned`) are in progress.
+**Status (2026-10-03):** the v2 cutover is done. Production serves
+`v2-handtuned` (14 factors, 64,320 score rows; the Lambda runs
+`SCORING_WEIGHTS_VERSION=v2-handtuned`). v1 rows remain in the database as
+history. Known weakness: min-max normalization is skewed by outlier distances,
+so remote cells can score high on restaurant/bar (v3 candidate, see
+`PHASES.md`).
 
 **Clicking the map** scores the area bounded by secondary-and-above roads
 (plus coastline closure) that contains the point: the area-weighted average of

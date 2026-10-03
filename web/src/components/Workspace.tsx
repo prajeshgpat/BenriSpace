@@ -372,7 +372,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     pickedHere?.kind === "top"
       ? (topResults?.find((r) => r.geohash === pickedHere.geohash) ?? null)
       : null;
-  const highlightGeohash = pickedHere?.geohash ?? null;
+  // The lookup may upgrade the grid square to a secondary-road polygon, so the
+  // rectangle is held back until it settles; it only shows as the fallback
+  // when no polygon came back (or the lookup failed).
+  const highlightGeohash =
+    pickedHere && state.status !== "loading" ? pickedHere.geohash : null;
 
   const markers = useMemo(
     () =>

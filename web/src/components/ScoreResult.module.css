@@ -165,7 +165,18 @@
 }
 
 .factorLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
   font-weight: 600;
+}
+
+.factorIcon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--text-subtle);
 }
 
 .factorValue {

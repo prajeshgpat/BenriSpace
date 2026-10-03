@@ -8,14 +8,15 @@ Each phase below has a **Requirements from you** subsection — accounts,
 API keys, or decisions that only you can provide, not something to design
 around. Full list, but here's what's actually blocking right now:
 
-## Status as of 2026-10-02
+## Status as of 2026-10-03
 
 Phase 1 is **live in production**: https://benrispace.com (Next.js on
 Amplify) and https://api.benrispace.com (FastAPI on Lambda behind API
 Gateway), backed by Postgres on Supabase. PRs #1–#5 have merged
-(`dev-benrispace` → `main`). **In progress:** the scoring v2 data
-ingestion run and the Lambda cutover to `v2-handtuned` (see Phase 1 →
-Scoring engine). Production still serves v1 scores until that switch.
+(`dev-benrispace` → `main`). **The v2 cutover is done (2026-10-03):** the
+v2 data ingestion completed, 64,320 `v2-handtuned` score rows are live, the
+API Lambda serves `SCORING_WEIGHTS_VERSION=v2-handtuned`, and click-to-polygon
+`/v1/area` is live. See "Next up (roadmap)" below for what comes next.
 
 ## Blocking items
 
@@ -199,8 +200,7 @@ precomputed scores served through an API.
       score is 20% proximity + 80% rating, and NULL (never 0) when a cell
       has no rated district. GreatSchools is link-only (licensed, not
       ingested); Stanford SEDA was rejected (non-commercial terms). See
-      `docs/data-sources.md`. **In progress:** code merged; the live v2
-      ingestion run is not finished.
+      `docs/data-sources.md`. Live v2 ingestion is complete.
 - [x] **Road classification ingestion** — `ingestion/roads.py`. Code
       complete + unit tested (18 tests) for `road_classification`,
       `congestion_proxy_raw`, `emergency_corridor_proxy_raw`,
@@ -211,8 +211,7 @@ precomputed scores served through an API.
       fire-station, hospital and police locations from OSM now drive the
       **noise corridor** factor (formerly "emergency corridor"; the API key
       is still `emergencyCorridor`), with the road proxy as per-cell
-      fallback. The v2 live run of that job is part of the in-progress
-      ingestion below.
+      fallback. The v2 live run of that job is complete.
 - [x] **Airport proximity** — `ingestion/airports.py`. JFK/LGA/EWR
       hardcoded; drive time via a pluggable router — straight-line fallback
       active today (Valhalla unset), real Valhalla call wired and ready for
@@ -284,28 +283,28 @@ precomputed scores served through an API.
       values persist, the red job still surfaces the failure), and the
       shared Overpass client retries a *fast* 502/503/504 with backoff
       while still letting a *slow* one reach roads/trails' bbox-splitting.
-      These fixes are merged. **In progress:** the v2 data ingestion run
-      (new factor, school and emergency-facility columns) and a fully
-      green end-to-end run; the NJ Transit row is expected to fail until
-      its key exists.
+      These fixes are merged. The v2 data ingestion run (new factor,
+      school and emergency-facility columns) completed in October 2026;
+      the NJ Transit row is expected to fail until its key exists.
 - [x] **Storage** — Supabase project live 2026-09-29 (see the Requirements
       note above for the full story: pipeline-mode fix, pooler vs. direct
       connection). Schema applied, grid populated, confirmed working
       end-to-end.
-- [~] **Scoring engine** — `scoring/engine.py` + `scoring/run.py`. Weighted
+- [x] **Scoring engine** — `scoring/engine.py` + `scoring/run.py`. Weighted
       composite of normalized sub-scores, hand-tuned weights with
       documented rationale (`DEFAULT_WEIGHTS`), live-verified against real
-      Supabase data. **v1 (`v1-handtuned`, 11 factors) is what production
-      serves.** **v2 (`v2-handtuned`, 14 factors)** is merged in code: 12
+      Supabase data. **v2 (`v2-handtuned`, 14 factors) is what production
+      serves** (cut over 2026-10-03; v1, 11 factors, remains as history): 12
       user-toggleable factors (grocery, gym, cafe, restaurant, bar, gas
       station, convenience store, transit, school, road, noise corridor,
       airport) plus 2 underlying signals that count toward the overall
       score but cannot be toggled: premium retail (Whole Foods/Starbucks/
       Target "nicer area" signal, Target weighted less) and running route
-      popularity. **In progress:** finishing the v2 ingestion run, then
-      switching the Lambda's `SCORING_WEIGHTS_VERSION` to `v2-handtuned`
-      (it is unset today, so the code default `v1-handtuned` applies).
-      Kept as direct (non-delegated) work per this phase's sequencing
+      popularity. 64,320 rows are live and the Lambda's
+      `SCORING_WEIGHTS_VERSION` is `v2-handtuned`. **Known weakness (v3
+      candidate):** min-max normalization is skewed by outlier distances, so
+      remote cells can score high on restaurant/bar; a percentile or
+      clipped/log-scaled normalization would fix it. Kept as direct (non-delegated) work per this phase's sequencing
       guidance.
 - [x] **API** — `api/` on Lambda at https://api.benrispace.com, unit
       tested, CORS for the frontend origins, unauthenticated (Phase 4 adds
@@ -313,10 +312,10 @@ precomputed scores served through an API.
       `/v1/suggest` (address autocomplete: LocationIQ primary, Photon
       fallback), `/v1/reverse` (readable street address for a clicked
       point), `/v1/map/cells`, `/v1/map/top`, `/v1/area`, and
-      `POST /v1/triangulate`. `/score` is fully real; `/explanation` and
-      `/triangulate` are still clearly-labeled placeholders
-      (template-based explanation, straight-line-circle isochrone)
-      standing in for Phase 3/2. Geocoding for typed addresses still
+      `POST /v1/triangulate`. `/score`, `/area` and `/explanation` are fully live
+      (`/explanation` is rule-based, `api/explain.py`; the LLM version is
+      Phase 3). Only `/triangulate` is still a clearly-labeled placeholder
+      (straight-line-circle isochrone) standing in for Phase 2. Geocoding for typed addresses still
       uses OSM Nominatim (`api/geocoding.py`).
 - [x] **Click-to-polygon areas** — clicking the map shows the area bounded
       by secondary-and-above roads (plus coastline closure) containing the
@@ -630,6 +629,46 @@ the added complexity/cost.
 
 N/A until traction signal exists — this phase is intentionally not
 scheduled until Phases 1–4 are live and generating real usage data.
+
+---
+
+## Next up (roadmap)
+
+In priority order. Items here may belong to a later phase above; this is the
+working order, not a replacement for the phases.
+
+1. Rectangle-flash fix (the cell rectangle briefly flashes before the area
+   polygon draws) and factor icons.
+2. Mobile bottom-sheet UI.
+3. Minimalist homepage.
+4. LLM groundwork: `common/llm.py`, an explanation cache table, and migration
+   `0004` adding pgvector embeddings.
+5. `/v1/improve` and `/v1/similar`, with UI.
+6. Natural-language search and ask-about-this-area.
+
+**Now features**
+
+- Compare locations.
+- Data transparency page.
+- Feedback loop.
+- Public API docs, keys and an OpenAPI playground (Business tier).
+
+**Near term**
+
+- Commute/isochrones (needs Valhalla).
+
+**Later**
+
+- Saved places and shareable reports.
+- Safety, flood and air quality.
+- Personalised weights and presets.
+- Cost layer.
+- Score history and alerts.
+- Accessibility factors.
+
+**Scoring v3 candidate:** replace min-max normalization with a method robust
+to outlier distances (percentile ranks or clipped/log-scaled distances), since
+remote cells can currently score high on restaurant and bar.
 
 ---
 

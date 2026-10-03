@@ -56,6 +56,22 @@ describe("ScoreResult", () => {
     expect(screen.getByText("Based on all 12 factors.")).toBeInTheDocument();
   });
 
+  it("puts a decorative icon before each factor label", () => {
+    render(
+      <ScoreResult
+        address="x"
+        score={makeScore({ subScores: fullSubScores })}
+        explanation={READY}
+      />,
+    );
+
+    for (const key of FACTOR_KEYS) {
+      const svg = factorItem(key).querySelector("svg");
+      expect(svg).toHaveAttribute("aria-hidden", "true");
+      expect(svg).toHaveAttribute("data-icon", key);
+    }
+  });
+
   it("shows null sub-scores as no data with no bar, never as 0", () => {
     render(
       <ScoreResult

@@ -116,3 +116,18 @@ describe("FactorControls", () => {
     expect(screen.getByText(/one or two factors/)).toBeInTheDocument();
   });
 });
+
+describe("factor icons", () => {
+  it("shows a decorative icon before every factor label", () => {
+    render(<FactorControls selection={ALL_FACTORS} onChange={() => {}} />);
+    const toggles = screen.getAllByRole("checkbox");
+    expect(toggles.length).toBeGreaterThan(0);
+    for (const box of toggles) {
+      const label = box.closest("label")!;
+      const svg = label.querySelector("svg");
+      expect(svg).toHaveAttribute("aria-hidden", "true");
+      expect(label.firstElementChild).toBe(box);
+      expect(box.nextElementSibling).toBe(svg);
+    }
+  });
+});

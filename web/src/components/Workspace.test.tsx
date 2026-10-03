@@ -1009,6 +1009,43 @@ describe("area polygon", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("passes no highlight while the lookup is pending, then the polygon replaces it", async () => {
+    let release: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    setup("", liveApi, {}, () => pending);
+    await mapReady();
+
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
+
+    expect(map().highlightGeohash).toBeNull();
+    expect(map().areaGeometry ?? null).toBeNull();
+
+    await act(async () => release(jsonResponse(makeAreaBody())));
+    expect(
+      await screen.findByText("Area bounded by Broadway, Canal St, Bowery and Houston St"),
+    ).toBeInTheDocument();
+    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+  });
+
+  it("holds the rectangle back during the fallback lookup and shows it once settled", async () => {
+    let release: (response: Response) => void = () => {};
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    setup("", liveApi, {}, () => pending);
+    await mapReady();
+
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
+    expect(map().highlightGeohash).toBeNull();
+
+    await act(async () => release(jsonResponse({ code: "area_not_found", message: "No area" }, 404)));
+    expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
+    expect(map().areaGeometry ?? null).toBeNull();
+    expect(map().highlightGeohash).toBe("dr5ru7");
+  });
+
   it("falls back to the rectangle when there is no area", async () => {
     setup();
     await mapReady();

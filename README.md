@@ -6,7 +6,7 @@
 
 Each location gets a 0–100 score built from 14 factors: grocery, gym, cafe, restaurant, bar, gas station, convenience store, transit, school, road access, noise corridor, airport, and two underlying signals, premium retail and running route popularity. The website lets you toggle the 12 others; the two underlying signals always count toward the overall score. "Noise corridor" (API key `emergencyCorridor`) means main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely (a rough proxy, weight 0.75). Running route popularity is built from mapped running trails in OpenStreetMap; Strava segment popularity is an optional enrichment that is not configured today.
 
-**Status (October 2026).** The v2 code is live: 14 factors, click-to-polygon areas, readable addresses, miles everywhere, and the Home and App pages. The v2 *data* (restaurants, bars, premium retail, the facility-based noise corridor, school ratings) is still being ingested and the API has not switched to the v2 scores yet, so those factors show "No data" on the site until the cutover. Coverage is the New York metro only; nationwide expansion is not planned.
+**Status (October 2026).** The v2 cutover is done (2026-10-03): 14 factors, click-to-polygon areas, readable addresses, miles everywhere, and the Home and App pages are live, and the API serves 64,320 `v2-handtuned` score rows. School ratings are `null` ("No data") where a district has no rating. Coverage is the New York metro only; nationwide expansion is not planned.
 
 ## Using the website
 
