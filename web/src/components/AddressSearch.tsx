@@ -52,7 +52,6 @@ export function AddressSearch({
 }: AddressSearchProps) {
   const id = useId();
   const inputId = `${id}-input`;
-  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const listboxId = `${id}-listbox`;
 
@@ -144,7 +143,7 @@ export function AddressSearch({
       noValidate
       onSubmit={handleSubmit}
     >
-      <label className={styles.label} htmlFor={inputId}>
+      <label className="sr-only" htmlFor={inputId}>
         Address
       </label>
       <div className={styles.row}>
@@ -163,7 +162,7 @@ export function AddressSearch({
             }}
             onKeyDown={handleKeyDown}
             onBlur={autocomplete ? suggestions.dismiss : undefined}
-            placeholder="350 5th Ave, New York, NY"
+            placeholder="Enter an address"
             maxLength={ADDRESS_MAX_LENGTH}
             autoComplete="off"
             autoCapitalize="words"
@@ -182,7 +181,7 @@ export function AddressSearch({
               : {})}
             data-adorned={endAdornment ? "true" : undefined}
             aria-invalid={error ? true : undefined}
-            aria-describedby={error ? `${errorId} ${hintId}` : hintId}
+            aria-describedby={error ? errorId : undefined}
           />
           {endAdornment ? (
             <div className={styles.adornment}>{endAdornment}</div>
@@ -221,10 +220,6 @@ export function AddressSearch({
           {error}
         </p>
       ) : null}
-      <p id={hintId} className={styles.hint}>
-        Street address, neighborhood or landmark within about two hours of New
-        York City.
-      </p>
     </form>
   );
 }

@@ -16,7 +16,7 @@ from scoring.engine import LEGACY_FALLBACK_COLUMNS
 # has no geo_entities row. geohash6 cells are ~1.22km x 0.61km
 # (ingestion/grid.py), so ~0.03 deg comfortably covers the cell's
 # immediate neighbors in every direction. Cheap to scan: the whole metro
-# is only ~64k geo_entities rows total (PROJECT.md/PHASES.md), so even an
+# is only ~64k geo_entities rows total (docs/ROADMAP.md/docs/ROADMAP.md), so even an
 # unindexed-feeling bbox scan plus a Python nearest-neighbor pass is fine
 # without reaching for PostGIS.
 FALLBACK_BBOX_MARGIN_DEG = 0.03

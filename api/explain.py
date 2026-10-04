@@ -1,15 +1,15 @@
 """**Phase 1 placeholder** for Phase 3's real RAG/LLM score explanation
-generation (PHASES.md Phase 3: "Score explanation generation -- retrieve an
+generation (docs/ROADMAP.md Phase 3: "Score explanation generation -- retrieve an
 address's stored factor breakdown, generate the human-readable 'why this
 scored 8.4' explanation"). No LLM API key exists yet -- common/config.py's
 ANTHROPIC_API_KEY/OPENAI_API_KEY are unset until Phase 3's provider
-decision lands (PHASES.md Phase 3 Requirements) -- so this module builds
+decision lands (docs/ROADMAP.md Phase 3 Requirements) -- so this module builds
 the explanation with plain string formatting/rules over the stored
 SubScores instead of a generation call.
 
 **Swap point for Phase 3**: replace `build_explanation()` below with a real
 RAG call (retrieve feature_store/scores row -> prompt -> LLM, constrained
-to only discuss retrieved data per PROJECT.md's RAG rationale). Nothing
+to only discuss retrieved data per docs/ROADMAP.md's RAG rationale). Nothing
 outside this file should need to change -- api/main.py's explanation route
 only calls build_explanation(sub_scores) and wraps the string result in
 ExplanationResponse, so this is a one-file replacement, not a route

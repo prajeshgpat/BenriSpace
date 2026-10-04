@@ -1,16 +1,11 @@
 import type { ExplanationState } from "@/hooks/useScoreLookup";
-import type { AreaInfo, Score, SchoolInfo } from "@/lib/api/types";
+import type { AreaInfo, Score } from "@/lib/api/types";
 import {
   SCORE_MAX,
   bandLabel,
   describeScoredLocation,
   roundScore,
 } from "@/lib/score/presentation";
-
-import {
-  GREATSCHOOLS_DISTRICTS_URL,
-  GREATSCHOOLS_LINK_LABEL,
-} from "@/lib/schoolLinks";
 
 import { scorePillColor } from "@/lib/score/pillColors";
 
@@ -93,20 +88,16 @@ interface ScoreSummaryProps {
 }
 
 /** The written explanation (AI or rule-based); sits under the filters. */
-export function ScoreSummary({ score, explanation }: ScoreSummaryProps) {
+export function ScoreSummary({ explanation }: ScoreSummaryProps) {
   return (
     <section className={styles.section} aria-labelledby="explanation-heading">
       <h3 id="explanation-heading" className={styles.sectionHeading}>
         Summary
       </h3>
       <ExplanationText explanation={explanation} />
-      {score.school ? <SchoolDetail school={score.school} /> : null}
     </section>
   );
 }
-
-export const AI_DISCLAIMER =
-  "Generated from this area's data only; may be imperfect";
 
 const RING_RADIUS = 52;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -163,24 +154,6 @@ function ExplanationText({ explanation }: { explanation: ExplanationState }) {
               Updating…
             </p>
           ) : null}
-          {explanation.explanationSource === "ai" ? (
-            <p
-              className={styles.aiCaption}
-              data-testid="ai-caption"
-              title={AI_DISCLAIMER}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className={styles.aiIcon}
-                aria-hidden="true"
-                focusable="false"
-              >
-                <path d="M5 4h14v12H9l-4 4z" />
-              </svg>
-              <span>AI-written summary</span>
-              <span className="sr-only">. {AI_DISCLAIMER}</span>
-            </p>
-          ) : null}
         </>
       );
     case "unavailable":
@@ -190,33 +163,4 @@ function ExplanationText({ explanation }: { explanation: ExplanationState }) {
         </p>
       );
   }
-}
-
-function SchoolDetail({ school }: { school: SchoolInfo }) {
-  const { proximity, ratingAvailable, districtName, source } = school;
-  return (
-    <div className={styles.schoolDetail} data-testid="school-detail">
-      {ratingAvailable ? (
-        <p className={styles.schoolSource}>
-          {[districtName, source ? `Rating source: ${source}` : null]
-            .filter(Boolean)
-            .join(" · ")}
-        </p>
-      ) : (
-        <p className={styles.schoolSource}>
-          {proximity !== null && proximity !== undefined
-            ? `Proximity ${Math.round(proximity)} · school rating unavailable here`
-            : "School rating unavailable here"}
-        </p>
-      )}
-      <a
-        className={styles.schoolLink}
-        href={GREATSCHOOLS_DISTRICTS_URL}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {GREATSCHOOLS_LINK_LABEL}
-      </a>
-    </div>
-  );
 }

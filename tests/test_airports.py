@@ -15,7 +15,7 @@ from ingestion.airports import (
 
 def test_tier1_airports_are_nyc_metro_only():
     # See module docstring: JFK/LGA/EWR are the tier-1 commercial airports
-    # actually inside the v1 NYC-metro radius, not PROJECT.md's illustrative
+    # actually inside the v1 NYC-metro radius, not docs/ROADMAP.md's illustrative
     # Dulles/SFO examples.
     codes = {a.code for a in TIER1_AIRPORTS}
     assert codes == {"JFK", "LGA", "EWR"}

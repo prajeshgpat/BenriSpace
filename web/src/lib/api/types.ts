@@ -216,3 +216,41 @@ export interface AreaScore {
   /** Plain-language "why this score", inline: no second request is needed. */
   explanation: string;
 }
+
+/** One turn of an "Ask BenriSpace" conversation, as the API takes it. */
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** What the user is looking at; the assistant's tools default to it. */
+export interface ChatContext {
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  factors?: readonly FactorKey[];
+  weights?: Readonly<Partial<Record<FactorKey, number>>>;
+}
+
+/** A place the assistant found, built by the API from tool output. */
+export interface ChatResult {
+  label: string;
+  latitude: number;
+  longitude: number;
+  score?: number;
+  weeklyMinutes?: number;
+  why: string;
+}
+
+export interface ChatSource {
+  tool: string;
+  summary: string;
+}
+
+export interface ChatReply {
+  reply: string;
+  results: ChatResult[];
+  sources: ChatSource[];
+  /** True when the reply is a fallback summary or chat is paused. */
+  limited: boolean;
+}

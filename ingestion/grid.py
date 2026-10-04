@@ -19,9 +19,9 @@ Design calls made here (flag if wrong, easy to change):
   They'll just never accumulate POIs and will score near-empty; not a
   correctness bug, just some wasted (cheap) rows. Precise polygon boundaries
   are a fine later improvement, not needed to unblock ingestion.
-- **metro_area labels** match the sub-regions named in PROJECT.md's v1
+- **metro_area labels** match the sub-regions named in docs/ROADMAP.md's v1
   scope, and matter beyond bookkeeping: normalization (contracts/
-  normalization.md) min-max normalizes within metro_area specifically so
+  docs/SCORING.md) min-max normalizes within metro_area specifically so
   suburban/exurban areas aren't flattened against urban density.
 """
 

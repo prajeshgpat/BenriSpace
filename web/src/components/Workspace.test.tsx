@@ -193,12 +193,12 @@ beforeEach(() => {
 });
 
 describe("Workspace: scoring an address", () => {
-  it("shows the welcome and makes no score request without an address", () => {
+  it("shows no welcome text and makes no score request without an address", () => {
     const { fetchMock } = setup("", liveApi);
 
-    expect(
-      screen.getByText("Search an address or click the map to see its score."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/click the map to see its score/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/within about two hours/)).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter an address")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /close result/i })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -365,20 +365,10 @@ describe("Workspace: scoring an address", () => {
     await screen.findByRole("heading", { level: 2, name: "Hoboken Terminal" });
   });
 
-  it("offers example addresses as real links that search in place", async () => {
-    const user = userEvent.setup();
+  it("does not offer example address chips", () => {
     setup("", liveApi);
-    const link = screen.getByRole("link", { name: "350 5th Ave, New York, NY" });
-
-    expect(link).toHaveAttribute("href", "/app?address=350+5th+Ave%2C+New+York%2C+NY");
-
-    await user.click(link);
-
-    expect(pushState).toHaveBeenCalledWith(
-      null,
-      "",
-      "/app?address=350+5th+Ave%2C+New+York%2C+NY",
-    );
+    expect(screen.queryByRole("link", { name: "350 5th Ave, New York, NY" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Try")).not.toBeInTheDocument();
   });
   describe("autocomplete", () => {
     const withSuggestions: Responder = (url) =>
@@ -981,9 +971,6 @@ describe("Workspace: choosing a place on the map", () => {
 
     expect(pushState).toHaveBeenCalledWith(null, "", "/app?factors=transit");
     expect(screen.queryByTestId("composite-score")).not.toBeInTheDocument();
-    expect(
-      screen.getByText("Search an address or click the map to see its score."),
-    ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Public transit/ })).toBeChecked();
     expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("");
   });

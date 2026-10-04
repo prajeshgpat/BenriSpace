@@ -1,5 +1,5 @@
 -- BenriSpace migration 0006: area shape columns.
--- NOT yet applied to production. Apply BEFORE running
+-- Applied to production on 2026-10-03. Apply BEFORE running
 -- `python -m ingestion.areas.build --source region --write` (write_areas inserts
 -- extent_m and compactness) and before deploying the API that selects extent_m
 -- in GET /v1/area. Additive and idempotent. Mirrored into contracts/schema.sql.

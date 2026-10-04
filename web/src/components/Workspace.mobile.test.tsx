@@ -73,11 +73,11 @@ describe("Workspace on a phone", () => {
     expect(screen.queryByText(/click the map to see its score/)).not.toBeInTheDocument();
   });
 
-  it("shows the welcome once the sheet opens", async () => {
+  it("opens to half without any welcome text", async () => {
     setup("");
     await userEvent.click(screen.getByRole("button", { name: "Resize results panel" }));
     expect(sheet()).toHaveAttribute("data-snap", "half");
-    expect(screen.getByText(/click the map to see its score/)).toBeInTheDocument();
+    expect(screen.queryByText(/click the map to see its score/)).not.toBeInTheDocument();
   });
 
   it("opens at half when the URL already holds a result", async () => {

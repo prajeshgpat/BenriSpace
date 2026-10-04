@@ -1,5 +1,5 @@
 """Shopping and parks/recreation features (v2.1, weights_version
-'v2.1-handtuned'; SCORING_FRAMEWORK.md 3.4 and 3.5).
+'v2.1-handtuned'; docs/SCORING.md 3.4 and 3.5).
 
 Populates the imperial feature_store columns of migration 0009 for every
 geo_entities cell, and the named shops / parks of the `places` table.

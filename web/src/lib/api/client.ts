@@ -10,6 +10,10 @@ import type {
   AreaInfo,
   AreaExplanation,
   AreaScore,
+  ChatContext,
+  ChatReply,
+  ChatResult,
+  ChatTurn,
   Explanation,
   Improve,
   ImproveBestNearby,
@@ -57,6 +61,12 @@ export interface Coordinates {
 /** Autocomplete is a nicety; give up quickly rather than hold the UI. */
 export const SUGGEST_TIMEOUT_MS = 10_000;
 
+/** A chat answer can take several tool calls on the server. */
+export const CHAT_TIMEOUT_MS = 28_000;
+/** The API reads only the most recent turns, each cut to this length. */
+export const CHAT_MAX_TURNS = 6;
+export const CHAT_MAX_CHARS = 2000;
+
 /** A readable address is decoration; give up quickly rather than hold the UI. */
 export const REVERSE_TIMEOUT_MS = 8_000;
 
@@ -103,6 +113,12 @@ export interface ApiClient {
     lon: number,
     options?: RequestOptions & PriorityQuery,
   ): Promise<Similar>;
+  /** "Ask BenriSpace": send the conversation so far; it must end with a user turn. */
+  chat(
+    messages: readonly ChatTurn[],
+    context?: ChatContext,
+    options?: RequestOptions,
+  ): Promise<ChatReply>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -460,6 +476,60 @@ export function parseSimilar(body: unknown): Similar {
   };
 }
 
+export function parseChatReply(body: unknown): ChatReply {
+  if (!isObject(body) || !isNonEmptyString(body.reply)) {
+    throw invalidResponse("chat");
+  }
+  const results = Array.isArray(body.results)
+    ? body.results.flatMap((item): ChatResult[] =>
+        isObject(item) &&
+        isNonEmptyString(item.label) &&
+        isFiniteNumber(item.latitude) &&
+        isFiniteNumber(item.longitude) &&
+        typeof item.why === "string"
+          ? [
+              {
+                label: item.label,
+                latitude: item.latitude,
+                longitude: item.longitude,
+                why: item.why,
+                ...(isFiniteNumber(item.score) ? { score: item.score } : {}),
+                ...(isFiniteNumber(item.weeklyMinutes)
+                  ? { weeklyMinutes: item.weeklyMinutes }
+                  : {}),
+              },
+            ]
+          : [],
+      )
+    : [];
+  const sources = Array.isArray(body.sources)
+    ? body.sources.flatMap((item) =>
+        isObject(item) && isNonEmptyString(item.tool) && typeof item.summary === "string"
+          ? [{ tool: item.tool, summary: item.summary }]
+          : [],
+      )
+    : [];
+  return {
+    reply: body.reply,
+    results: results.slice(0, 3),
+    sources,
+    limited: body.limited === true,
+  };
+}
+
+/** The turns the API will read: the last few, trimmed, starting with the user. */
+export function prepareChatTurns(messages: readonly ChatTurn[]): ChatTurn[] {
+  const turns = messages
+    .slice(-CHAT_MAX_TURNS)
+    .map((m) => ({ role: m.role, content: m.content.trim().slice(0, CHAT_MAX_CHARS) }))
+    .filter((m) => m.content !== "");
+  while (turns.length > 0 && turns[0].role !== "user") turns.shift();
+  if (turns.length === 0 || turns[turns.length - 1].role !== "user") {
+    throw new ApiError("invalid-request", "Ask a question to start the chat.");
+  }
+  return turns;
+}
+
 async function readJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -652,15 +722,22 @@ export function createApiClient({
 }: ApiClientOptions): ApiClient {
   const root = baseUrl.replace(/\/+$/, "");
 
-  async function getJson(
+  async function requestJson(
     path: string,
+    init: { method: "GET" } | { method: "POST"; body: unknown },
     { signal, timeoutMs: requestTimeoutMs }: RequestOptions = {},
   ): Promise<unknown> {
     const timeout = AbortSignal.timeout(requestTimeoutMs ?? timeoutMs);
     let response: Response;
     try {
       response = await fetchImpl(`${root}${path}`, {
-        headers: { Accept: "application/json" },
+        headers:
+          init.method === "POST"
+            ? { Accept: "application/json", "Content-Type": "application/json" }
+            : { Accept: "application/json" },
+        ...(init.method === "POST"
+          ? { method: "POST", body: JSON.stringify(init.body) }
+          : {}),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
     } catch (cause) {
@@ -678,6 +755,9 @@ export function createApiClient({
     if (!response.ok) throw errorFromResponse(response.status, body, response.headers);
     return body;
   }
+
+  const getJson = (path: string, options?: RequestOptions) =>
+    requestJson(path, { method: "GET" }, options);
 
   return {
     async getScore(address, options) {
@@ -767,6 +847,19 @@ export function createApiClient({
       params.set("precision", String(query.precision));
       if (query.limit) params.set("limit", String(query.limit));
       return parseMapCells(await getJson(`/map/cells?${params}`, options));
+    },
+
+    async chat(messages, context = {}, options) {
+      const turns = prepareChatTurns(messages);
+      const body: Record<string, unknown> = { messages: turns };
+      if (Object.keys(context).length > 0) body.context = context;
+      return parseChatReply(
+        await requestJson(
+          "/chat",
+          { method: "POST", body },
+          { timeoutMs: CHAT_TIMEOUT_MS, ...options },
+        ),
+      );
     },
 
     async getMapTop(query, options) {

@@ -95,6 +95,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+         * @description The client keeps the conversation and sends it each time; only the last 6 messages (each cut to 2,000 characters) are used. The assistant can only call read-only tools (geocode, area_score, nearby_places, improve, similar, search_areas, optimize_location). `results` is built from tool output, not by the model; `reply` is checked against the tool output and replaced by a deterministic summary (`limited: true`) when it cannot be grounded. Each visitor gets 15 messages a day.
+         */
+        post: operations["chat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/suggest": {
         parameters: {
             query?: never;
@@ -439,6 +459,45 @@ export interface components {
             /** @description Priority-weighted overall score, 0-100. */
             score: number;
             anchors: components["schemas"]["OptimizeAnchorResult"][];
+        };
+        ChatMessage: {
+            /** @enum {string} */
+            role: "user" | "assistant";
+            /** @description Cut to 2000 characters. */
+            content: string;
+        };
+        ChatRequest: {
+            /** @description Must end with a user message; only the last 6 are used. */
+            messages: components["schemas"]["ChatMessage"][];
+            context?: {
+                address?: string;
+                latitude?: number;
+                longitude?: number;
+                factors?: components["schemas"]["FactorKey"][];
+                weights?: {
+                    [key: string]: number;
+                };
+            };
+        };
+        ChatResult: {
+            /** @description Neighborhood name or area label. */
+            label: string;
+            latitude: number;
+            longitude: number;
+            score?: number;
+            weeklyMinutes?: number;
+            why: string;
+        };
+        ChatSource: {
+            tool: string;
+            summary: string;
+        };
+        ChatResponse: {
+            reply: string;
+            results: components["schemas"]["ChatResult"][];
+            sources: components["schemas"]["ChatSource"][];
+            /** @description True when the reply is a deterministic fallback or chat is paused. */
+            limited?: boolean;
         };
         OptimizeResponse: {
             results: components["schemas"]["OptimizeResult"][];
@@ -868,6 +927,57 @@ export interface operations {
                 };
             };
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    chat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description The assistant's reply with structured results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatResponse"];
+                };
+            };
+            /** @description Invalid request (empty messages, unknown factor, last message not from the user). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The visitor used today's 15 chat messages (code `rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Chat is unavailable (no API key, or the model call failed; code `chat_unavailable`). */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     suggestAddresses: {

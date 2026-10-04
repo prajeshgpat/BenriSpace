@@ -1,8 +1,8 @@
 """**Phase 1 approximation** for Phase 2's real Valhalla isochrones
-(PHASES.md Phase 2: stand up Valhalla, compute true drive/transit/walk
+(docs/ROADMAP.md Phase 2: stand up Valhalla, compute true drive/transit/walk
 isochrones per anchor, intersect/union them, rank precomputed scores that
 fall inside). Valhalla's hosting location is explicitly undecided as of
-this writing (PHASES.md Phase 2 Requirements: "Where Valhalla runs --
+this writing (docs/ROADMAP.md Phase 2 Requirements: "Where Valhalla runs --
 deferred by you to this phase"), so there's no isochrone service to call
 yet.
 

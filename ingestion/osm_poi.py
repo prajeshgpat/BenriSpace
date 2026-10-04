@@ -19,7 +19,7 @@ Design calls made here (flag if wrong, easy to change):
   metro_area assignment can't drift apart.
 - **POI-to-category tag mapping** (see CATEGORY_TAG_RULES below): grocery
   is deliberately `shop=supermarket`/`shop=grocery` only — `shop=convenience`
-  is its OWN negative-signal category per PROJECT.md ("proxy for less
+  is its OWN negative-signal category per docs/ROADMAP.md ("proxy for less
   desirable clientele"), not a grocery synonym, so a single POI is never
   double-counted as both a positive and a negative signal.
 - **Local nearest/count computation**: a plain brute-force haversine scan

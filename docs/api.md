@@ -14,6 +14,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
+| `POST /chat` | Ask BenriSpace: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
@@ -49,7 +50,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 - Scores are **relative within a metro area**, not absolute. Each factor is min-max normalized across all cells in the same metro area (for example `nyc` or `northern_nj`), so 100 means "best in its metro area for this factor" and 0 means "worst". A suburban cell is compared with other suburban cells in its own area, not with Manhattan.
 - **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but a low score on distance from the noise corridor. A composite near 80 is exceptional.
 - Scores describe an **area**, not a single building. The underlying grid cells are about 0.6 by 0.4 miles, and the small road-bounded areas returned by `/area` are averages of the cells they overlap, so neighbouring small areas often share similar scores.
-- The **composite** (`compositeScore`) is a weighted average of the sub-scores, normalized by the weight of the factors that have a score (a `null` factor is left out, never counted as 0). The v2.1 default weights (version `v2.1-handtuned`, from SCORING_FRAMEWORK.md) are: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. Production still serves `v2-handtuned` until the cutover; its stored composites use the older weights (grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premium retail 0.75, gas station 1.0, convenience store 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trail popularity 1.25). `/map/cells` and `/map/top` let you choose your own factors and weights, always starting from the v2.1 weights.
+- The **composite** (`compositeScore`) is a weighted average of the sub-scores, normalized by the weight of the factors that have a score (a `null` factor is left out, never counted as 0). The v2.1 default weights (version `v2.1-handtuned`, from docs/SCORING.md) are: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. Production still serves `v2-handtuned` until the cutover; its stored composites use the older weights (grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premium retail 0.75, gas station 1.0, convenience store 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trail popularity 1.25). `/map/cells` and `/map/top` let you choose your own factors and weights, always starting from the v2.1 weights.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
 ### The thirteen factors
@@ -76,7 +77,7 @@ Every factor is a toggle on the website; none are hidden.
 
 **How the v2.1 factors are built.** `gasConvenience` blends the nearest gas station or convenience store (70%) with how many are within 500 m (30%). The noise corridor adds an adjacency penalty from gas stations and convenience stores to the corridor signal: full within 300 ft, fading linearly to none at 800 ft. `shopping` is 60% proximity (to the third-nearest shop) and 40% variety of retail types within a mile, plus the brand bonus. `recreation` is 75% parks (proximity to the nearest park and the size of the largest one within half a mile) and 25% running trails. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v2-handtuned` in production), so rows from another version are never mixed in. Brand matching for the shopping bonus uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback.
 
-**Known limitation (v3 candidate).** Each factor is min-max normalized within its metro area, so a few extreme outlier distances stretch the scale and skew everyone else's scores. A visible symptom: remote cells with very little around them can still score high on `restaurant` and `bar`. A more robust normalization (percentile or log-scaled distances) is a scoring v3 candidate; see `PHASES.md`.
+**Known limitation (v3 candidate).** Each factor is min-max normalized within its metro area, so a few extreme outlier distances stretch the scale and skew everyone else's scores. A visible symptom: remote cells with very little around them can still score high on `restaurant` and `bar`. A more robust normalization (percentile or log-scaled distances) is a scoring v3 candidate; see `docs/ROADMAP.md`.
 
 **Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely, plus (v2.1) gas stations and convenience stores right next door. It is a rough proxy (default weight 12 of 106 in v2.1). The API key `emergencyCorridor` and the database columns keep their names.
 
@@ -463,6 +464,59 @@ Errors:
 | --- | --- | --- |
 | 400 | `invalid_request` | Bad anchors, `radiusMi`, `limit`, `factors` or `weights`; or only category anchors (nothing to search around) |
 | 422 | `out_of_coverage` | An address anchor is outside the covered metro area |
+
+---
+
+## `POST /chat`
+
+"Ask BenriSpace": a short chat that finds and explains neighborhoods. The model (Claude Haiku 4.5) can only call our own read-only tools (`geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `optimize_location`) and may only state what their results, or the user's own messages, contain. The client keeps the conversation and sends it with every request; only the last 6 messages (each cut to 2,000 characters) are used.
+
+Request body (JSON):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `messages` | array | yes | `{role: "user" \| "assistant", content: string}`; must end with a `user` message |
+| `context.address` | string | no | The place the user has selected |
+| `context.latitude`, `context.longitude` | number | no | Its coordinates (tools default to searching near it) |
+| `context.factors` | array of factor keys | no | The user's selected priorities (tools default to them) |
+| `context.weights` | object | no | Importance per factor |
+
+Response:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `reply` | string | Plain text, at most about 120 words. Numbers and capitalised names are checked against the tool results; if the check fails the reply is replaced by a short deterministic summary and `limited` is `true` |
+| `results` | array, at most 3 | Built from the last ranking tool (`optimize_location`, `search_areas` or `similar`), never by the model: `label` (neighborhood or area label), `latitude`, `longitude`, `score?`, `weeklyMinutes?`, `why` |
+| `sources` | array | `{tool, summary}` for each tool the assistant used |
+| `limited` | boolean | Present and `true` when the reply is a fallback or chat is paused |
+
+The assistant declines off-topic requests and does not characterize who lives somewhere or answer crime, safety or demographics questions (BenriSpace has no such data); it offers the 13 factors instead. Anything it quotes is in feet and miles.
+
+**Invented example, shape only.**
+
+```bash
+curl -X POST "https://api.benrispace.com/v1/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Is Park Slope good for transit and groceries?"}]}'
+```
+
+```json
+{
+  "reply": "Yes. Park Slope, Brooklyn scores 98 on transit and 98 on grocery access.",
+  "results": [],
+  "sources": [{"tool": "geocode", "summary": "Located Park Slope, Brooklyn, NY"}, {"tool": "area_score", "summary": "Scores for Park Slope, Brooklyn"}]
+}
+```
+
+Limits: each visitor (a salted hash of the client IP, never stored raw) gets 15 messages a day, tracked in the `chat_usage` table (migration 0010; the limit is skipped while the table is absent). Calls count against the monthly LLM budget (`LLM_MONTHLY_BUDGET_USD`, logged in `llm_usage` with kind `chat`); when it is spent the endpoint answers `"Chat is paused for this month."` with `limited: true`.
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Empty `messages`, a bad factor key, or the last message is not from the user |
+| 429 | `rate_limited` | The visitor has used today's 15 messages |
+| 503 | `chat_unavailable` | No `ANTHROPIC_API_KEY` is configured, or the model call failed or timed out |
 
 ---
 

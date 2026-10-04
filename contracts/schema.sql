@@ -69,7 +69,7 @@ create table feature_store (
     -- correlates with a neighborhood people want to be outside in.
     running_trail_count_800m   integer,
     running_trail_nearest_m    numeric,
-    strava_segment_count_800m  integer,     -- null when Strava isn't configured, not 0 — see normalization.md
+    strava_segment_count_800m  integer,     -- null when Strava isn't configured, not 0 — see docs/SCORING.md
     strava_segment_popularity_raw numeric,  -- aggregate athlete/effort-count signal, null when unavailable
 
     -- v2 columns (contracts/migrations/0002_v2.sql) — all nullable
@@ -241,3 +241,11 @@ create index if not exists llm_usage_created_at_idx on llm_usage (created_at);
 -- from OSM place nodes (ingestion/neighborhoods.py).
 alter table geo_entities add column if not exists neighborhood text;
 alter table areas add column if not exists neighborhood text;
+
+-- Ask BenriSpace chat (migration 0010, not yet applied): messages per visitor per day.
+create table if not exists chat_usage (
+    visitor_hash text not null,
+    day          date not null,
+    count        int not null default 0,
+    primary key (visitor_hash, day)
+);

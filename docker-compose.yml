@@ -1,5 +1,5 @@
 # Local dev database only. Production is Supabase (Phase 1 requirement,
-# not yet provisioned — see PHASES.md "Blocking Phase 1 today"). This lets
+# not yet provisioned — see docs/ROADMAP.md "Blocking Phase 1 today"). This lets
 # ingestion/API/scoring code be built and tested against a real Postgres +
 # pgvector instance before the Supabase project exists.
 services:

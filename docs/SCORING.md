@@ -1,9 +1,167 @@
-# Scoring Framework (v1.2 — 2026-10-04)
+# BenriSpace Scoring
 
-> **Status:** target design for the next scoring model (`v3-timeaccess`). The model
-> served today is `v2-handtuned` (distance-based, min-max normalized). Section 11 maps
-> this framework to what exists. Items marked **OPEN** still need an owner decision.
-> Changes are listed in section 12.
+How a location's 0-100 score is computed. Two parts:
+
+- **Part A: what is shipped.** The models in production and built: `v1-handtuned`,
+  `v2-handtuned` (live) and `v2.1-handtuned` (built, cutover pending).
+- **Part B: the v3 framework (planned).** `v3-timeaccess`, framework v1.4 with the
+  owner's decisions. Nothing in Part B is serving yet, except the default weights
+  and factor set, which v2.1 already uses. Section numbers inside Part B refer to
+  Part B.
+
+Related: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md),
+[api.md](api.md) (factor keys and responses), [data-sources.md](data-sources.md).
+
+---
+
+# Part A: shipped model (v1, v2, v2.1)
+
+## A1. Status
+
+| Version | `weights_version` | Factors | State |
+| --- | --- | --- | --- |
+| v1 | `v1-handtuned` | 11 | history; rows kept for rollback |
+| v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | **live in production** (cutover 2026-10-03, 64,320 rows) |
+| v2.1 | `v2.1-handtuned` | 13, all user-facing pills | built; migration 0009 applied; full ingestion in progress; cutover pending owner approval |
+
+Rollback is a Terraform variable (`scoring_weights_version`). The API reports the
+version that produced a response in `weightsVersion`. A new version gets new rows
+rather than overwriting, so history is never lost. Rows with the same
+`weights_version` are replaced by a re-run, and the score writer nulls stale
+columns.
+
+Hand-tuned weights, because there is no training data to fit against yet. Weight
+rationale lives next to the weights in `scoring/engine.py` (`DEFAULT_WEIGHTS`,
+`V2_1_WEIGHTS`); it is the defensibility story for users and a baseline for any
+future learned model.
+
+## A2. Normalization
+
+Each raw metric (count or distance) is min-max normalized to 0-100 **within its
+`metro_area` cohort**, not globally. v1 spans dense city and suburban or exurban
+areas (Hudson Valley, Fairfield County); a global scale would flatten every
+suburban address to near zero on walkability-shaped factors. The product scores
+convenience relative to the kind of area an address is in.
+
+```
+normalized = (x - min) / (max - min) * 100
+```
+
+Distance-based metrics are inverted first (closer is better):
+`x_for_normalization = -distance`.
+
+Sign is applied **before** normalization, at ingestion time, so every value that
+flows into `scores` already means "higher is better":
+
+| Raw signal | Direction | Handling |
+| --- | --- | --- |
+| grocery, gym, cafe count and closeness | Positive | normalize as-is |
+| restaurant (`amenity=restaurant`), bar (`bar`, `pub`, `biergarten`) | Positive | as-is (70% proximity / 30% density, like other POIs) |
+| transit stop count and closeness | Positive | as-is |
+| school count, rating, closeness | Positive | as-is (see A4) |
+| running trail count and closeness, Strava popularity | Positive | as-is (see A5) |
+| premium retail (Whole Foods, Starbucks, Target) | Positive | one `premium_retail_raw` bonus built at ingestion from the three `*_nearest_m` columns |
+| airport drive time | Positive | invert (lower time is better) |
+| gas station / convenience store count (v2) | Negative | invert before normalizing |
+| congestion proxy | Negative | invert before normalizing |
+| noise corridor (key `emergencyCorridor`) | Negative | invert, then reduced by `street_orientation` (a side street dampens the penalty; facing the corridor does not). Uses `emergency_corridor_facility_raw` (fire, police and EMS facility count and closeness); where that is null it falls back per cell to the v1 `emergency_corridor_proxy_raw` |
+
+**Noise corridor** is the user-facing name of the `emergency_corridor_score`
+factor (API key `emergencyCorridor`; DB columns unchanged): main roads near fire
+stations, hospitals and police stations, where sirens and through-traffic noise
+are most likely. A rough proxy.
+
+## A3. Composite
+
+```
+composite_score = sum(weight_i * subscore_i) / sum(weight_i)
+```
+
+over the factors that have a score. A `null` factor is left out of both sums,
+never counted as 0, so the result is always out of 100. v2 weights: grocery 1.5,
+gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premium retail 0.75, gas station 1.0,
+convenience store 0.75, transit 1.5, school 1.5, road 1.0, noise corridor 0.75,
+airport 0.75, trail popularity 1.25 (v1 had 11 factors with noise corridor 0.5 and
+without restaurant, bar and premium retail).
+
+Users can choose factors and weights (`/map/cells`, `/map/top`, the web filters and
+presets); the overall is then normalized to the weight of the selected factors
+that have a score (the same rule as Part B section 2.1).
+
+## A4. Schools
+
+School proximity-plus-density and school rating are each min-max normalized, then
+blended **20% proximity / 80% rating**. With **no rating**, `school_score` is
+`NULL`, never a proximity-only substitute, so the factor drops out of the
+composite. The engine still writes `school_proximity_score` for every cell with
+school data (informational, not a composite factor) so clients can say
+"proximity 72, rating unavailable". `school_district_*` and `school_rating_source`
+record where a rating came from. Ratings are district-level only
+([data-sources.md](data-sources.md)).
+
+## A5. Trails and Strava
+
+Running trail popularity is built from mapped OSM running trails (free,
+required). Strava segment popularity is an optional enrichment that is **not
+configured**: `strava_segment_popularity_raw` is `null` (never 0) when Strava is
+absent, and the factor normalizes off the OSM trail count and distance alone
+(67/33 blend in `scoring/engine.py`). Never backfill a missing value with 0: that
+would read as "definitely unpopular". Garmin was considered and dropped (no
+public API exposes aggregate route popularity). Strava's rate limits (about 100
+calls per 15 minutes, 1,000 a day) make the enrichment take up to about 150
+minutes per weekly run, which on a private repo costs real Actions minutes.
+
+## A6. v2.1 (`v2.1-handtuned`)
+
+Every factor is a user-facing pill (13, none hidden). Same min-max engine shape,
+with these changes (`CATEGORY_SPECS_V2_1` in `scoring/engine.py`):
+
+| API key | `scores` column | Raw signal (higher is better) |
+| --- | --- | --- |
+| `shopping` | `shopping_score` | `shopping_raw` (0.6 proximity to the 3rd-nearest shop + 0.4 variety of retail groups within 1 mi; `ingestion/osm_retail_parks.py`) + 0.08 x `premium_retail_raw` anchor bonus |
+| `gasConvenience` | `gas_convenience_score` | one positive factor: the 70/30 nearest/count blend over the union of gas stations and convenience stores |
+| `emergencyCorridor` | `emergency_corridor_score` | negative: the corridor/facility raw signal (damped for side streets) plus an adjacency penalty from the nearest gas station and nearest convenience store (full within 300 ft, linear to 0 at 800 ft) |
+| `traffic` | `road_score` | unchanged (renamed in the UI and API only) |
+| `recreation` | `recreation_score` | 75% `recreation_raw` (parks: 2/3 proximity + 1/3 size of the largest park within half a mile) + 25% the existing trail count/closeness signal, each normalized separately |
+
+The gas station and convenience store columns feed two factors at different
+distances: a positive `gasConvenience` and a negative adjacency term inside the
+noise corridor. New `feature_store` columns are imperial (`shopping_nearest_ft`,
+`park_largest_sq_ft_half_mi`, ...), migration `0009_v2_1.sql`.
+
+Default weights (only ratios matter): grocery 14, transit 14, emergencyCorridor
+12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5,
+recreation 5, shopping 4, traffic 4. v2 rows keep working: the API reads a v2
+row's Shopping from `premium_retail_score` and Recreation from
+`trail_popularity_score`, and its `gasConvenience` is null. Legacy API keys
+(`premiumRetail`, `trailPopularity`, `road`, `gasStation`, `convenienceStore`) are
+aliases.
+
+## A7. Cohorts, areas and known weaknesses
+
+- Normalization is per `metro_area` cohort of geohash6 cells (about 0.6 x 0.4 mi).
+  Scores for a road-bounded area (`GET /v1/area`) are not normalized separately:
+  they are the area-weighted average of the overlapping cells' latest scores, so
+  small areas inherit similar scores until per-polygon scoring exists.
+- Scores are relative within a metro area, so no place scores 100 on everything
+  (factors pull in opposite directions: dense places have the best transit and
+  cafes and also the most traffic and siren noise).
+- **Known weakness (fixed in v3).** Min-max normalization is skewed by outlier
+  distances: a few very far nearest-feature distances stretch the range, which
+  compresses everyone else and lets remote cells with little around them score
+  high on restaurant and bar. Part B replaces it with absolute time curves.
+- Other limits: school ratings are district-level, airport time is straight-line
+  until routing exists, and quality of gyms, restaurants and groceries is not
+  measured.
+
+---
+
+# Part B: v3 framework (planned, `v3-timeaccess`)
+
+> **Status: target design, framework v1.4 (2026-10-04).** The model served today is
+> `v2-handtuned`; v2.1 is built. Part A section A6 and the mapping table in
+> section 11 below show which pieces already exist. Items marked **OPEN** still need
+> an owner decision. Changes and owner decisions are listed in section 12.
 
 ## 1. Scoring Philosophy
 
@@ -45,7 +203,7 @@ Rules:
 - The 10,000 threshold is the owner's decision (2026-10-04); it can be revisited after the
   first run against known places.
 
-Until routing is precomputed (section 10), minutes are **estimated**: straight-line
+Until routing is precomputed (section 10 below), minutes are **estimated**: straight-line
 distance × 1.3 (street circuity) ÷ mode speed (walk 3 mph; drive 20 mph in Walkable
 cells, 30 mph in Car cells). Estimates are labelled "approx." wherever shown.
 
@@ -75,7 +233,7 @@ groceries), so one outlier does not define the score.
 
 ---
 
-# 2. Factor Weights
+## 2. Factor Weights
 
 **Principle (owner, 2026-10-04): factors people use more often weigh more.** Each default
 weight combines how often a typical household uses the thing with how much each use costs
@@ -130,14 +288,14 @@ weight of the factors actually used** and always comes out of 100:
 
 ---
 
-# 3. Daily Amenities
+## 3. Daily Amenities
 
 **Quality is a placeholder for now.** Several factors below have a *Quality* part (gym
 quality, dining and grocery quality). There is no quality data yet (section 10). Until a
 source exists, a factor uses only the parts it has, re-weighted to 100%: for example the gym
 score is 100% proximity until quality data lands, at which point it becomes 70 / 30.
 
-## 3.1 Gym — Weight: 9
+### 3.1 Gym — Weight: 9
 
 **Gym Score = 70% Proximity + 30% Quality** (quality pending → 100% proximity today)
 
@@ -153,7 +311,7 @@ score is 100% proximity until quality data lands, at which point it becomes 70 /
 | Poor              |     2 |
 | No meaningful gym |     0 |
 
-## 3.2 Restaurants, Cafes, Bars — Weights: 10 / 8 / 5
+### 3.2 Restaurants, Cafes, Bars — Weights: 10 / 8 / 5
 
 Three separate pills and factors that share one method. Each captures **convenience**,
 **density within the area**, and later **quality**.
@@ -177,7 +335,7 @@ Three separate pills and factors that share one method. Each captures **convenie
 |     2 | Very few options                                        |
 |     0 | Essentially no meaningful options                       |
 
-## 3.3 Groceries — Weight: 14
+### 3.3 Groceries — Weight: 14
 
 **Grocery Score = 60% Proximity + 20% Variety + 20% Quality**
 (quality pending → 75% proximity + 25% variety today)
@@ -187,7 +345,7 @@ Three separate pills and factors that share one method. Each captures **convenie
   (supermarket, specialty, warehouse).
 - **Quality:** placeholder.
 
-## 3.4 Recreation — Weight: 5 (tree icon)
+### 3.4 Recreation — Weight: 5 (tree icon)
 
 Parks and trails together (replaces the hidden "running-trail popularity" signal).
 
@@ -199,7 +357,7 @@ Parks and trails together (replaces the hidden "running-trail popularity" signal
   Park); quality is a placeholder.
 - **Trail access:** distance to a trail and its popularity (existing trail data).
 
-## 3.5 Shopping — Weight: 4 (bag icon)
+### 3.5 Shopping — Weight: 4 (bag icon)
 
 Replaces the hidden "premium retail" signal with a visible, broader factor.
 
@@ -212,9 +370,9 @@ Replaces the hidden "premium retail" signal with a visible, broader factor.
 
 ---
 
-# 4. Getting Around
+## 4. Getting Around
 
-## 4.1 Airport Access — Weight: 5
+### 4.1 Airport Access — Weight: 5
 
 **Airport Score = 70% Travel Time + 30% Reliability / Convenience**
 
@@ -231,7 +389,7 @@ Replaces the hidden "premium retail" signal with a visible, broader factor.
 number of airports within 60 min, transit access to a terminal. Travel-time variability
 needs traffic data and is a placeholder.
 
-## 4.2 Public Transportation — Weight: 14
+### 4.2 Public Transportation — Weight: 14
 
 **Transit Score = 60% Proximity + 40% Service**
 
@@ -241,7 +399,7 @@ needs traffic data and is a placeholder.
 - **Service:** distinct routes / lines within a 10-min walk and rail-versus-bus mix;
   peak frequency once schedules are used.
 
-## 4.3 Gas & Convenience — Weight: 6
+### 4.3 Gas & Convenience — Weight: 6
 
 **Decided 2026-10-04:** gas stations and convenience stores are **one positive category**:
 having fuel and a quick-stop store nearby is a convenience. Living *right next to* one is
@@ -253,7 +411,7 @@ different distances, so they do not conflict.
 - **Availability bonus** (options within 10 minutes): 0–1 +0, 2–3 +0.5, 4 or more +1.
   Cap at 10.
 
-## 4.4 Traffic — Weight: 4 (car icon)
+### 4.4 Traffic — Weight: 4 (car icon)
 
 Renamed from "Road conditions", which was vague. It measures how busy the roads around a
 place are (a congestion proxy from road class and density); fewer busy roads score higher.
@@ -262,9 +420,9 @@ and this factor can be folded into those times and retired.
 
 ---
 
-# 5. Neighborhood
+## 5. Neighborhood
 
-## 5.1 Schools — Weight: 10
+### 5.1 Schools — Weight: 10
 
 **School Score = 20% Proximity + 80% Quality** (decided; matches the shipped product)
 
@@ -275,7 +433,7 @@ and this factor can be folded into those times and retired.
 
 If schools are not relevant, the user turns the filter off; 2.1 handles the rest.
 
-## 5.2 Noise Corridor — Weight: 12
+### 5.2 Noise Corridor — Weight: 12
 
 Noise is an **inverse factor**: closer to noise sources is worse.
 
@@ -329,7 +487,7 @@ Inputs:
 
 ---
 
-# 6. Composite Scoring Method
+## 6. Composite Scoring Method
 
 Each factor produces a 0–10 score internally, stored and shown as **0–100**. The overall
 score is the normalized weighted average in 2.1, also **out of 100**.
@@ -342,7 +500,7 @@ With only groceries and transit selected: (80×14 + 95×14) ÷ 28 = **88**.
 
 ---
 
-# 7. Recommended Interpretation
+## 7. Recommended Interpretation
 
 | Overall (out of 100) | Label         |
 | -------------------: | ------------- |
@@ -356,7 +514,7 @@ With only groceries and transit selected: (80×14 + 95×14) ÷ 28 = **88**.
 
 ---
 
-# 8. Important Modeling Principle
+## 8. Important Modeling Principle
 
 Do **not** make every factor purely distance-based. Use **Proximity + Density / Variety +
 Quality + Reliability** where appropriate.
@@ -373,7 +531,7 @@ scored against the metro distribution, because "a lot of cafes" has no absolute 
 
 ---
 
-# 9. Future Factors to Add
+## 9. Future Factors to Add
 
 New factors to add (not already scored above), each with its own weight:
 
@@ -393,7 +551,7 @@ New factors to add (not already scored above), each with its own weight:
 
 ---
 
-# 10. Data Plan
+## 10. Data Plan
 
 | Need                                   | Today                          | Plan                                                    |
 | -------------------------------------- | ------------------------------ | ------------------------------------------------------- |
@@ -408,10 +566,22 @@ New factors to add (not already scored above), each with its own weight:
 
 ---
 
-# 11. Mapping To The Current Implementation
+## 11. Mapping To The Current Implementation
 
-| Framework                                   | Shipped (`v2-handtuned`)                              |
-| ------------------------------------------- | ----------------------------------------------------- |
+| Framework (v3) | `v2-handtuned` (live) | `v2.1-handtuned` (built) |
+| --- | --- | --- |
+| Absolute time curves, mode by density | min-max normalized distance + count blend | same |
+| Overall normalized to selected filters, out of 100 | same | same |
+| Gas & Convenience one positive factor | two separate negative factors | one positive factor |
+| Gas / convenience adjacency inside Noise | not in Noise | in Noise (300 ft to 800 ft fade) |
+| Recreation and Shopping as visible pills | hidden underlying signals | visible pills |
+| Transit proximity + service | proximity and stop count | same |
+| Dining proximity + density in area | proximity + count within 500 m | same |
+| School 20 / 80 | 20 / 80 | same |
+| Weights (section 2) | older hand-tuned weights (A3) | the section 2 weights |
+| Quality parts | none (placeholders in v3 too) | none |
+
+------------------------------------------- | ----------------------------------------------------- |
 | Absolute time curves, mode by density       | min-max normalized distance + count blend             |
 | Overall normalized to selected filters, /100 | same normalization, /100 (already)                   |
 | Gas & Convenience one positive factor       | two separate negative factors                         |
@@ -423,7 +593,7 @@ New factors to add (not already scored above), each with its own weight:
 
 ---
 
-# 12. Changes
+## 12. Changes
 
 **v1.1 (review of v1.0):** weights summed to 123% (reserve now 17%); the overall formula
 could never exceed 6/10 with an unallocated reserve (now normalized by active weight);
@@ -459,3 +629,4 @@ interpolated, k-th nearest); labels harmonized; measurable inputs named.
    conditions" renamed "Traffic" (4.4).
 4. Proximity curves are per factor and per travel mode (1.2), replacing one shared curve.
 5. Neighborhood polygons are capped at 0.8 sq mi.
+

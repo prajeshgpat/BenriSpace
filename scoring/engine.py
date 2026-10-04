@@ -1,12 +1,12 @@
 """Scoring engine: feature_store raw values -> normalized scores rows.
 
-Kept as direct work (PROJECT.md build sequencing: "Scoring engine design:
+Kept as direct work (docs/ROADMAP.md build sequencing: "Scoring engine design:
 keep as direct work, not delegated to a subagent — this is where the
 product's judgment and defensibility live"). The two judgment calls made
-here, beyond what contracts/normalization.md already specifies:
+here, beyond what docs/SCORING.md already specifies:
 
 1. **Combining count + nearest-distance into one raw "goodness" value per
-   category.** normalization.md describes normalizing a single raw metric
+   category.** docs/SCORING.md describes normalizing a single raw metric
    per category, but feature_store stores two raw signals for most
    categories (a count and a nearest-distance). This module blends them
    70% proximity / 30% density before normalizing — "how close is the
@@ -30,10 +30,10 @@ here, beyond what contracts/normalization.md already specifies:
    density alone; schools score NULL (the composite re-weights without
    them) and expose the proximity part as school_proximity_score instead.
 2. **Composite weights** (DEFAULT_WEIGHTS below), with rationale inline —
-   this is the "document weight rationale" requirement from PROJECT.md's
+   this is the "document weight rationale" requirement from docs/ROADMAP.md's
    Scoring Factors section.
 
-Direction/sign handling matches normalization.md but is applied here
+Direction/sign handling matches docs/SCORING.md but is applied here
 (raw-goodness computation), not at ingestion time: ingestion writes true
 raw external data unmodified (so feature_store stays inspectable/
 debuggable against the source), and this module is where "higher raw
@@ -86,7 +86,7 @@ class CategorySpec:
 
 
 # ---------------------------------------------------------------------------
-# v2.1 pure raw-signal functions (SCORING_FRAMEWORK.md 3.4, 3.5, 4.3, 5.2)
+# v2.1 pure raw-signal functions (docs/SCORING.md 3.4, 3.5, 4.3, 5.2)
 # ---------------------------------------------------------------------------
 
 # Gas stations / convenience stores right next door are a noise-corridor
@@ -315,7 +315,7 @@ UNDERLYING_SCORE_COLUMNS: frozenset[str] = frozenset(
     s.score_column for s in CATEGORY_SPECS if s.underlying
 )
 
-# Hand-tuned initially — no training data to fit against yet (PROJECT.md).
+# Hand-tuned initially — no training data to fit against yet (docs/ROADMAP.md).
 # Rationale, factor by factor:
 # v2 adds restaurant/bar/premium_retail, re-weights emergency corridor and
 # blends schools 20/80 (see below). The deployed default stays v1 until the
@@ -326,7 +326,7 @@ WEIGHTS_VERSION_V2_1 = "v2.1-handtuned"
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     # "Origin insight": grocery-type retailers are the strongest proxy for
-    # neighborhood desirability per PROJECT.md's founding thesis.
+    # neighborhood desirability per docs/ROADMAP.md's founding thesis.
     "grocery_score": 1.5,
     "gym_score": 1.0,
     "cafe_score": 1.0,
@@ -344,7 +344,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     # cluster proxy" logic, just negative direction.
     "gas_station_score": 1.0,
     "convenience_store_score": 0.75,
-    # Core to the walkability/drivability tradeoff PROJECT.md is built on.
+    # Core to the walkability/drivability tradeoff docs/ROADMAP.md is built on.
     "transit_score": 1.5,
     "school_score": 1.5,
     "road_score": 1.0,
@@ -363,7 +363,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 
-# v2.1 default relative weights (SCORING_FRAMEWORK.md section 2, accepted by the
+# v2.1 default relative weights (docs/SCORING.md section 2, accepted by the
 # owner 2026-10-04): factors used more often weigh more. Only the ratios matter;
 # the composite is normalized by the weight of the factors that have a score.
 V2_1_WEIGHTS: dict[str, float] = {
@@ -396,7 +396,7 @@ def specs_and_weights(weights_version: str) -> tuple[list[CategorySpec], dict[st
 
 def _apply_street_orientation_damping(value: float, street_orientation: str | None) -> float:
     """Emergency-corridor penalty is mitigated by street orientation
-    (normalization.md): a side street sees less of the noise/traffic a
+    (docs/SCORING.md): a side street sees less of the noise/traffic a
     facing corridor would, so the raw penalty signal is dampened, not
     the final score — dampening happens before normalization so it stays
     comparable across the cohort."""

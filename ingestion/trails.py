@@ -3,12 +3,12 @@ running_trail_count_800m / running_trail_nearest_m (OSM, required baseline)
 and strava_segment_count_800m / strava_segment_popularity_raw (Strava
 Segments API, optional enhancement).
 
-PROJECT.md's Scoring Factors table: "Popular running/walking trails (proxy
+docs/ROADMAP.md's Scoring Factors table: "Popular running/walking trails (proxy
 for popularity, desirable neighborhood, safety)". OSM alone only tells us a
 trail *exists* -- Strava's segment data (athlete/effort counts) is the
 actual popularity signal; OSM presence is the fallback baseline when Strava
 isn't configured. Garmin was considered and dropped (no public API exposing
-aggregate route-popularity data) -- not revisited here, see PROJECT.md.
+aggregate route-popularity data) -- not revisited here, see docs/ROADMAP.md.
 
 Design calls made here (flag if wrong, easy to change):
 
@@ -95,11 +95,11 @@ Design calls made here (flag if wrong, easy to change):
        only when necessary. With ~227 explore + up to ~673 detail calls
        (~900 total) at 90/15min, a full run takes on the order of
        900 / 90 * 15min ~= 150 minutes -- acceptable for the weekly cron
-       cadence PHASES.md's ingestion orchestration already uses, not
+       cadence docs/ROADMAP.md's ingestion orchestration already uses, not
        something a live user request ever waits on.
     5. This is explicitly a coarse enhancement layer, not exhaustive
        coverage: dense/popular areas get real popularity data, sparser
-       areas may get none. That's fine -- contracts/normalization.md is
+       areas may get none. That's fine -- docs/SCORING.md is
        explicit that Strava data is optional, never backfilled with 0.
   `strava_segment_popularity_raw` combines the two popularity signals as
   `athlete_count + 0.05 * effort_count + star_count`: athlete_count
@@ -626,7 +626,7 @@ def compute_cell_strava_features(
     """Returns {"strava_segment_count_800m", "strava_segment_popularity_raw"}
     for one cell, or None if no segment is within radius_m -- callers must
     skip the upsert entirely in that case (leave the columns null; see
-    contracts/normalization.md -- never backfill with 0)."""
+    docs/SCORING.md -- never backfill with 0)."""
     candidates = candidates_near(index, cell_lat, cell_lon) if index is not None else points
     within = [
         p for p in candidates if haversine_m(cell_lat, cell_lon, p["lat"], p["lon"]) <= radius_m

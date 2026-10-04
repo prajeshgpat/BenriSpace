@@ -1,13 +1,13 @@
 """Address -> lat/lon geocoding for GET /score's `address` query param and
 POST /triangulate's anchor `address` field.
 
-**Phase 1 design call, not specified in PROJECT.md/PHASES.md** -- flagging
+**Phase 1 design call, not specified in docs/ROADMAP.md/docs/ROADMAP.md** -- flagging
 here (and in the implementation report) for review: this uses **OSM
 Nominatim** (https://nominatim.openstreetmap.org/search), free and
 keyless, same OSM family already used for POI ingestion (Overpass) and
 road classification. No API key/account setup is needed to unblock this
 endpoint today, unlike a paid geocoder (Google/Mapbox) which would add
-another PHASES.md "Requirements from you" item. If Nominatim's rate limits
+another docs/ROADMAP.md "Requirements from you" item. If Nominatim's rate limits
 or match quality turn out to be a problem at real usage volume, swapping
 the implementation of geocode_address() below is a one-file change --
 nothing else in api/ imports Nominatim specifics directly.
