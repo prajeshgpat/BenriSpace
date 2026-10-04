@@ -425,6 +425,47 @@ def compute_cell_features(
     return features
 
 
+def compute_features_many(
+    cells: list[dict],
+    pois_by_category: dict[str, list[tuple[float, float]]],
+    radius_m: float = COUNT_RADIUS_M,
+) -> list[dict[str, int | float | None]]:
+    """Batched compute_cell_features() using scipy cKDTree (ingestion/spatial.py).
+
+    Identical results to the brute-force compute_cell_features() (exact haversine re-check);
+    cells are dicts with latitude/longitude. Needs the `ingestion` extra (scipy, numpy)."""
+    import numpy as np
+
+    from ingestion.spatial import PointIndex
+
+    clats = np.array([c["latitude"] for c in cells], dtype=float)
+    clons = np.array([c["longitude"] for c in cells], dtype=float)
+    out: list[dict[str, int | float | None]] = [{} for _ in cells]
+
+    def measure(category: str):
+        coords = pois_by_category.get(category, [])
+        index = PointIndex([p[0] for p in coords], [p[1] for p in coords])
+        return index.nearest_and_count(clats, clons, radius_m)
+
+    def nearest_value(x: float) -> float | None:
+        return None if math.isnan(x) else float(x)
+
+    for category, (count_col, nearest_col) in FEATURE_COLUMN_MAP.items():
+        counts, nearest = measure(category)
+        for i, row in enumerate(out):
+            row[count_col] = int(counts[i])
+            row[nearest_col] = nearest_value(nearest[i])
+    for brand, col in BRAND_NEAREST_COLUMN.items():
+        _, nearest = measure(brand)
+        for i, row in enumerate(out):
+            row[col] = nearest_value(nearest[i])
+    for row in out:
+        row["premium_retail_raw"] = premium_retail_raw(
+            row["whole_foods_nearest_m"], row["starbucks_nearest_m"], row["target_nearest_m"]
+        )
+    return out
+
+
 # --------------------------------------------------------------------------
 # Thin DB/network glue — not unit tested (no live DB/Overpass in this
 # sandbox); kept minimal on purpose so the logic above carries the risk.
@@ -467,15 +508,20 @@ def run() -> None:
             for place in extract_places(data):
                 places_by_key.setdefault((place.source_id, place.category), place)
             pois_by_category = group_pois_by_category(pois)
-            indexes = {
-                category: build_bucket_index(coords)
-                for category, coords in pois_by_category.items()
-            }
-
-            for cell in cells:
-                features = compute_cell_features(
-                    cell["latitude"], cell["longitude"], pois_by_category, indexes
-                )
+            try:
+                batch = compute_features_many(cells, pois_by_category)
+            except ImportError:  # scipy not installed: fall back to the bucket-scan path
+                indexes = {
+                    category: build_bucket_index(coords)
+                    for category, coords in pois_by_category.items()
+                }
+                batch = [
+                    compute_cell_features(
+                        cell["latitude"], cell["longitude"], pois_by_category, indexes
+                    )
+                    for cell in cells
+                ]
+            for cell, features in zip(cells, batch, strict=True):
                 upsert_feature_store(conn, cell["id"], features)
                 rows_written += 1
             conn.commit()

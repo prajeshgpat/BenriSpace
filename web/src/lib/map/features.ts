@@ -48,6 +48,39 @@ export function cellsToFeatures(
   return { type: "FeatureCollection", features };
 }
 
+/**
+ * Same rectangles as `cellsToFeatures`, from bounds that are already known
+ * (minLon, minLat, maxLon, maxLat), so a recolour does not decode geohashes again.
+ */
+export function boundsToFeatures(cells: {
+  geohashes: readonly string[];
+  scores: readonly number[];
+  bounds: readonly (readonly number[])[];
+}): CellFeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: cells.geohashes.map((geohash, index) => {
+      const [minLon, minLat, maxLon, maxLat] = cells.bounds[index];
+      return {
+        type: "Feature",
+        properties: { geohash, score: cells.scores[index] },
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [minLon, minLat],
+              [maxLon, minLat],
+              [maxLon, maxLat],
+              [minLon, maxLat],
+              [minLon, minLat],
+            ],
+          ],
+        },
+      };
+    }),
+  };
+}
+
 export interface ScoreRange {
   min: number;
   max: number;

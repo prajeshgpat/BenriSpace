@@ -37,11 +37,14 @@ export function metroLabel(metroArea: string): string {
 }
 
 export const UNNAMED_AREA = "Unnamed area";
+/** Shown while a locally ranked area's name is still being looked up. */
+export const NAME_PENDING = "Finding name\u2026";
 
 /** A best-area title: the neighborhood name, never raw coordinates. */
 export function areaTitle(
-  result: Pick<MapTopResult, "neighborhood">,
+  result: Pick<MapTopResult, "neighborhood"> & { namePending?: boolean },
 ): string {
+  if (result.namePending) return NAME_PENDING;
   const name = result.neighborhood?.trim();
   return name ? name : UNNAMED_AREA;
 }

@@ -31,6 +31,9 @@ EMBEDDING_COLUMNS: tuple[str, ...] = (
 )
 EMBEDDING_DIM = len(EMBEDDING_COLUMNS)
 BATCH_SIZE = 1000
+NEIGHBOURS_PER_CELL = 20
+# Rows of the pairwise-distance block held at once: 500 x 64k float32 = 128 MB.
+NEIGHBOUR_BLOCK = 500
 
 
 def column_stats(rows: list[dict], column: str) -> tuple[float, float]:
@@ -68,6 +71,63 @@ def vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(f"{v:.6f}" for v in vector) + "]"
 
 
+def top_neighbours(
+    ids: list[str], vectors: list[list[float]], k: int = NEIGHBOURS_PER_CELL
+) -> dict[str, list[tuple[str, float]]]:
+    """{id: [(neighbour id, L2 distance), ...]} nearest first, excluding the cell
+    itself. Exact brute force with numpy in row blocks (64k cells x 14 dims takes
+    well under a minute and needs no index); ties break by position. Needs numpy,
+    which is part of the ingestion extras (.[geo], .[dev]) but not the Lambda
+    bundle."""
+    import numpy as np
+
+    n = len(ids)
+    if n < 2:
+        return {i: [] for i in ids}
+    k = min(k, n - 1)
+    x = np.asarray(vectors, dtype=np.float32)
+    sq = (x * x).sum(axis=1)
+    out: dict[str, list[tuple[str, float]]] = {}
+    for start in range(0, n, NEIGHBOUR_BLOCK):
+        block = x[start : start + NEIGHBOUR_BLOCK]
+        d2 = sq[start : start + len(block), None] + sq[None, :] - 2.0 * (block @ x.T)
+        np.maximum(d2, 0.0, out=d2)
+        rows = np.arange(len(block))
+        d2[rows, start + rows] = np.inf  # not its own neighbour
+        part = np.argpartition(d2, k - 1, axis=1)[:, :k]
+        for r in range(len(block)):
+            order = part[r][np.lexsort((part[r], d2[r, part[r]]))]
+            out[ids[start + r]] = [(ids[j], float(np.sqrt(d2[r, j]))) for j in order]
+    return out
+
+
+def write_similar_cells(conn, weights_version: str, neighbours: dict) -> int:
+    """Replaces the weights version's rows of similar_cells (migration 0011) in one
+    transaction. Returns rows written, or 0 when the table does not exist yet."""
+    with conn.cursor() as cur:
+        cur.execute("select to_regclass('similar_cells') as t")
+        if cur.fetchone()["t"] is None:
+            print("similar_cells missing (migration 0011 not applied); skipped.", file=sys.stderr)
+            return 0
+    written = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("delete from similar_cells where weights_version = %s", (weights_version,))
+            with cur.copy(
+                "copy similar_cells (geo_entity_id, weights_version, neighbor_id, rank, distance) "
+                "from stdin"
+            ) as copy:
+                for gid, items in neighbours.items():
+                    for rank, (nid, dist) in enumerate(items, start=1):
+                        copy.write_row((gid, weights_version, nid, rank, dist))
+                        written += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return written
+
+
 def run() -> None:
     from common.config import SCORING_WEIGHTS_VERSION
     from common.db import get_connection
@@ -80,6 +140,7 @@ def run() -> None:
             metro_areas = [r["metro_area"] for r in cur]
 
         total = 0
+        neighbours: dict = {}
         for metro_area in metro_areas:
             with conn.cursor() as cur:
                 cur.execute(
@@ -103,7 +164,14 @@ def run() -> None:
                     )
                 conn.commit()
             total += len(items)
+            try:
+                neighbours.update(top_neighbours([g for g, _ in items], [v for _, v in items]))
+            except ImportError:
+                print("numpy missing; similar_cells not computed.", file=sys.stderr)
         ctx.rows_affected = total
+        if neighbours:
+            n = write_similar_cells(conn, SCORING_WEIGHTS_VERSION, neighbours)
+            print(f"Wrote {n} similar_cells rows.", file=sys.stderr)
 
     print(f"Wrote {total} embeddings.", file=sys.stderr)
 

@@ -163,6 +163,8 @@ export interface MapCells {
 export type MapTopResult = Omit<Schemas["MapTopResult"], "subScores"> & {
   subScores: SubScores;
   neighborhood?: string | null;
+  /** Set on a locally ranked area whose name is still being looked up. */
+  namePending?: boolean;
 };
 
 export interface MapTop {
@@ -253,4 +255,27 @@ export interface ChatReply {
   sources: ChatSource[];
   /** True when the reply is a fallback summary or chat is paused. */
   limited: boolean;
+}
+
+/** One row of the data transparency page. */
+export interface DataSource {
+  name: string;
+  /** What in BenriSpace this source feeds. */
+  feeds: string | null;
+  license: string | null;
+  licenseUrl: string | null;
+  /** ISO timestamp of the last successful refresh. */
+  lastUpdated: string | null;
+}
+
+/** What `POST /feedback` takes. */
+export interface Feedback {
+  kind: "summary" | "chat" | "place";
+  /** Thumbs; absent on a place report. */
+  rating?: "up" | "down";
+  /** A place report's reason. */
+  reason?: "wrong" | "closed";
+  note?: string;
+  /** Where it happened: the place, a place's name, or the text being rated. */
+  context?: Record<string, string | number>;
 }

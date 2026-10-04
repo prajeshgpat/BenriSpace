@@ -30,6 +30,8 @@ dev = [
     # ingestion/school_districts.py tests (never in the Lambda bundle)
     "shapely>=2.0",
     "pyshp>=2.3",
+    # scoring/embeddings.py similar_cells (never in the Lambda bundle)
+    "numpy>=1.26",
 ]
 # School-district boundary + NCES school-location ingestion only; NOT in the Lambda bundle.
 schools = [

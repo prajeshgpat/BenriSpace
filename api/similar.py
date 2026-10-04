@@ -191,24 +191,94 @@ def fetch_target(conn, geo_entity_id: str, weights_version: str) -> dict | None:
         return None
 
 
+# Nearest cells by L2 distance through pgvector's HNSW index (migration 0007): the
+# target vector comes from an InitPlan so the planner keeps the index scan, and the
+# inner LIMIT bounds the scan. The pool is wider than `limit` because z-scores are
+# per metro, so some index hits belong to another metro and are dropped by the join.
 NEIGHBOURS_SQL = f"""
-select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
-       s.embedding <-> t.embedding as dist
-from scores t
-join scores s on s.weights_version = t.weights_version and s.geo_entity_id <> t.geo_entity_id
+select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT}, s.dist
+from (
+    select *, embedding <-> (
+               select embedding from scores where geo_entity_id = %(id)s and weights_version = %(v)s
+           ) as dist
+    from scores
+    where weights_version = %(v)s and embedding is not null and geo_entity_id <> %(id)s
+    order by embedding <-> (
+               select embedding from scores where geo_entity_id = %(id)s and weights_version = %(v)s
+           )
+    limit %(pool)s
+) s
 join geo_entities ge on ge.id = s.geo_entity_id
-where t.geo_entity_id = %s and t.weights_version = %s
-  and ge.metro_area = %s and s.embedding is not null
-order by s.embedding <-> t.embedding
-limit %s
+where ge.metro_area = %(metro)s
+order by s.dist
+limit %(limit)s
 """
+
+# Precomputed top-20 neighbours (similar_cells, migration 0011; scoring/embeddings.py).
+PRECOMPUTED_SQL = f"""
+select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
+       sc.distance as dist
+from similar_cells sc
+join geo_entities ge on ge.id = sc.neighbor_id
+join scores s on s.geo_entity_id = sc.neighbor_id and s.weights_version = sc.weights_version
+where sc.geo_entity_id = %s and sc.weights_version = %s
+order by sc.rank
+"""
+
+PRECOMPUTED_MAX = 20
+POOL_FACTOR = 3
+POOL_MAX = 900
+
+
+def _tune_hnsw(conn, pool: int) -> None:
+    """Sizes the HNSW candidate list to the pool (default 40 would return too few
+    rows once filtered) and turns on iterative scans where pgvector 0.8+ has them.
+    Transaction-local; an older pgvector without the setting is left alone."""
+    with conn.cursor() as cur:
+        cur.execute("select set_config('hnsw.ef_search', %s, true)", (str(min(max(pool, 40), 1000)),))
+        cur.execute("select current_setting('hnsw.iterative_scan', true) as v")
+        row = cur.fetchone()
+        if row and row["v"] is not None:
+            cur.execute("select set_config('hnsw.iterative_scan', 'relaxed_order', true)")
+
+
+def fetch_precomputed(conn, geo_entity_id: str, weights_version: str) -> list[dict]:
+    """The cell's precomputed neighbours, nearest first; [] when none are stored
+    or migration 0011 has not been applied."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(PRECOMPUTED_SQL, (geo_entity_id, weights_version))
+            return list(cur)
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return []
 
 
 def fetch_neighbours(
-    conn, geo_entity_id: str, weights_version: str, metro_area: str, limit: int
+    conn,
+    geo_entity_id: str,
+    weights_version: str,
+    metro_area: str,
+    limit: int,
+    spread: tuple[float, float, int, float] | None = None,
 ) -> list[dict]:
+    """Up to `limit` nearest cells in embedding space. When `limit` fits the
+    precomputed list and `spread` = (lat, lon, k, min_separation_mi) shows those
+    neighbours still yield k spread-out results, the lookup is used; otherwise
+    the HNSW index answers the query."""
+    if spread is not None and limit <= PRECOMPUTED_MAX:
+        pre = fetch_precomputed(conn, geo_entity_id, weights_version)
+        lat, lon, k, min_sep = spread
+        if pre and len(spread_out(lat, lon, pre, k, min_sep)) >= k:
+            return pre[:limit]
+    pool = min(limit * POOL_FACTOR, POOL_MAX)
+    _tune_hnsw(conn, pool)
     with conn.cursor() as cur:
-        cur.execute(NEIGHBOURS_SQL, (geo_entity_id, weights_version, metro_area, limit))
+        cur.execute(
+            NEIGHBOURS_SQL,
+            {"id": geo_entity_id, "v": weights_version, "metro": metro_area,
+             "pool": pool, "limit": limit},
+        )  # fmt: skip
         return list(cur)
 
 
