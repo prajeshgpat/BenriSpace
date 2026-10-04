@@ -24,3 +24,16 @@ describe("factor icons", () => {
     expect(Object.keys(FACTOR_ICONS).sort()).toEqual([...ALL_FACTOR_KEYS].sort());
   });
 });
+
+describe("v1.4 icons", () => {
+  it("gives the new pills their own icons, with a real airplane for Airport", () => {
+    const names = ["shopping", "recreation", "gasConvenience", "traffic", "emergencyCorridor", "airport"] as const;
+    for (const key of names) {
+      const { container } = render(<FactorIcon factor={key} />);
+      expect(container.querySelector("svg")).toHaveAttribute("data-icon", key);
+    }
+    // The airplane silhouette, not the paper-plane "send" arrow.
+    const { container } = render(<FactorIcon factor="airport" />);
+    expect(container.querySelector("path")?.getAttribute("d")).toMatch(/^M17\.8 19\.2/);
+  });
+});

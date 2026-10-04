@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 
+import { INITIAL_ROWS, ShowMoreButton, useShowMore } from "@/components/ShowMore";
+
 import type { ApiError } from "@/lib/api/errors";
 import { describeError } from "@/lib/api/messages";
 import type { FactorKey, MapTopResult } from "@/lib/api/types";
@@ -36,6 +38,15 @@ export function BestAreas({
 }: BestAreasProps) {
   const id = useId();
   const noFactors = selectedFactors.length === 0;
+  const listId = `${id}-list`;
+  const list = results ?? [];
+  const more = useShowMore(list);
+  // A marker click can select a row hidden behind "Show more"; reveal it.
+  const activeHidden =
+    list.findIndex((result) => result.geohash === activeGeohash) >= INITIAL_ROWS;
+  const open = more.open || activeHidden;
+  const visible = open ? list : more.visible;
+  const { hidden, toggle } = more;
 
   return (
     <section className={styles.section} aria-labelledby={`${id}-heading`}>
@@ -60,8 +71,8 @@ export function BestAreas({
           {status === "error" ? (
             <ErrorMessage error={error} onRetry={onRetry} />
           ) : null}
-          <ol className={styles.list} aria-busy={status === "loading"}>
-            {results.map((result, index) => (
+          <ol id={listId} className={styles.list} aria-busy={status === "loading"}>
+            {visible.map((result, index) => (
               <AreaItem
                 key={result.geohash}
                 rank={index + 1}
@@ -72,6 +83,7 @@ export function BestAreas({
               />
             ))}
           </ol>
+          <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
         </>
       )}
     </section>

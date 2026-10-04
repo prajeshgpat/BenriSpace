@@ -47,9 +47,19 @@ value flowing into `scores` already means "higher is better":
 
 This matches the Scoring Factors table in `PROJECT.md`.
 
-**Noise corridor** is the user-facing name of the `emergency_corridor_score` factor (API key `emergencyCorridor`; DB columns unchanged): main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely. It is a rough proxy, weight 0.75.
+**Noise corridor** is the user-facing name of the `emergency_corridor_score` factor (API key `emergencyCorridor`; DB columns unchanged): main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely (v2.1 also counts gas stations and convenience stores right next door). It is a rough proxy, weight 0.75 in v2 and 12 in v2.1.
 
-**Underlying metrics.** `premium_retail_score` and `trail_popularity_score` (API keys `premiumRetail`, `trailPopularity`) count toward the composite exactly like the others, but the website does not expose them as toggles (`CategorySpec.underlying`, `UNDERLYING_SCORE_COLUMNS` in `scoring/engine.py`; `UNDERLYING_FACTOR_KEYS` in `api/mapdata.py`). Scores, weights and API behaviour are unchanged: an omitted `factors` parameter means all 14 factors; an explicit list means exactly those.
+**v2.1 (`weights_version = 'v2.1-handtuned'`).** Every factor is a user-facing pill (13, none hidden). Same min-max engine shape, with these changes (`CATEGORY_SPECS_V2_1` in `scoring/engine.py`):
+
+| API key | `scores` column | Raw signal (higher is better) |
+| --- | --- | --- |
+| `shopping` | `shopping_score` | `shopping_raw` (0.6 proximity to the 3rd-nearest shop + 0.4 variety of retail groups within 1 mi; `ingestion/osm_retail_parks.py`) + 0.08 x `premium_retail_raw` anchor bonus |
+| `gasConvenience` | `gas_convenience_score` | one positive factor: the 70/30 nearest/count blend over the union of gas stations and convenience stores (existing `gas_station_*` and `convenience_store_*` columns) |
+| `emergencyCorridor` | `emergency_corridor_score` | negative: the corridor/facility raw signal (damped for side streets) PLUS an adjacency penalty from the nearest gas station and nearest convenience store (full within 300 ft, linear to 0 at 800 ft; `adjacency_share`, `gas_convenience_adjacency_penalty`) |
+| `traffic` | `road_score` | unchanged (renamed in the UI and API only) |
+| `recreation` | `recreation_score` | 75% `recreation_raw` (parks: 2/3 proximity + 1/3 size of the largest park within half a mile) + 25% the existing trail count/closeness signal, each normalized separately |
+
+The gas station / convenience store columns therefore feed two factors at different distances: a positive `gasConvenience` and a negative adjacency term inside the noise corridor. New feature_store columns are in imperial units (`shopping_nearest_ft`, `park_largest_sq_ft_half_mi`, ...), migration `0009_v2_1.sql`. Default weights: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4 (only the ratios matter). v2 rows keep working: the API reads a v2 row's Shopping from `premium_retail_score` and Recreation from `trail_popularity_score`, and its `gasConvenience` is null. Legacy API keys (`premiumRetail`, `trailPopularity`, `road`, `gasStation`, `convenienceStore`) are aliases.
 
 **Strava segment popularity is optional data, not optional-with-a-zero-
 penalty.** `strava_segment_popularity_raw` is `null` (not `0`) whenever

@@ -37,7 +37,7 @@ describe("FactorControls", () => {
       expect(screen.getByRole("group", { name })).toBeInTheDocument();
     }
     const amenities = screen.getByRole("group", { name: "Daily amenities" });
-    expect(within(amenities).getAllByRole("checkbox")).toHaveLength(5);
+    expect(within(amenities).getAllByRole("checkbox")).toHaveLength(6);
   });
 
   it("toggles a factor", async () => {
@@ -86,8 +86,9 @@ describe("FactorControls", () => {
         .map((c) => c.closest("label")?.textContent),
     ).toEqual([
       expect.stringContaining("Public transit"),
-      expect.stringContaining("Airport access"),
-      expect.stringContaining("Road conditions"),
+      expect.stringContaining("Airport"),
+      expect.stringContaining("Gas & Convenience"),
+      expect.stringContaining("Traffic"),
     ]);
   });
 
@@ -154,7 +155,7 @@ describe("FactorControls score rings", () => {
     expect(rings).toHaveLength(2);
     for (const ring of rings) expect(ring).toHaveAttribute("aria-hidden", "true");
 
-    const grocery = screen.getByRole("checkbox", { name: /Grocery/ });
+    const grocery = screen.getByRole("checkbox", { name: /Groceries/ });
     expect(within(grocery.closest("label")!).getByTestId("factor-ring")).toHaveTextContent("98");
     const arc = grocery.closest("label")!.querySelector("circle[stroke-dasharray]");
     expect(arc).not.toBeNull();
@@ -173,13 +174,13 @@ describe("FactorControls score rings", () => {
   it("names the score in the toggle's accessible name", () => {
     renderWith(createSelection(["grocery"]), SCORES);
     expect(
-      screen.getByRole("checkbox", { name: "Grocery stores, on, scored 98 out of 100" }),
+      screen.getByRole("checkbox", { name: "Groceries, on, scored 98 out of 100" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Bars & pubs" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Bars" })).toBeInTheDocument();
   });
 
   it("shows a muted n/a ring for a selected factor with no data", () => {
-    renderWith(createSelection(["school", "road"]), SCORES);
+    renderWith(createSelection(["school", "traffic"]), SCORES);
     const school = screen.getByRole("checkbox", { name: /^Schools, on, no data/ });
     const ring = within(school.closest("label")!).getByTestId("factor-ring");
     expect(ring).toHaveTextContent("n/a");

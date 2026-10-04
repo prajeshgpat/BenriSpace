@@ -197,6 +197,47 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
+  /optimize:
+    post:
+      summary: Find neighborhoods that minimise weekly travel to several destinations.
+      description: >
+        Takes anchors (an address such as work, a brand such as "Trader Joe's",
+        or a category such as "gym") and returns the best-scoring, well-separated
+        places to live: those with the lowest weekly travel time
+        (`tripsPerWeek` x 2 for the round trip x minutes, summed over anchors),
+        ties broken by the priority-weighted score. Brand and category anchors
+        use the nearest matching place to each candidate. Walk and drive minutes
+        are refined with live routing when available (`approx: false`);
+        otherwise, and for transit, they are estimates (`approx: true`).
+      operationId: optimize
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OptimizeRequest"
+      responses:
+        "200":
+          description: Ranked places with per-anchor travel details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OptimizeResponse"
+        "400":
+          description: Invalid request (bad anchors, radius, limit, factors or weights).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: A fixed (address) anchor is outside the covered metro area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
   /suggest:
     get:
       summary: Address autocomplete for the search box.
@@ -524,14 +565,14 @@ paths:
           in: query
           description: >
             Comma-separated factors to include (see `FactorKey`). Omit for all
-            fourteen, including the underlying signals `premiumRetail` and
-            `trailPopularity`. An explicit list means exactly those factors:
-            send it without them to leave them out. At least one is required
-            if present. (The website never lists the two underlying signals
-            in its toggles, so it omits `factors` when nothing is narrowed.)
+            thirteen. An explicit list means exactly those factors. At least
+            one is required if present. The legacy keys `premiumRetail`,
+            `trailPopularity`, `road`, `gasStation` and `convenienceStore` are
+            accepted as aliases of `shopping`, `recreation`, `traffic`,
+            `gasConvenience` and `gasConvenience`; duplicates collapse.
           schema:
             type: string
-            example: "grocery,transit,trailPopularity"
+            example: "grocery,transit,recreation"
         - name: weights
           in: query
           description: >
@@ -590,9 +631,8 @@ paths:
         - name: factors
           in: query
           description: >
-            Same as `/map/cells`: omitted means all fourteen factors
-            (underlying `premiumRetail` and `trailPopularity` included); an
-            explicit list means exactly those factors.
+            Same as `/map/cells`: omitted means all thirteen factors (legacy
+            keys accepted as aliases); an explicit list means exactly those factors.
           schema:
             type: string
         - name: weights
@@ -670,7 +710,7 @@ components:
       in: query
       description: >
         Comma-separated factors the user cares about (see `FactorKey`).
-        Omit for the 12 toggleable factors. Must not be empty if present.
+        Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present.
       schema:
         type: string
         example: "grocery,transit,cafe"
@@ -741,23 +781,25 @@ components:
       description: >
         Normalized 0-100 sub-scores. Direction is already applied — higher
         is always better, even for factors that are a negative raw signal
-        (e.g. gas station density). A factor is null when there is no data
-        for it at this location yet — that means "not measured", never 0.
+        (e.g. traffic or the noise corridor). A factor is null when there is
+        no data for it at this location yet — that means "not measured",
+        never 0. All 13 keys are always present. Rows scored with the older
+        `v2-handtuned` model have no `gasConvenience` (null) and report
+        `shopping` / `recreation` from their premium-retail / trail signals.
       properties:
         grocery: { type: number, nullable: true }
         gym: { type: number, nullable: true }
         cafe: { type: number, nullable: true }
         restaurant: { type: number, nullable: true }
         bar: { type: number, nullable: true }
-        premiumRetail: { type: number, nullable: true }
-        gasStation: { type: number, nullable: true }
-        convenienceStore: { type: number, nullable: true }
+        shopping: { type: number, nullable: true }
+        gasConvenience: { type: number, nullable: true }
         transit: { type: number, nullable: true }
         school: { type: number, nullable: true }
-        road: { type: number, nullable: true }
+        traffic: { type: number, nullable: true }
         emergencyCorridor: { type: number, nullable: true }
         airport: { type: number, nullable: true }
-        trailPopularity: { type: number, nullable: true }
+        recreation: { type: number, nullable: true }
 
     ScoreResponse:
       type: object
@@ -785,6 +827,14 @@ components:
           format: date-time
         school:
           $ref: "#/components/schemas/SchoolInfo"
+        neighborhood:
+          type: string
+          nullable: true
+          description: >
+            Human neighborhood name such as "Park Slope, Brooklyn" or "Montclair, NJ"
+            (OpenStreetMap place nodes); null until the neighborhoods job has run or
+            when nothing is nearby. For an area, the area's own label, else the
+            representative cell's.
 
     AreaScoreResponse:
       description: >
@@ -935,32 +985,191 @@ components:
           items:
             $ref: "#/components/schemas/RankedAddress"
 
+    OptimizeAnchor:
+      type: object
+      required: [kind, query]
+      properties:
+        kind:
+          type: string
+          enum: [address, brand, category]
+        query:
+          type: string
+          description: >
+            An address, a brand or place name (case-insensitive, matches name or
+            brand), or a category word (grocery, gym, cafe, restaurant, bar,
+            transit, school, gas_station, convenience_store, plus common synonyms).
+        latitude:
+          type: number
+          format: double
+          description: Address anchors only; skips geocoding. Give with `longitude`.
+        longitude:
+          type: number
+          format: double
+        tripsPerWeek:
+          type: number
+          description: >
+            One-way trips per week are counted twice (round trip). Defaults: 5 for
+            the first address anchor (work), 3 for gyms, 1 otherwise.
+        mode:
+          type: string
+          enum: [walk, drive, transit]
+          description: Defaults to the request's `defaultMode`.
+
+    OptimizeRequest:
+      type: object
+      required: [anchors]
+      properties:
+        anchors:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/OptimizeAnchor"
+        defaultMode:
+          type: string
+          enum: [walk, drive, transit]
+          default: drive
+        radiusMi:
+          type: number
+          default: 15
+          maximum: 30
+          description: Candidate search radius in miles around the centroid of the fixed anchors.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+        factors:
+          description: Priorities for the tie-break score; same keys as /map/top (comma-separated string or array).
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: "#/components/schemas/FactorKey"
+        weights:
+          description: Importance overrides; `factor:number,...` string or a factor-to-number object.
+          oneOf:
+            - type: string
+            - type: object
+              additionalProperties:
+                type: number
+
+    OptimizeAnchorResult:
+      type: object
+      required: [query, kind, name, latitude, longitude, minutes, distanceLabel, mode, approx]
+      properties:
+        query:
+          type: string
+        kind:
+          type: string
+          enum: [address, brand, category]
+        name:
+          type: string
+          description: The matched place (the nearest branch for brand and category anchors).
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        minutes:
+          type: integer
+          description: One-way travel minutes.
+        distanceLabel:
+          type: string
+          nullable: true
+          description: Straight-line distance in feet or miles, e.g. "0.4 mi".
+        mode:
+          type: string
+          enum: [walk, drive, transit]
+        approx:
+          type: boolean
+          description: True when minutes are estimated rather than routed.
+
+    OptimizeResult:
+      type: object
+      required: [latitude, longitude, weeklyMinutes, score, anchors]
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        neighborhood:
+          type: string
+          nullable: true
+        areaLabel:
+          type: string
+          nullable: true
+        weeklyMinutes:
+          type: integer
+          description: Total weekly travel minutes across all anchors, round trips included.
+        score:
+          type: integer
+          description: Priority-weighted overall score, 0-100.
+        anchors:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptimizeAnchorResult"
+
+    OptimizeResponse:
+      type: object
+      required: [results, assumptions, unresolved]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptimizeResult"
+        assumptions:
+          type: array
+          items:
+            type: string
+        unresolved:
+          type: array
+          items:
+            type: object
+            required: [query, reason]
+            properties:
+              query:
+                type: string
+              reason:
+                type: string
+
     FactorKey:
       type: string
       description: >
-        A scoring factor. Same keys as `SubScores`. `premiumRetail` and
-        `trailPopularity` are underlying signals: they count toward the
-        overall score, but the website does not expose them as toggles. The
-        API treats them like any other factor. `emergencyCorridor` is
-        displayed as "Noise corridor" (main roads near fire stations,
-        hospitals and police stations, where sirens and through-traffic noise
-        are most likely; a rough proxy, default weight 0.75); the key is
-        unchanged.
+        A scoring factor. Same keys as `SubScores`; each is a toggle on the
+        website (none are hidden). Pill names: grocery "Groceries", gym "Gym",
+        cafe "Cafes", restaurant "Restaurants", bar "Bars", shopping
+        "Shopping", gasConvenience "Gas & Convenience", transit "Public
+        transit", school "Schools", traffic "Traffic", emergencyCorridor
+        "Noise Corridor" (main roads near fire stations, hospitals and police
+        stations plus gas stations and convenience stores right next door), airport
+        "Airport", recreation "Recreation" (parks and trails). Default relative
+        weights: grocery 14, transit 14, emergencyCorridor 12, restaurant 10,
+        school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5,
+        recreation 5, shopping 4, traffic 4. Parameters that take factors also
+        accept the legacy aliases `premiumRetail` (shopping), `trailPopularity`
+        (recreation), `road` (traffic), `gasStation` and `convenienceStore`
+        (gasConvenience). `/places` accepts `grocery`, `gym`, `cafe`,
+        `restaurant`, `bar`, `shopping`, `recreation`, `gasConvenience`,
+        `transit`, `school` and the legacy `gasStation`, `convenienceStore`,
+        `premiumRetail`.
       enum:
         - grocery
         - gym
         - cafe
         - restaurant
         - bar
-        - premiumRetail
-        - gasStation
-        - convenienceStore
+        - shopping
+        - gasConvenience
         - transit
         - school
-        - road
+        - traffic
         - emergencyCorridor
         - airport
-        - trailPopularity
+        - recreation
 
     Suggestion:
       type: object
@@ -1053,6 +1262,7 @@ components:
           example: nyc
         subScores:
           $ref: "#/components/schemas/SubScores"
+        neighborhood: { type: string, nullable: true, description: "Human name such as Park Slope, Brooklyn." }
 
     MapTopResponse:
       type: object
@@ -1093,6 +1303,7 @@ components:
           nullable: true
         priorities:
           $ref: "#/components/schemas/Priorities"
+        neighborhood: { type: string, nullable: true, description: "Human name such as Park Slope, Brooklyn." }
 
     Place:
       type: object
@@ -1132,6 +1343,7 @@ components:
         factorGain: { type: number }
         compositeScore: { type: number }
         compositeGain: { type: number }
+        neighborhood: { type: string, nullable: true, description: "Human name such as Park Slope, Brooklyn." }
 
     ImproveSuggestion:
       type: object
@@ -1172,6 +1384,7 @@ components:
             distanceLabel: { type: string }
             compositeScore: { type: number }
             compositeGain: { type: number }
+            neighborhood: { type: string, nullable: true, description: "Human name such as Park Slope, Brooklyn." }
         priorities:
           $ref: "#/components/schemas/Priorities"
 
@@ -1197,6 +1410,7 @@ components:
         similarity: { type: number, minimum: 0, maximum: 100 }
         compositeScore: { type: number }
         areaLabel: { type: string, nullable: true }
+        neighborhood: { type: string, nullable: true, description: "Human name such as Park Slope, Brooklyn." }
         differences:
           type: array
           items:

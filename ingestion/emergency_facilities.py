@@ -5,6 +5,11 @@ emergency_facility_nearest_m and emergency_corridor_facility_raw (higher =
 worse; scoring/engine.py negates it, damps it by street_orientation, and
 falls back to the legacy emergency_corridor_proxy_raw when it is NULL).
 
+v2.1 note: the gas station / convenience store adjacency penalty (full within
+300 ft, linear to 0 at 800 ft) is NOT stored here. It needs the nearest-station
+columns written by ingestion.osm_poi, so scoring.engine.noise_corridor_goodness
+adds it at scoring time on top of this raw signal (a pure function there).
+
 Run order / design call: roads.run() already fetches each metro's road
 network, so it calls into this module (fetch_facilities_for_bbox +
 compute_emergency_features) and writes the new columns in the same upsert
@@ -78,7 +83,9 @@ def facility_weight(tags: dict) -> float | None:
     if tags.get("amenity") == "fire_station" or tags.get("emergency") == "ambulance_station":
         return WEIGHT_FIRE
     if tags.get("amenity") == "hospital":
-        return WEIGHT_HOSPITAL_EMERGENCY if tags.get("emergency") == "yes" else WEIGHT_HOSPITAL_OTHER
+        return (
+            WEIGHT_HOSPITAL_EMERGENCY if tags.get("emergency") == "yes" else WEIGHT_HOSPITAL_OTHER
+        )
     if tags.get("amenity") == "police":
         return WEIGHT_POLICE
     return None
@@ -115,9 +122,11 @@ def dedupe_facilities(facilities: list[dict]) -> list[dict]:
         for dl in (-1, 0, 1):
             for dn in (-1, 0, 1):
                 for other in index.get((base[0] + dl, base[1] + dn), []):
-                    if other["weight"] == fac["weight"] and haversine_m(
-                        fac["lat"], fac["lon"], other["lat"], other["lon"]
-                    ) <= DEDUPE_RADIUS_M:
+                    if (
+                        other["weight"] == fac["weight"]
+                        and haversine_m(fac["lat"], fac["lon"], other["lat"], other["lon"])
+                        <= DEDUPE_RADIUS_M
+                    ):
                         dup = True
         if not dup:
             kept.append(fac)
@@ -160,7 +169,12 @@ def annotate_segments_with_factor(segments: list[dict], facility_index) -> list[
         if road_class_weight(seg["highway"]) < MAJOR_CLASS_WEIGHT_THRESHOLD:
             out.append(seg)
             continue
-        out.append({**seg, "facility_factor": segment_facility_factor(seg["lat"], seg["lon"], facility_index)})
+        out.append(
+            {
+                **seg,
+                "facility_factor": segment_facility_factor(seg["lat"], seg["lon"], facility_index),
+            }
+        )
     return out
 
 
@@ -203,7 +217,9 @@ def compute_facility_features(cell_lat: float, cell_lon: float, facilities) -> d
     }
 
 
-def compute_corridor_facility_term(nearby_segments: list[dict], radius_m: float = EMERGENCY_RADIUS_M) -> float:
+def compute_corridor_facility_term(
+    nearby_segments: list[dict], radius_m: float = EMERGENCY_RADIUS_M
+) -> float:
     """SUM over major segments within radius of class_weight * f / (1+d/150).
     Segments lacking facility_factor are treated as f=1."""
     total = 0.0
@@ -217,7 +233,9 @@ def compute_corridor_facility_term(nearby_segments: list[dict], radius_m: float 
     return total
 
 
-def compute_emergency_features(lat: float, lon: float, road_index: dict, facility_index: dict) -> dict:
+def compute_emergency_features(
+    lat: float, lon: float, road_index: dict, facility_index: dict
+) -> dict:
     """The three new feature_store fields for one cell. road_index segments
     should have been passed through annotate_segments_with_factor."""
     nearby = nearby_segments_with_distance(lat, lon, road_index, SEARCH_RADIUS_M)
@@ -248,12 +266,19 @@ def _build_query(min_lat, min_lon, max_lat, max_lon) -> str:
 
 
 def fetch_facilities_for_bbox(
-    client: httpx.Client, min_lat: float, max_lat: float, min_lon: float, max_lon: float, depth: int = 0
+    client: httpx.Client,
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+    depth: int = 0,
 ) -> list[dict]:
     """Facilities for a bbox, quadrant-splitting on timeout like roads.py."""
     try:
         data = post_overpass_query(
-            _build_query(min_lat, min_lon, max_lat, max_lon), timeout=OVERPASS_TIMEOUT_S + 30, client=client
+            _build_query(min_lat, min_lon, max_lat, max_lon),
+            timeout=OVERPASS_TIMEOUT_S + 30,
+            client=client,
         )
         return parse_facilities(data.get("elements", []))
     except (httpx.HTTPStatusError, httpx.TransportError, httpx.TimeoutException) as exc:
@@ -274,7 +299,9 @@ def fetch_facilities_for_bbox(
 
 
 def fetch_facility_index(client, min_lat, max_lat, min_lon, max_lon) -> dict:
-    return index_facilities(dedupe_facilities(fetch_facilities_for_bbox(client, min_lat, max_lat, min_lon, max_lon)))
+    return index_facilities(
+        dedupe_facilities(fetch_facilities_for_bbox(client, min_lat, max_lat, min_lon, max_lon))
+    )
 
 
 # --------------------------------------------------------------------------
@@ -286,7 +313,11 @@ def run() -> None:
     from common.db import get_connection, iter_geo_entities, upsert_feature_store
     from ingestion.roads import fetch_segments_for_bbox
 
-    with get_connection() as conn, ingestion_job("osm_emergency_facilities") as ctx, make_client() as client:
+    with (
+        get_connection() as conn,
+        ingestion_job("osm_emergency_facilities") as ctx,
+        make_client() as client,
+    ):
         for metro_area, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES:
             print(f"Fetching facilities + roads for {metro_area}...", file=sys.stderr)
             fac_index = fetch_facility_index(client, min_lat, max_lat, min_lon, max_lon)
@@ -295,8 +326,11 @@ def run() -> None:
             road_index = index_segments(annotate_segments_with_factor(segments, fac_index))
             for entity in iter_geo_entities(conn, metro_area=metro_area):
                 upsert_feature_store(
-                    conn, entity["id"],
-                    compute_emergency_features(entity["latitude"], entity["longitude"], road_index, fac_index),
+                    conn,
+                    entity["id"],
+                    compute_emergency_features(
+                        entity["latitude"], entity["longitude"], road_index, fac_index
+                    ),
                 )
                 ctx.rows_affected += 1
             conn.commit()

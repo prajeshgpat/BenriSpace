@@ -60,4 +60,18 @@ describe("PreviewCard", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Score this area" }), { key: "Escape" });
     expect(h.onClose).toHaveBeenCalledOnce();
   });
+
+  it("shows the subtitle under a neighborhood title", () => {
+    render(
+      <PreviewCard
+        preview={{ ...PREVIEW, label: "Park Slope, Brooklyn", subtitle: "Bounded by Bedford Ave" }}
+        originLabel={null}
+        onBack={vi.fn()}
+        onPromote={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Park Slope, Brooklyn" })).toBeInTheDocument();
+    expect(screen.getByText("Bounded by Bedford Ave")).toBeInTheDocument();
+  });
 });

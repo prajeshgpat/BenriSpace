@@ -11,7 +11,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from common.config import DATABASE_URL
-from scoring.engine import CATEGORY_SPECS
+from scoring.engine import CATEGORY_SPECS, CATEGORY_SPECS_V2_1, LEGACY_FALLBACK_COLUMNS
 
 # feature_store columns typed `jsonb` in schema.sql -- values for these
 # must be wrapped with Jsonb() before binding, or psycopg's default list/
@@ -67,6 +67,15 @@ FEATURE_STORE_COLUMNS = {
     "school_district_name",
     "school_district_rating",
     "school_rating_source",
+    # v2.1 (contracts/migrations/0009_v2_1.sql). Imperial units by owner rule.
+    "shopping_count_1mi",
+    "shopping_nearest_ft",
+    "shopping_variety_count_1mi",
+    "shopping_raw",
+    "park_count_1mi",
+    "park_nearest_ft",
+    "park_largest_sq_ft_half_mi",
+    "recreation_raw",
 }
 
 
@@ -314,9 +323,19 @@ def build_composite_sql(columns_weights: list[tuple[str, float]]) -> tuple[str, 
     unknown = {col for col, _ in columns_weights} - MAP_SCORE_COLUMNS
     if unknown:
         raise ValueError(f"not a scores column: {sorted(unknown)}")
-    numerator = " + ".join(f"coalesce(s.{col}, 0) * %s::float8" for col, _ in columns_weights)
+    # v2 rows hold Shopping / Recreation under legacy columns (see
+    # scoring.engine.LEGACY_FALLBACK_COLUMNS), so read coalesce(new, legacy).
+    exprs = {
+        col: (
+            f"coalesce(s.{col}, s.{LEGACY_FALLBACK_COLUMNS[col]})"
+            if col in LEGACY_FALLBACK_COLUMNS
+            else f"s.{col}"
+        )
+        for col, _ in columns_weights
+    }
+    numerator = " + ".join(f"coalesce({exprs[col]}, 0) * %s::float8" for col, _ in columns_weights)
     denominator = " + ".join(
-        f"(case when s.{col} is null then 0 else %s::float8 end)" for col, _ in columns_weights
+        f"(case when {exprs[col]} is null then 0 else %s::float8 end)" for col, _ in columns_weights
     )
     weights = [float(w) for _, w in columns_weights]
     return f"(({numerator}) / nullif({denominator}, 0))", weights + weights
@@ -374,7 +393,15 @@ def build_map_top_sql(
     pool: int,
 ) -> tuple[str, list]:
     expr, expr_params = build_composite_sql(columns_weights)
-    sub_score_columns = ", ".join(f"s.{spec.score_column}" for spec in CATEGORY_SPECS)
+    # The 13 factor columns plus the legacy ones v2 rows hold Shopping / Recreation
+    # in (api.lookup.sub_scores_from_score_row reads either).
+    sub_score_columns = ", ".join(
+        f"s.{c}"
+        for c in [
+            *(spec.score_column for spec in CATEGORY_SPECS_V2_1),
+            *LEGACY_FALLBACK_COLUMNS.values(),
+        ]
+    )
     bbox_sql = _BBOX_WHERE if bbox is not None else ""
     sql = f"""
         select * from (
@@ -426,26 +453,52 @@ def get_map_top_candidates(
 def get_area_candidates(conn: psycopg.Connection, lat: float, lon: float) -> list[dict]:
     """Areas whose bounding box contains the point. Returns [] (after rolling
     back the failed statement) when the areas tables have not been created.
-    Reads extent_m (migration 0006); before it is applied the column is
-    skipped and extent_m is None."""
+    Reads extent_m (migration 0006) and neighborhood (0008); before they are
+    applied the columns are skipped and come back as None."""
     sql = """
         select id, area_sq_m, {extent}geometry, bounded_by,
                min_lat, max_lat, min_lon, max_lon
         from areas
         where %s between min_lat and max_lat and %s between min_lon and max_lon
         """
-    for extent in ("extent_m, ", ""):
+    for extent in ("extent_m, neighborhood, ", "extent_m, ", ""):
         try:
             with conn.cursor() as cur:
                 cur.execute(sql.format(extent=extent), (lat, lon))
                 rows = list(cur)
-            return [{"extent_m": None, **r} for r in rows] if not extent else rows
+            if "neighborhood" in extent:
+                return rows
+            defaults = {"extent_m": None, "neighborhood": None}
+            if extent:
+                defaults = {"neighborhood": None}
+            return [{**defaults, **r} for r in rows]
         except psycopg.errors.UndefinedTable:
             conn.rollback()
             return []
         except psycopg.errors.UndefinedColumn:
             conn.rollback()
     return []
+
+
+def get_neighborhoods_by_geohash(
+    conn: psycopg.Connection, geohashes: list[str]
+) -> dict[str, str]:
+    """{geohash: neighborhood} for the cells that have a label (migration
+    0008). Returns {} before the column exists."""
+    wanted = sorted({g for g in geohashes if g})
+    if not wanted:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select geohash, neighborhood from geo_entities "
+                "where geohash = any(%s) and neighborhood is not null",
+                (wanted,),
+            )
+            return {r["geohash"]: r["neighborhood"] for r in cur}
+    except psycopg.errors.UndefinedColumn:
+        conn.rollback()
+        return {}
 
 
 def get_area_aggregate(

@@ -6,7 +6,7 @@ replaces the `areas` / `area_cells` tables.
   python -m ingestion.areas.build --source region --allow-network --write \\
       --build-version areas-v1-2026-10                 # the real run (needs approval)
 
-Size limits (limits.py): areas are at most 1.5 sq mi and 2 mi across; bigger
+Size limits (limits.py): areas are at most 0.8 sq mi and 1.4 mi across; bigger
 faces are cut by a ~1 mi grid, tiny ones merged into a neighbour (see
 limits_apply.py). --write needs contracts/migrations/0006_area_shape.sql
 (areas.extent_m, areas.compactness) applied FIRST; it is not applied yet.
@@ -93,13 +93,16 @@ def compute_metrics(
     water=None,
 ) -> dict:
     from shapely import STRtree
+
     areas_mi = np.array([f.area_sq_m / SQ_M_PER_SQ_MI for _, f in numbered]) if numbered else None
     m: dict = {"face_count": len(numbered), "runtime_s": round(runtime_s, 2)}
     if areas_mi is not None:
         q = np.quantile(areas_mi, [0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 1.0])
         m["area_sq_mi_quantiles"] = {
-            k: round(float(v), 4) for k, v in zip(
-                ["min", "p10", "p25", "median", "p75", "p90", "p99", "max"], q, strict=True)
+            k: round(float(v), 4)
+            for k, v in zip(
+                ["min", "p10", "p25", "median", "p75", "p90", "p99", "max"], q, strict=True
+            )
         }
         m["total_area_sq_mi"] = round(float(areas_mi.sum()), 3)
         m["share_over_max_area_pct"] = round(100.0 * float((areas_mi > MAX_AREA_SQ_MI).mean()), 3)
@@ -108,7 +111,8 @@ def compute_metrics(
         if ext:
             m["max_extent_mi"] = round(max(ext) / M_PER_MI, 3)
             m["share_over_max_extent_pct"] = round(
-                100.0 * sum(e > MAX_EXTENT_M for e in ext) / len(ext), 3)
+                100.0 * sum(e > MAX_EXTENT_M for e in ext) / len(ext), 3
+            )
     metric_geoms = [_to_m(f.geometry, proj) for _, f in numbered]
     if street_pts and metric_geoms:
         tree = STRtree(metric_geoms)

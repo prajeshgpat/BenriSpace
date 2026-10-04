@@ -12,7 +12,8 @@ import math
 import psycopg
 
 from api.areas import bounded_by_text, pick_area, usable_areas
-from api.explain import _snake_to_camel
+from api.factors import FACTOR_COLUMNS
+from api.lookup import neighborhood_map
 from api.metro_stats import MetroStats
 from api.priorities import Priorities
 from common.db import get_area_candidates
@@ -20,6 +21,7 @@ from common.geo import haversine_m
 from common.places import compass
 from common.units import M_PER_MI, format_distance
 from scoring.embeddings import EMBEDDING_COLUMNS, EMBEDDING_DIM, zscore
+from scoring.engine import LEGACY_FALLBACK_COLUMNS
 
 # L2 distance (in z-score units, 14 dims) at which similarity reaches 0. Two
 # unrelated cells sit roughly 5 apart, so 6.0 spreads 0..100 usefully.
@@ -39,18 +41,34 @@ SHORT_LABELS: dict[str, str] = {
     "cafe_score": "cafes",
     "restaurant_score": "restaurants",
     "bar_score": "bars",
-    "premium_retail_score": "premium retail",
-    "gas_station_score": "gas stations",
-    "convenience_store_score": "convenience stores",
+    "shopping_score": "shopping",
+    "gas_convenience_score": "gas and convenience",
     "transit_score": "transit",
     "school_score": "schools",
     "road_score": "traffic",
     "emergency_corridor_score": "noise",
     "airport_score": "airport access",
-    "trail_popularity_score": "trails",
+    "recreation_score": "parks and trails",
 }
 
-_SCORE_SELECT = ", ".join(f"s.{c}" for c in EMBEDDING_COLUMNS)
+# The 13 factor columns, in wire order; wire key per column.
+FACTOR_SCORE_COLUMNS: tuple[str, ...] = tuple(FACTOR_COLUMNS.values())
+_KEY_BY_COLUMN = {column: key for key, column in FACTOR_COLUMNS.items()}
+
+
+def _select_expr(column: str) -> str:
+    legacy = LEGACY_FALLBACK_COLUMNS.get(column)
+    return f"coalesce(s.{column}, s.{legacy}) as {column}" if legacy else f"s.{column}"
+
+
+# The 13 factor scores (v2 rows read Shopping / Recreation through their legacy
+# columns) plus whatever legacy embedding columns are not factor columns.
+_SCORE_SELECT = ", ".join(
+    [
+        *(_select_expr(c) for c in FACTOR_SCORE_COLUMNS),
+        *(f"s.{c}" for c in EMBEDDING_COLUMNS if c not in FACTOR_SCORE_COLUMNS),
+    ]
+)
 
 
 def overfetch_limit(k: int, wide: bool = False) -> int:
@@ -78,7 +96,7 @@ def differences(target: dict, row: dict, columns: tuple[str, ...] | list[str] | 
     means `row` scores higher (better) than the target. `columns` limits which
     factors are compared (default all)."""
     found = []
-    for column in EMBEDDING_COLUMNS:
+    for column in FACTOR_SCORE_COLUMNS:
         if columns is not None and column not in columns:
             continue
         a, b = target.get(column), row.get(column)
@@ -90,7 +108,7 @@ def differences(target: dict, row: dict, columns: tuple[str, ...] | list[str] | 
     found.sort(key=lambda item: -item[0])  # stable
     return [
         {
-            "factor": _snake_to_camel(column.removesuffix("_score")),
+            "factor": _KEY_BY_COLUMN[column],
             "label": factor_label(column),
             "delta": _round_signed(delta),
         }
@@ -174,7 +192,7 @@ def fetch_target(conn, geo_entity_id: str, weights_version: str) -> dict | None:
 
 
 NEIGHBOURS_SQL = f"""
-select ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
+select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
        s.embedding <-> t.embedding as dist
 from scores t
 join scores s on s.weights_version = t.weights_version and s.geo_entity_id <> t.geo_entity_id
@@ -221,7 +239,9 @@ def build_similar(
         if priorities.explicit:
             candidates = rerank(target, candidates, priorities, stats)
     results = []
-    for c in spread_out(lat, lon, candidates, k, min_separation_mi):
+    chosen = spread_out(lat, lon, candidates, k, min_separation_mi)
+    names = neighborhood_map(conn, [c.get("geohash") for c in chosen])
+    for c in chosen:
         diffs = differences(target, c, columns)
         d = haversine_m(lat, lon, c["latitude"], c["longitude"])
         results.append(
@@ -233,6 +253,7 @@ def build_similar(
                 "similarity": similarity(c["dist"]),
                 "composite_score": int(float(c["composite_score"]) + 0.5),
                 "area_label": area_label(conn, c["latitude"], c["longitude"]),
+                "neighborhood": names.get(c.get("geohash")),
                 "differences": diffs,
                 "summary": summary(diffs),
             }

@@ -13,7 +13,12 @@ import contextlib
 import sys
 from dataclasses import dataclass
 
-from scoring.embeddings import EMBEDDING_COLUMNS
+from api.factors import FACTOR_COLUMNS
+from scoring.engine import LEGACY_FALLBACK_COLUMNS
+
+# Stats are kept for the 13 factor columns (a v2 row's Shopping / Recreation are
+# read through their legacy columns, so one query covers either version).
+STATS_COLUMNS: tuple[str, ...] = tuple(FACTOR_COLUMNS.values())
 
 QUANTILE_POINTS = 101  # cut points at 0%, 1%, ... 100%
 
@@ -43,10 +48,11 @@ _FRACTIONS = "array[" + ",".join(f"{i / 100:.2f}" for i in range(QUANTILE_POINTS
 
 def _sql(by_metro: bool) -> str:
     parts = []
-    for c in EMBEDDING_COLUMNS:
+    for c in STATS_COLUMNS:
+        e = f"coalesce(s.{c}, s.{LEGACY_FALLBACK_COLUMNS[c]})" if c in LEGACY_FALLBACK_COLUMNS else f"s.{c}"
         parts.append(
-            f"avg(s.{c})::float8 as {c}_mean, stddev_pop(s.{c})::float8 as {c}_std, "
-            f"percentile_cont({_FRACTIONS}) within group (order by s.{c}) as {c}_q"
+            f"avg({e})::float8 as {c}_mean, stddev_pop({e})::float8 as {c}_std, "
+            f"percentile_cont({_FRACTIONS}) within group (order by {e}) as {c}_q"
         )
     join = "join geo_entities ge on ge.id = s.geo_entity_id " if by_metro else ""
     where = "s.weights_version = %s" + (" and ge.metro_area = %s" if by_metro else "")
@@ -55,7 +61,7 @@ def _sql(by_metro: bool) -> str:
 
 def _from_row(row: dict) -> MetroStats:
     out: MetroStats = {}
-    for c in EMBEDDING_COLUMNS:
+    for c in STATS_COLUMNS:
         mean, std, q = row.get(f"{c}_mean"), row.get(f"{c}_std"), row.get(f"{c}_q")
         if mean is None or not q:
             continue

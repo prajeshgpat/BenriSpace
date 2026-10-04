@@ -1,12 +1,15 @@
 "use client";
 
-import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useId } from "react";
+
 import { useImprove } from "@/hooks/useImprove";
 import type { ApiClient } from "@/lib/api/client";
 import type { PriorityQuery } from "@/lib/api/types";
 import { FactorIcon } from "@/lib/factorIcons";
 import type { Preview } from "@/lib/map/preview";
 import { roundScore } from "@/lib/score/presentation";
+
+import { ShowMoreButton, useShowMore } from "./ShowMore";
 
 import styles from "./ImproveCard.module.css";
 
@@ -24,8 +27,8 @@ function signed(value: number): string {
 
 export function ImproveCard({ coordinates, client, priorities, onPreview }: ImproveCardProps) {
   const { status, data, updating } = useImprove(coordinates, client, priorities);
-  // Tall content stays a single summary row on phones until opened.
-  const mobile = useIsMobile();
+  const listId = useId();
+  const { visible, hidden, open, toggle } = useShowMore(data?.suggestions ?? []);
 
   if (status === "idle" || status === "unavailable") return null;
 
@@ -47,16 +50,21 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
   const best = data.bestNearby;
 
   return (
-    <details className={styles.card} open={!mobile} aria-busy={updating || undefined}>
-      <summary className={styles.summary}>
+    <section
+      className={styles.card}
+      aria-label="Improve this area"
+      aria-busy={updating || undefined}
+    >
+      <div className={styles.summary}>
         <h3 className={styles.title}>Improve this area</h3>
         {updating ? <span className={styles.updating}>Updating…</span> : null}
-      </summary>
+      </div>
       {best ? (
         <p className={styles.best}>
           <span>
-            <strong>Best move nearby:</strong> {signed(best.compositeGain)} overall,{" "}
-            {best.distanceLabel} {best.direction}
+            <strong>Best move nearby:</strong>{" "}
+            {best.neighborhood ? `${best.neighborhood}, ` : ""}
+            {signed(best.compositeGain)} overall, {best.distanceLabel} {best.direction}
           </span>
           <button
             type="button"
@@ -66,7 +74,8 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
               onPreview({
                 lat: best.latitude,
                 lon: best.longitude,
-                label: "Best move nearby",
+                label: best.neighborhood ?? "Best move nearby",
+                subtitle: best.neighborhood ? "Best move nearby" : undefined,
                 kind: "best-move",
                 summary: {
                   compositeScore: best.compositeScore,
@@ -80,8 +89,8 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
           </button>
         </p>
       ) : null}
-      <ul className={styles.list}>
-        {data.suggestions.map((s) => (
+      <ul id={listId} className={styles.list}>
+        {visible.map((s) => (
           <li key={s.factor} className={styles.item} data-factor={s.factor}>
             <p className={styles.head}>
               <FactorIcon factor={s.factor} />
@@ -99,6 +108,12 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
                 ))}
               </ul>
             ) : null}
+            {s.betterArea?.neighborhood ? (
+              <p className={styles.betterArea}>
+                Better area: {s.betterArea.neighborhood} &middot;{" "}
+                {s.betterArea.distanceLabel} {s.betterArea.direction}
+              </p>
+            ) : null}
             {s.betterArea ? (
               <button
                 type="button"
@@ -109,7 +124,10 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
                   onPreview({
                     lat: area.latitude,
                     lon: area.longitude,
-                    label: `Better area for ${s.label}`,
+                    label: area.neighborhood ?? `Better area for ${s.label}`,
+                    subtitle: area.neighborhood
+                      ? `Better area for ${s.label}`
+                      : undefined,
                     kind: "improve",
                     summary: {
                       compositeScore: area.compositeScore,
@@ -125,6 +143,7 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
           </li>
         ))}
       </ul>
-    </details>
+      <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
+    </section>
   );
 }

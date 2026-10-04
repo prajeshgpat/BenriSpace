@@ -58,10 +58,7 @@ def generate_cells() -> dict[str, tuple[str, float, float]]:
 
 def run() -> None:
     cells = generate_cells()
-    rows = [
-        (geohash, lat, lon, metro_area)
-        for geohash, (metro_area, lat, lon) in cells.items()
-    ]
+    rows = [(geohash, lat, lon, metro_area) for geohash, (metro_area, lat, lon) in cells.items()]
 
     with get_connection() as conn, ingestion_job("grid_generation") as ctx:
         with conn.cursor() as cur:

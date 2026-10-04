@@ -6,6 +6,7 @@ import { emptySubScores, fullSubScores } from "@/test/fixtures";
 import {
   areaTitle,
   describeMapStatus,
+  boundaryFromLabel,
   metroLabel,
   strongestFactors,
 } from "./presentation";
@@ -13,22 +14,22 @@ import {
 describe("strongestFactors", () => {
   it("picks the best two of the selected factors only", () => {
     const result = strongestFactors(fullSubScores, [
-      "gasStation",
+      "gasConvenience",
       "grocery",
       "cafe",
-      "road",
+      "traffic",
     ]);
     expect(result.map((f) => f.key)).toEqual(["grocery", "cafe"]);
     expect(result[0]).toEqual({
       key: "grocery",
-      label: "Grocery stores",
+      label: "Groceries",
       value: 91,
     });
   });
 
   it("ignores a stronger factor that is not selected", () => {
-    const result = strongestFactors(fullSubScores, ["road"]);
-    expect(result.map((f) => f.key)).toEqual(["road"]);
+    const result = strongestFactors(fullSubScores, ["traffic"]);
+    expect(result.map((f) => f.key)).toEqual(["traffic"]);
   });
 
   it("skips factors with no data", () => {
@@ -53,10 +54,22 @@ describe("labels", () => {
     expect(metroLabel("")).toBe("Metro area");
   });
 
-  it("titles an area by its coordinates", () => {
-    expect(
-      areaTitle({ latitude: 40.7546, longitude: -73.985, metroArea: "nyc" }),
-    ).toBe("Area near 40.755, -73.985");
+  it("titles an area by its neighborhood, never by coordinates", () => {
+    expect(areaTitle({ neighborhood: "Park Slope, Brooklyn" })).toBe(
+      "Park Slope, Brooklyn",
+    );
+    expect(areaTitle({ neighborhood: null })).toBe("Unnamed area");
+    expect(areaTitle({})).toBe("Unnamed area");
+    expect(areaTitle({ neighborhood: "  " })).toBe("Unnamed area");
+  });
+
+  it("derives the street boundary from an area label", () => {
+    expect(boundaryFromLabel("Area bounded by Bedford Ave, Nostrand Ave")).toBe(
+      "Bedford Ave, Nostrand Ave",
+    );
+    expect(boundaryFromLabel("Second point")).toBe("Second point");
+    expect(boundaryFromLabel(null)).toBeNull();
+    expect(boundaryFromLabel("Area bounded by ")).toBeNull();
   });
 });
 

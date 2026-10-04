@@ -14,6 +14,7 @@ import {
   SUGGEST_TIMEOUT_MS,
   createApiClient,
   normalizeSubScores,
+  parseMapTop,
   parseScore,
 } from "./client";
 import { ApiError } from "./errors";
@@ -72,7 +73,8 @@ describe("getScore", () => {
     expect(score.subScores.airport).toBeCloseTo(62.79, 2);
     expect(score.subScores.grocery).toBeNull();
     // Missing from the payload altogether, not just null.
-    expect(score.subScores.trailPopularity).toBeNull();
+    expect(score.subScores.recreation).toBeNull();
+    expect(score.neighborhood).toBeNull();
     expect(score.compositeScore).toBeCloseTo(62.79, 2);
     expect(score.weightsVersion).toBe("v1-handtuned");
   });
@@ -721,6 +723,7 @@ describe("getSimilar", () => {
         similarity: 88,
         compositeScore: 71,
         areaLabel: "Area bounded by Nostrand Ave and Atlantic Ave",
+        neighborhood: null,
         differences: [{ factor: "transit", label: "transit", delta: 14 }],
         summary: "14 points better for transit.",
       },
@@ -816,5 +819,47 @@ describe("priorities on the point endpoints", () => {
     expect(narrowed.fetchMock.mock.calls[0][0]).toBe(
       `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation?factors=transit`,
     );
+  });
+});
+
+describe("v1.4 factor keys and neighborhoods", () => {
+  it("folds legacy sub-score keys into the new pills when the new key is absent", () => {
+    const normalized = normalizeSubScores({
+      premiumRetail: 70,
+      trailPopularity: 100,
+      road: 22,
+      gasStation: 40,
+      convenienceStore: 20,
+      grocery: 50,
+    });
+    expect(normalized).toMatchObject({
+      shopping: 70,
+      recreation: 100,
+      traffic: 22,
+      gasConvenience: 30,
+      grocery: 50,
+    });
+    // The new key wins when both are present.
+    expect(normalizeSubScores({ traffic: 5, road: 22 }).traffic).toBe(5);
+  });
+
+  it("reads the neighborhood on a score and nulls a blank one", () => {
+    const body = { ...liveScoreBody, neighborhood: "Park Slope, Brooklyn" };
+    expect(parseScore(body).neighborhood).toBe("Park Slope, Brooklyn");
+    expect(parseScore({ ...body, neighborhood: "  " }).neighborhood).toBeNull();
+    expect(parseScore(liveScoreBody).neighborhood).toBeNull();
+  });
+
+  it("maps legacy keys in priorities and weights, and reads map-top neighborhoods", () => {
+    const top = parseMapTop({
+      factors: ["road", "traffic", "gasStation", "bogus"],
+      weights: { road: 4, gasStation: 3, convenienceStore: 3, grocery: 14 },
+      results: [
+        { geohash: "dr5ru7", latitude: 1, longitude: 2, score: 90, metroArea: "nyc", neighborhood: "Chelsea, Manhattan" },
+      ],
+    });
+    expect(top.factors).toEqual(["traffic", "gasConvenience"]);
+    expect(top.weights).toMatchObject({ traffic: 4, gasConvenience: 3, grocery: 14 });
+    expect(top.results[0].neighborhood).toBe("Chelsea, Manhattan");
   });
 });

@@ -2,6 +2,7 @@ import pytest
 
 from scoring.engine import (
     CATEGORY_SPECS,
+    CATEGORY_SPECS_V2,
     DEFAULT_WEIGHTS,
     compute_composite,
     compute_rating_raw,
@@ -234,8 +235,8 @@ def test_emergency_corridor_prefers_facility_signal_and_falls_back_to_proxy():
 
 
 def test_default_weights_v2_and_factor_count():
-    assert len(CATEGORY_SPECS) == 14
-    assert set(DEFAULT_WEIGHTS) == {s.score_column for s in CATEGORY_SPECS}
+    assert len(CATEGORY_SPECS_V2) == 14
+    assert set(DEFAULT_WEIGHTS) == {s.score_column for s in CATEGORY_SPECS_V2}
     assert DEFAULT_WEIGHTS["restaurant_score"] == 1.0
     assert DEFAULT_WEIGHTS["bar_score"] == 0.5
     assert DEFAULT_WEIGHTS["premium_retail_score"] == 0.75
@@ -367,3 +368,175 @@ def test_all_score_columns_cover_every_emitted_column():
     cols = all_score_columns()
     assert "composite_score" in cols and "school_proximity_score" in cols
     assert len(cols) == len(set(cols))
+
+
+# ---------------------------------------------------------------------------
+# v2.1 (weights_version 'v2.1-handtuned')
+# ---------------------------------------------------------------------------
+
+from scoring.engine import (
+    ADJACENCY_FULL_M,
+    ADJACENCY_ZERO_M,
+    CATEGORY_SPECS_V2_1,
+    V2_1_WEIGHTS,
+    WEIGHTS_VERSION_V2_1,
+    adjacency_share,
+    all_score_columns,
+    gas_convenience_adjacency_penalty,
+    gas_convenience_goodness,
+    noise_corridor_goodness,
+    shopping_goodness,
+)
+
+FT = 0.3048
+
+
+def test_v2_1_has_thirteen_factors_and_the_agreed_weights():
+    assert len(CATEGORY_SPECS_V2_1) == 13
+    assert set(V2_1_WEIGHTS) == {s.score_column for s in CATEGORY_SPECS_V2_1}
+    assert V2_1_WEIGHTS == {
+        "grocery_score": 14, "transit_score": 14, "emergency_corridor_score": 12,
+        "restaurant_score": 10, "school_score": 10, "gym_score": 9, "cafe_score": 8,
+        "gas_convenience_score": 6, "bar_score": 5, "airport_score": 5,
+        "recreation_score": 5, "shopping_score": 4, "road_score": 4,
+    }  # fmt: skip
+    assert not any(s.underlying for s in CATEGORY_SPECS_V2_1)
+    assert sum(V2_1_WEIGHTS.values()) == 106
+
+
+def test_v2_1_score_columns_and_union_whitelist():
+    cols = all_score_columns(WEIGHTS_VERSION_V2_1)
+    assert "gas_convenience_score" in cols and "shopping_score" in cols
+    assert "recreation_score" in cols and "premium_retail_score" not in cols
+    assert cols[-1] == "composite_score"
+    union = {s.score_column for s in CATEGORY_SPECS}
+    assert {"shopping_score", "recreation_score", "gas_convenience_score"} <= union
+    assert "premium_retail_score" in union  # v2 rows keep working
+    assert len(CATEGORY_SPECS) == len(union)
+
+
+def test_adjacency_share_curve():
+    assert adjacency_share(None) == 0.0
+    assert adjacency_share(0) == 1.0
+    assert adjacency_share(300 * FT - 0.01) == 1.0
+    assert adjacency_share(ADJACENCY_FULL_M) == pytest.approx(1.0)
+    assert adjacency_share(550 * FT) == pytest.approx(0.5, abs=0.001)
+    assert adjacency_share(ADJACENCY_ZERO_M) == 0.0
+    assert adjacency_share(5000) == 0.0
+
+
+def test_adjacency_penalty_combines_both_kinds_capped():
+    assert gas_convenience_adjacency_penalty(None, None) == 0.0
+    one = gas_convenience_adjacency_penalty(10, None)
+    both = gas_convenience_adjacency_penalty(10, 20)
+    assert one == pytest.approx(3.0)
+    assert both == pytest.approx(4.5)  # capped at 1.5x
+    assert gas_convenience_adjacency_penalty(10, 5000) == pytest.approx(one)
+
+
+def test_noise_corridor_adds_adjacency_penalty_to_the_base_signal():
+    base = {"emergency_corridor_facility_raw": 2.0}
+    assert noise_corridor_goodness(base) == -2.0
+    near = {**base, "gas_station_nearest_m": 20.0}
+    assert noise_corridor_goodness(near) == pytest.approx(-5.0)
+    far = {**base, "gas_station_nearest_m": 150.0, "convenience_store_nearest_m": 1000.0}
+    assert -5.0 < noise_corridor_goodness(far) < -2.0
+    # proxy fallback, side-street damping applies to the road signal only
+    assert noise_corridor_goodness({"emergency_corridor_proxy_raw": 4.0}) == -4.0
+    damped = {**near, "street_orientation": "side_street"}
+    assert noise_corridor_goodness(damped) == pytest.approx(-(1.0 + 3.0))
+    # no corridor signal at all -> no score, even with a gas station next door
+    assert noise_corridor_goodness({"gas_station_nearest_m": 5.0}) is None
+
+
+def test_gas_convenience_is_one_positive_factor_over_the_union():
+    assert gas_convenience_goodness({}) is None
+    none_nearby = gas_convenience_goodness(
+        {"gas_station_count_500m": 0, "convenience_store_count_500m": 0}
+    )
+    close_gas = gas_convenience_goodness(
+        {
+            "gas_station_count_500m": 1,
+            "gas_station_nearest_m": 100,
+            "convenience_store_count_500m": 0,
+        }
+    )
+    close_both = gas_convenience_goodness(
+        {
+            "gas_station_count_500m": 1, "gas_station_nearest_m": 100,
+            "convenience_store_count_500m": 3, "convenience_store_nearest_m": 60,
+        }
+    )  # fmt: skip
+    assert none_nearby < close_gas < close_both
+    only_convenience = gas_convenience_goodness(
+        {"convenience_store_count_500m": 2, "convenience_store_nearest_m": 100}
+    )
+    assert only_convenience > none_nearby
+
+
+def test_shopping_goodness_combines_stored_signal_and_anchor_bonus():
+    assert shopping_goodness({}) is None
+    assert shopping_goodness({"shopping_raw": 0.5}) == pytest.approx(0.5)
+    assert shopping_goodness({"shopping_raw": 0.5, "premium_retail_raw": 2.5}) == pytest.approx(0.7)
+    assert shopping_goodness({"premium_retail_raw": 1.0}) == pytest.approx(0.08)
+
+
+def _v21_rows():
+    return [
+        {
+            "geo_entity_id": "urban",
+            "shopping_raw": 0.9, "premium_retail_raw": 2.0,
+            "gas_station_count_500m": 1, "gas_station_nearest_m": 150,
+            "convenience_store_count_500m": 4, "convenience_store_nearest_m": 40,
+            "recreation_raw": 0.8,
+            "running_trail_count_800m": 3, "running_trail_nearest_m": 100,
+            "emergency_corridor_facility_raw": 3.0,
+        },
+        {
+            "geo_entity_id": "rural",
+            "shopping_raw": 0.1,
+            "gas_station_count_500m": 0, "gas_station_nearest_m": 2500,
+            "convenience_store_count_500m": 0, "convenience_store_nearest_m": 3000,
+            "recreation_raw": 0.2,
+            "running_trail_count_800m": 0, "running_trail_nearest_m": None,
+            "emergency_corridor_facility_raw": 0.5,
+        },
+    ]  # fmt: skip
+
+
+def test_score_metro_cohort_v2_1_emits_the_new_columns_and_normalized_composite():
+    scored = score_metro_cohort(_v21_rows(), WEIGHTS_VERSION_V2_1)
+    urban, rural = scored["urban"], scored["rural"]
+    for col in ("shopping_score", "gas_convenience_score", "recreation_score"):
+        assert urban[col] == pytest.approx(100.0) and rural[col] == pytest.approx(0.0)
+    assert "premium_retail_score" not in urban and "gas_station_score" not in urban
+    # more corridor + adjacent stations = worse noise score
+    assert urban["emergency_corridor_score"] < rural["emergency_corridor_score"]
+    # composite is normalized by the weight of factors that have a score
+    weights = V2_1_WEIGHTS
+    expected = sum(urban[c] * weights[c] for c in urban if c in weights) / sum(
+        weights[c] for c in urban if c in weights
+    )
+    assert urban["composite_score"] == pytest.approx(expected)
+
+
+def test_recreation_blends_parks_75_and_trails_25_and_falls_back():
+    rows = [
+        {"geo_entity_id": "a", "recreation_raw": 1.0, "running_trail_count_800m": 0},
+        {"geo_entity_id": "b", "recreation_raw": 0.0, "running_trail_count_800m": 5,
+         "running_trail_nearest_m": 10},
+        {"geo_entity_id": "c", "recreation_raw": None, "running_trail_count_800m": 5,
+         "running_trail_nearest_m": 10},
+        {"geo_entity_id": "d", "recreation_raw": 0.5, "running_trail_count_800m": None},
+    ]  # fmt: skip
+    scored = score_metro_cohort(rows, WEIGHTS_VERSION_V2_1)
+    assert scored["a"]["recreation_score"] == pytest.approx(75.0)
+    assert scored["b"]["recreation_score"] == pytest.approx(25.0)
+    assert scored["c"]["recreation_score"] == pytest.approx(100.0)  # trails only
+    assert scored["d"]["recreation_score"] == pytest.approx(50.0)  # parks only
+
+
+def test_score_metro_cohort_defaults_to_v2_columns():
+    rows = [{"geo_entity_id": "x", "premium_retail_raw": 1.0, "grocery_nearest_m": 10}]
+    scored = score_metro_cohort(rows)
+    assert "premium_retail_score" in scored["x"] and "shopping_score" not in scored["x"]

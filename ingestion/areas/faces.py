@@ -16,8 +16,8 @@ Pipeline (all geometry in a local metric projection until the final step):
      equirectangular), bounded_by (top road names by shared boundary length,
      naming.bounding_streets) and the geohash6 cells overlapped.
 
-  7. size limits (limits.py, limits_apply.py): faces over 1.5 sq mi or with a
-     bounding box over 2 mi are cut by a ~1 mi tile grid, and faces under
+  7. size limits (limits.py, limits_apply.py): faces over 0.8 sq mi or with a
+     bounding box over 1.4 mi are cut by a ~0.75 mi tile grid, and faces under
      0.02 sq mi merge into the neighbour sharing the longest boundary when
      the caps still hold. bounded_by and cells are computed per final piece.
      Each Face also carries extent_m and compactness (areas.extent_m /
@@ -63,7 +63,7 @@ class FaceParams:
     coast_offset_m: float = 2.0
     decimals: int = 5
     max_bounded_by: int = 4
-    enforce_size_limits: bool = True  # split > 1.5 sq mi / 2 mi faces, merge slivers
+    enforce_size_limits: bool = True  # split > 0.8 sq mi / 1.4 mi faces, merge slivers
     # None = every grid cell the face overlaps; else only these geohashes.
     geohashes: frozenset[str] | None = None
 
@@ -124,7 +124,11 @@ def geohash_bounds(gh: str) -> tuple[float, float, float, float]:
 
 
 def cells_in_bbox(
-    min_lat: float, max_lat: float, min_lon: float, max_lon: float, precision: int = GEOHASH_PRECISION
+    min_lat: float,
+    max_lat: float,
+    min_lon: float,
+    max_lon: float,
+    precision: int = GEOHASH_PRECISION,
 ) -> list[str]:
     """Every geohash cell of `precision` whose rectangle meets the bbox."""
     nlon, nlat = _dims(precision)
@@ -144,13 +148,19 @@ def local_projector(min_lat: float, max_lat: float, min_lon: float, max_lon: flo
 
 
 def _to_ll(geom: BaseGeometry, proj: Projector) -> BaseGeometry:
-    return shapely.transform(geom, lambda a: np.column_stack(
-        (a[:, 0] / proj.kx + proj.lon0, a[:, 1] / proj.ky + proj.lat0)))
+    return shapely.transform(
+        geom,
+        lambda a: np.column_stack((a[:, 0] / proj.kx + proj.lon0, a[:, 1] / proj.ky + proj.lat0)),
+    )
 
 
 def _to_m(geom: BaseGeometry, proj: Projector) -> BaseGeometry:
-    return shapely.transform(geom, lambda a: np.column_stack(
-        ((a[:, 0] - proj.lon0) * proj.kx, (a[:, 1] - proj.lat0) * proj.ky)))
+    return shapely.transform(
+        geom,
+        lambda a: np.column_stack(
+            ((a[:, 0] - proj.lon0) * proj.kx, (a[:, 1] - proj.lat0) * proj.ky)
+        ),
+    )
 
 
 def project_back(geom_m: BaseGeometry, proj: Projector, decimals: int) -> BaseGeometry:
@@ -254,7 +264,9 @@ def build_faces(
     edges = [e for e in hard_edges(roads, p.hard_weight) if e.geom.intersects(reach)]
     edges = [_simplified(e, p.simplify_m) for e in edges]
     coast_lines = [
-        _simplified(RoadEdge(LineString(c), COAST_WEIGHT, "coastline", None, False), p.simplify_m).geom
+        _simplified(
+            RoadEdge(LineString(c), COAST_WEIGHT, "coastline", None, False), p.simplify_m
+        ).geom
         for c in coast
         if len(c) >= 2 and LineString(c).intersects(reach)
     ]

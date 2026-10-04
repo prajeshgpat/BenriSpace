@@ -163,7 +163,13 @@ class FakeConn:
 
 def make_numbered():
     sq = Polygon([(-74.0, 40.70), (-73.99, 40.70), (-73.99, 40.71), (-74.0, 40.71)])
-    f1 = Face(sq, ("Main St",), 1_000_000.0, (40.70, 40.71, -74.0, -73.99), (("dr5reg", 600000.0), ("dr5ref", 400000.0)))
+    f1 = Face(
+        sq,
+        ("Main St",),
+        1_000_000.0,
+        (40.70, 40.71, -74.0, -73.99),
+        (("dr5reg", 600000.0), ("dr5ref", 400000.0)),
+    )
     f2 = Face(Polygon([(0, 0), (1, 0), (1, 1)]), (), 2.0, (1.0, 2.0, 3.0, 4.0), ())
     return [(1, f1), (2, f2)]
 
@@ -214,7 +220,9 @@ def test_cli_write_requires_region_source():
 
 def test_cli_region_without_allow_network_refuses(tmp_path):
     with pytest.raises(hard_source.NetworkNotAllowed):
-        build.main(["--source", "region", "--cache-dir", str(tmp_path), "--out-dir", str(tmp_path / "o")])
+        build.main(
+            ["--source", "region", "--cache-dir", str(tmp_path), "--out-dir", str(tmp_path / "o")]
+        )
 
 
 def test_cli_dry_run_on_cached_sample(tmp_path):

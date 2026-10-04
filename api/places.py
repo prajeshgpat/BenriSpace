@@ -10,10 +10,14 @@ FACTOR_CATEGORIES: dict[str, tuple[str, ...]] = {
     "cafe": ("cafe",),
     "restaurant": ("restaurant",),
     "bar": ("bar",),
-    "gasStation": ("gas_station",),
-    "convenienceStore": ("convenience_store",),
+    "shopping": ("shopping",),
+    "recreation": ("park",),
+    "gasConvenience": ("gas_station", "convenience_store"),
     "transit": ("transit",),
     "school": ("school",),
+    # Legacy keys keep their exact old meaning (brand rows / one kind of store).
+    "gasStation": ("gas_station",),
+    "convenienceStore": ("convenience_store",),
     "premiumRetail": ("whole_foods", "starbucks", "target"),
 }
 

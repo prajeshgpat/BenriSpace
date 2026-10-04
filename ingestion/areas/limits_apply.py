@@ -108,7 +108,9 @@ def merge_slivers(polys: list[Polygon], proj: Projector, max_rounds: int = 6) ->
     cur = list(polys)
     for _ in range(max_rounds):
         areas = [measure(p, proj)[0] for p in cur]
-        slivers = sorted((i for i, a in enumerate(areas) if a < MIN_SLIVER_M2), key=lambda i: areas[i])
+        slivers = sorted(
+            (i for i, a in enumerate(areas) if a < MIN_SLIVER_M2), key=lambda i: areas[i]
+        )
         if not slivers:
             break
         tree = STRtree(cur)

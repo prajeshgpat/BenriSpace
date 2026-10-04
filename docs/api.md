@@ -13,6 +13,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /area` | Score for the road-bounded area under a point | live |
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
+| `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
@@ -22,12 +23,14 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 
 **Which examples are real.** The `/score`, `/area`, `/score/{id}/explanation`, `/reverse` and `/map/top` examples are real production responses captured after the v2 cutover (2026-10-03), with numbers rounded for readability (and the `/area` polygon shortened). The `/triangulate`, `/suggest` and `/map/cells` examples were captured earlier and still have the right shape; their numbers predate the v2 data and are for shape only.
 
-**v2 status.** The v2 cutover is complete. Production serves `weightsVersion: "v2-handtuned"` (64,320 score rows, fourteen factors), including restaurant, bar, premium retail, the facility-based noise corridor and click-to-polygon `/area`. `subScores.school` is `null` wherever no district rating exists (shown as "No data" on the website); any other factor can also be `null` if its data is missing for a cell.
+**v2 status.** The v2 cutover is complete. Production serves `weightsVersion: "v2-handtuned"` (64,320 score rows, fourteen stored scores), including restaurant, bar, premium retail, the facility-based noise corridor and click-to-polygon `/area`. `subScores.school` is `null` wherever no district rating exists (shown as "No data" on the website); any other factor can also be `null` if its data is missing for a cell.
+
+**v2.1 key names.** The API now answers with the thirteen v2.1 factors (`shopping`, `gasConvenience`, `traffic`, `recreation` replace `premiumRetail`, `gasStation`/`convenienceStore`, `road`, `trailPopularity`). The examples below show the production `v2-handtuned` rows read through those keys: `gasConvenience` is `null` on v2 rows (they scored gas stations and convenience stores as two negative factors), `shopping` comes from the old premium-retail score, `recreation` from the old trail score and `traffic` from the old road score. Rows scored as `v2.1-handtuned` fill all thirteen. The old keys are still accepted wherever you send `factors` or `weights` (see "The thirteen factors").
 
 ## Conventions
 
 - **Authentication:** none today. Phase 4 will add API keys and usage tiers (an `Authorization: Bearer ...` or `X-API-Key` header).
-- **JSON, camelCase:** every field name is camelCase (`compositeScore`, `geoEntityId`, `gasStation`).
+- **JSON, camelCase:** every field name is camelCase (`compositeScore`, `geoEntityId`, `gasConvenience`).
 - **Errors** always have the same shape, with an HTTP status that matches:
 
   ```json
@@ -42,39 +45,41 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 
 ## What a score means
 
-- Scores run from **0 to 100, and higher is always better**. Factors where less is better (gas stations nearby, traffic, the noise corridor, airport drive time) are already inverted, so a high `gasStation` score means "far from gas stations".
+- Scores run from **0 to 100, and higher is always better**. Factors where less is better (traffic, the noise corridor, airport drive time) are already inverted, so a high `traffic` score means "light traffic nearby" and a high `emergencyCorridor` score means "far from the noise corridor".
 - Scores are **relative within a metro area**, not absolute. Each factor is min-max normalized across all cells in the same metro area (for example `nyc` or `northern_nj`), so 100 means "best in its metro area for this factor" and 0 means "worst". A suburban cell is compared with other suburban cells in its own area, not with Manhattan.
-- **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more gas stations, traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but 10 on distance from gas stations. A composite near 80 is exceptional.
+- **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but a low score on distance from the noise corridor. A composite near 80 is exceptional.
 - Scores describe an **area**, not a single building. The underlying grid cells are about 0.6 by 0.4 miles, and the small road-bounded areas returned by `/area` are averages of the cells they overlap, so neighbouring small areas often share similar scores.
-- The **composite** (`compositeScore`) is a weighted average of the fourteen sub-scores. Default weights (version `v2-handtuned`, which production serves; the retired `v1-handtuned` had eleven factors, without restaurant, bar and premiumRetail): grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premiumRetail 0.75, gasStation 1.0, convenienceStore 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trailPopularity 1.25. `/map/cells` and `/map/top` let you choose your own factors and weights.
+- The **composite** (`compositeScore`) is a weighted average of the sub-scores, normalized by the weight of the factors that have a score (a `null` factor is left out, never counted as 0). The v2.1 default weights (version `v2.1-handtuned`, from SCORING_FRAMEWORK.md) are: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. Production still serves `v2-handtuned` until the cutover; its stored composites use the older weights (grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premium retail 0.75, gas station 1.0, convenience store 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trail popularity 1.25). `/map/cells` and `/map/top` let you choose your own factors and weights, always starting from the v2.1 weights.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
-### The fourteen factors
+### The thirteen factors
 
-| Key | Meaning of a high score |
-| --- | --- |
-| `grocery` | Grocery stores close by |
-| `gym` | Gyms close by |
-| `cafe` | Cafes close by |
-| `restaurant` | Restaurants close by (`amenity=restaurant` only) |
-| `bar` | Bars, pubs and beer gardens close by |
-| `premiumRetail` | Close to Whole Foods, Starbucks and Target (underlying metric) |
-| `gasStation` | Far from gas stations |
-| `convenienceStore` | Far from convenience stores |
-| `transit` | Close to frequent transit stops |
-| `school` | Schools close by and well rated |
-| `road` | Light traffic and congestion nearby |
-| `emergencyCorridor` | Far from the noise corridor (displayed as "Noise corridor") |
-| `airport` | Short drive to a major airport |
-| `trailPopularity` | Mapped running trails close by (underlying metric) |
+Every factor is a toggle on the website; none are hidden.
 
-Brand matching for `premiumRetail` uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, set to `v2-handtuned` in production), so rows from an older version are never mixed in.
+| Key | Website pill | Meaning of a high score |
+| --- | --- | --- |
+| `grocery` | Groceries | Grocery stores close by |
+| `gym` | Gym | Gyms close by |
+| `cafe` | Cafes | Cafes close by |
+| `restaurant` | Restaurants | Restaurants close by (`amenity=restaurant` only) |
+| `bar` | Bars | Bars, pubs and beer gardens close by |
+| `shopping` | Shopping | General retail close by and varied (department stores, malls, clothing, home goods, pharmacies), with a small bonus for Whole Foods, Starbucks and Target |
+| `gasConvenience` | Gas & Convenience | Gas stations and convenience stores close by (one positive factor; `null` on `v2-handtuned` rows) |
+| `transit` | Public transit | Close to frequent transit stops |
+| `school` | Schools | Schools close by and well rated |
+| `traffic` | Traffic | Light traffic and congestion nearby |
+| `emergencyCorridor` | Noise Corridor | Far from main roads near fire, police and hospital sites, and not right next to a gas station or convenience store |
+| `airport` | Airport | Short drive to a major airport |
+| `recreation` | Recreation | Parks, playgrounds and nature areas close and large, plus mapped running trails |
+
+**Legacy keys.** `premiumRetail` is accepted as `shopping`, `trailPopularity` as `recreation`, `road` as `traffic`, and `gasStation` and `convenienceStore` both as `gasConvenience`, in every `factors` and `weights` parameter (the duplicates collapse; sending two aliases of one factor in `weights` is an error). Responses only use the new keys. `/places` still accepts `gasStation`, `convenienceStore` and `premiumRetail` with their exact old meaning.
+
+**How the v2.1 factors are built.** `gasConvenience` blends the nearest gas station or convenience store (70%) with how many are within 500 m (30%). The noise corridor adds an adjacency penalty from gas stations and convenience stores to the corridor signal: full within 300 ft, fading linearly to none at 800 ft. `shopping` is 60% proximity (to the third-nearest shop) and 40% variety of retail types within a mile, plus the brand bonus. `recreation` is 75% parks (proximity to the nearest park and the size of the largest one within half a mile) and 25% running trails. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v2-handtuned` in production), so rows from another version are never mixed in. Brand matching for the shopping bonus uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback.
 
 **Known limitation (v3 candidate).** Each factor is min-max normalized within its metro area, so a few extreme outlier distances stretch the scale and skew everyone else's scores. A visible symptom: remote cells with very little around them can still score high on `restaurant` and `bar`. A more robust normalization (percentile or log-scaled distances) is a scoring v3 candidate; see `PHASES.md`.
 
-**Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely. It is a rough proxy (default weight 0.75). The API key `emergencyCorridor` and the database columns keep their names.
+**Noise corridor.** The `emergencyCorridor` factor is displayed as "Noise corridor": main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely, plus (v2.1) gas stations and convenience stores right next door. It is a rough proxy (default weight 12 of 106 in v2.1). The API key `emergencyCorridor` and the database columns keep their names.
 
-**Underlying metrics.** `premiumRetail` and `trailPopularity` (running route popularity, built from mapped running trails in OpenStreetMap; Strava segment popularity is an optional enrichment that is not configured today) are underlying metrics. They count toward the overall score, but the website offers no toggle for them. The API does not treat them specially: omit `factors` and all fourteen factors are used, underlying ones included; send an explicit `factors` list and exactly those factors are used.
 
 ## Geohash cells
 
@@ -139,15 +144,14 @@ curl "https://api.benrispace.com/v1/score?lat=40.7546&lon=-73.985"
     "cafe": 99.8,
     "restaurant": 99.5,
     "bar": 99.0,
-    "premiumRetail": 100.0,
-    "gasStation": 8.5,
-    "convenienceStore": 2.1,
+    "shopping": 100.0,
+    "gasConvenience": null,
     "transit": 99.9,
     "school": null,
-    "road": 89.0,
+    "traffic": 89.0,
     "emergencyCorridor": 96.5,
     "airport": 63.4,
-    "trailPopularity": 79.8
+    "recreation": 79.8
   },
   "weightsVersion": "v2-handtuned",
   "computedAt": "2026-10-03T01:16:27Z",
@@ -159,6 +163,10 @@ curl "https://api.benrispace.com/v1/score?lat=40.7546&lon=-73.985"
   }
 }
 ```
+
+### `neighborhood`
+
+`/score`, `/area`, each `/map/top` result, `/similar` results, and `/improve`'s `betterArea` and `bestNearby` (and `/area/explanation`) carry `neighborhood`: a human name such as `"Park Slope, Brooklyn"` or `"Montclair, NJ"`, or `null`. It is built from OpenStreetMap place nodes by `python -m ingestion.neighborhoods` (migration 0008): the nearest neighbourhood/suburb/quarter within 1.2 mi, else the nearest village/town/hamlet within 3 mi, else a city within 8 mi; the suffix is the NYC borough, else the nearest city/town, else the state (NY/NJ/CT). It is never coordinates. It is `null` before the job has run or when no place is nearby; clients should fall back to `address` / `areaLabel`. For `/area` it is the area's own label, else the label of the cell under the point. The examples below were captured before the job ran, so they omit or null it.
 
 ### Units: feet and miles
 
@@ -188,7 +196,7 @@ Errors:
 
 ## `GET /area`
 
-Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. The website calls this when you click the map and draws the polygon; areas are capped at 1.5 square miles and 2 miles across (larger road-bounded blocks are cut into roughly 1 mile tiles, tiny ones merged into a neighbour at build time); on a 404 it falls back to the single grid cell. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
+Score for the whole **road-bounded area** under a point: the block of land enclosed by secondary-and-larger roads (secondary, primary, trunk, motorway) and the shoreline. The website calls this when you click the map and draws the polygon; areas are capped at 0.8 square miles and 1.4 miles across (larger road-bounded blocks are cut into roughly 0.75 mile tiles, tiny ones merged into a neighbour at build time); on a 404 it falls back to the single grid cell. Sub-scores are the area-weighted average of the latest scores of the geohash6 cells the area overlaps, skipping cells that lack a given factor. `compositeScore` is the area-weighted average of those cells' composite scores (what the map shows), so it can differ slightly from recomputing a composite from the averaged sub-scores. Results are cached for 5 minutes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -212,9 +220,9 @@ Real response (Park Slope, Brooklyn); the polygon is shortened here to a few ver
   "compositeScore": 76.8,
   "subScores": {
     "grocery": 97.2, "gym": 98.0, "cafe": 98.4, "restaurant": 97.3, "bar": 97.2,
-    "premiumRetail": 43.4, "gasStation": 6.8, "convenienceStore": 1.9, "transit": 99.2,
-    "school": null, "road": 93.0, "emergencyCorridor": 98.0, "airport": 42.4,
-    "trailPopularity": 82.2
+    "shopping": 43.4, "gasConvenience": null, "transit": 99.2,
+    "school": null, "traffic": 93.0, "emergencyCorridor": 98.0, "airport": 42.4,
+    "recreation": 82.2
   },
   "weightsVersion": "v2-handtuned",
   "computedAt": "2026-10-03T01:16:27Z",
@@ -243,7 +251,7 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | `lat`/`lon` missing, not numbers, or out of range |
-| 404 | `area_not_found` | No area contains or is within 40 m of the point, the only matching area is larger than 1.5 square miles or wider than 2 miles (legacy polygons), no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
+| 404 | `area_not_found` | No area contains or is within 40 m of the point, the only matching area is larger than 0.8 square miles or wider than 1.4 miles (legacy polygons), no cell has a score, or areas have not been built yet. Fall back to `GET /score?lat=&lon=` |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ## `GET /area/explanation`
@@ -254,7 +262,7 @@ The explanation for the road-bounded area under a point, written by the LLM laye
 | --- | --- | --- | --- | --- |
 | `lat` | query | number | yes | Latitude, inside the covered area |
 | `lon` | query | number | yes | Longitude, inside the covered area |
-| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors. |
+| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for all 13 factors. |
 | `weights` | query | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
@@ -268,11 +276,12 @@ Example response (invented, for shape only; not captured from production):
   "explanation": "This area scores 77 overall, driven by excellent transit and everyday amenities close by. Strengths: transit access 99; cafe access 98. Weaknesses: distance from convenience stores is only 2.",
   "source": "ai",
   "areaId": 5432,
-  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
+  "neighborhood": "Park Slope, Brooklyn",
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "shopping", "gasConvenience", "transit", "school", "traffic", "emergencyCorridor", "airport", "recreation"]
 }
 ```
 
-With `factors` the text speaks to those priorities first. The AI text (prompt version `expl-v2`) is written from an evidence packet: the selected factors, every factor's score with where it sits in the metro (for example "top 3% of the metro"), the road-bounded area name, up to two named nearby places per selected place-based factor with distances in feet or miles, and the selected factors that are strongest and weakest against the metro median. It names at least two of those places when they exist, states one tradeoff ("Tradeoff: ...") and one suggestion ("Tip: ..."), and runs 60 to 90 words. A reply is accepted only if every number comes from the evidence, only feet and miles are used, every capitalised proper noun is in the evidence (place and street names), and praise words such as "excellent" appear only for a selected factor in the top 5% of the metro; otherwise the rule-based text is returned, which also leads with the selected priorities. The server-side cache key includes the sorted selected factors.
+With `factors` the text speaks to those priorities first. The AI text (prompt version `expl-v2`) is written from an evidence packet: the selected factors, every factor's score with where it sits in the metro (for example "top 3% of the metro"), the neighborhood name (or, without one, the road-bounded area name), up to two named nearby places per selected place-based factor with distances in feet or miles, and the selected factors that are strongest and weakest against the metro median. It names at least two of those places when they exist, states one tradeoff ("Tradeoff: ...") and one suggestion ("Tip: ..."), and runs 60 to 90 words. A reply is accepted only if every number comes from the evidence, only feet and miles are used, every capitalised proper noun is in the evidence (place and street names), and praise words such as "excellent" appear only for a selected factor in the top 5% of the metro; otherwise the rule-based text is returned, which also leads with the selected priorities. The server-side cache key includes the sorted selected factors.
 
 `source` is `"ai"` or `"rules"` (the same rule-based text `/area` returns in its `explanation` field). Errors are the same as `GET /area`: 400 `invalid_request`, 404 `area_not_found`, 422 `out_of_coverage`.
 
@@ -283,7 +292,7 @@ A short plain-language explanation of one score: the strongest factor, the weake
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `geoEntityId` | path | UUID | The `geoEntityId` from a `/score` response |
-| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors. |
+| `factors` | query | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for all 13 factors. |
 | `weights` | query | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
@@ -300,10 +309,10 @@ curl "https://api.benrispace.com/v1/score/2cedabc0-6869-45a7-8799-760614d657d1/e
 
 (The text above is the rule-based explanation captured from production for this cell, so `source` would be `"rules"`; the response also carries `source`, `priorities` (the factor keys used, as on `/area/explanation`) and `nearestMi`, described next. `factors`/`weights` work exactly as on `/area/explanation`.)
 
-Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `trailPopularity`, `premiumRetail` (the nearest of Whole Foods, Starbucks and Target) and `emergencyCorridor` (the nearest emergency facility). `road` and `airport` are not included. Where a distance is unknown the value is `null`, and the explanation omits its "Nearest feature" sentence. Shape:
+Distances in the text are in feet and miles. The response also carries `nearestMi`, the distance in miles to the nearest feature per factor (a number, or `null` when unknown), for the factors that have one: `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasConvenience` (the nearest gas station or convenience store), `transit`, `school`, `recreation` (the nearest park or trail), `shopping` (the nearest shop, or Whole Foods, Starbucks or Target) and `emergencyCorridor` (the nearest emergency facility). `traffic` and `airport` are not included. Where a distance is unknown the value is `null`, and the explanation omits its "Nearest feature" sentence. Shape:
 
 ```json
-{ "nearestMi": { "grocery": 0.2, "gym": null, "premiumRetail": 0.8 } }
+{ "nearestMi": { "grocery": 0.2, "gym": null, "shopping": 0.8 } }
 ```
 
 Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no score exists for it.
@@ -383,6 +392,80 @@ Errors:
 
 ---
 
+## `POST /optimize`
+
+Finds the places to live that minimise your weekly travel to several destinations, for example "near my work (123 Main St, Stamford), a Trader Joe's and a Planet Fitness". Each anchor is an `address` (geocoded, or pass `latitude`/`longitude`), a `brand` (case-insensitive match on a place's name or brand, so `trader joe` finds "Trader Joe's") or a `category` (`grocery`, `gym`, `cafe`, `restaurant`, `bar`, `transit`, `school`, `gas_station`, `convenience_store`, plus synonyms such as `coffee`, `groceries`, `gas`). For brands and categories each candidate uses its nearest matching place.
+
+Candidates are grid cells within `radiusMi` of the centroid of the address anchors (or of all brand matches when there is no address). Weekly cost is the sum over anchors of `tripsPerWeek` x 2 (round trip) x minutes. Results are ranked by cost, ties broken by the overall score for your `factors`/`weights`, and kept at least 1 mi apart.
+
+Minutes are first estimated (straight line x 1.3, walking 3 mph, driving 25 mph plus 2 min, transit 15 mph including waits). The best ~25 candidates are then re-timed with live routing for walk and drive anchors; if routing is unavailable, estimates are kept. Each anchor result says which with `approx`. Transit is always estimated for now ("train times arrive with the transit precompute").
+
+Request body (JSON):
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `anchors` | array, 1-6 items | yes | Destinations |
+| `anchors[].kind` | `address` \| `brand` \| `category` | yes | What `query` is |
+| `anchors[].query` | string | yes | Address, brand/place name or category word |
+| `anchors[].latitude`, `anchors[].longitude` | number | no | Address anchors only; skips geocoding |
+| `anchors[].tripsPerWeek` | number | no | Default 5 for the first address (work), 3 for gyms, 1 otherwise |
+| `anchors[].mode` | `walk` \| `drive` \| `transit` | no | Default `defaultMode` |
+| `defaultMode` | `walk` \| `drive` \| `transit` | no | Default `drive` |
+| `radiusMi` | number | no | Default 15, max 30 |
+| `limit` | integer 1-10 | no | Default 3 |
+| `factors`, `weights` | string or array / object | no | Priorities for the tie-break score, as on `/map/top` |
+
+**Invented example, shape only: the numbers are made up, not captured from production.**
+
+```bash
+curl -X POST "https://api.benrispace.com/v1/optimize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "anchors": [
+      {"kind": "address", "query": "123 Main St, Stamford, CT"},
+      {"kind": "brand", "query": "trader joe"},
+      {"kind": "brand", "query": "planet fitness"}
+    ],
+    "limit": 1
+  }'
+```
+
+```json
+{
+  "results": [
+    {
+      "latitude": 41.0612,
+      "longitude": -73.5441,
+      "neighborhood": null,
+      "areaLabel": null,
+      "weeklyMinutes": 121,
+      "score": 74,
+      "anchors": [
+        {"query": "123 Main St, Stamford, CT", "kind": "address", "name": "123 Main St, Stamford, CT",
+         "latitude": 41.0534, "longitude": -73.5387, "minutes": 9, "distanceLabel": "0.6 mi", "mode": "drive", "approx": false},
+        {"query": "trader joe", "kind": "brand", "name": "Trader Joe's",
+         "latitude": 41.0701, "longitude": -73.5532, "minutes": 7, "distanceLabel": "0.9 mi", "mode": "drive", "approx": false},
+        {"query": "planet fitness", "kind": "brand", "name": "Planet Fitness",
+         "latitude": 41.0655, "longitude": -73.5498, "minutes": 5, "distanceLabel": "0.4 mi", "mode": "drive", "approx": false}
+      ]
+    }
+  ],
+  "assumptions": ["Assumed 5 work trips/week by car", "Assumed 1 trips/week to trader joe by car", "Assumed 3 trips/week to planet fitness by car"],
+  "unresolved": []
+}
+```
+
+`neighborhood` is `null` until neighborhood names are loaded. Anchors that cannot be resolved (unknown address, no matching place nearby, unknown category) are listed in `unresolved` and left out of the ranking; `results` is empty when nothing can be ranked. Distances are in feet and miles.
+
+Errors:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | Bad anchors, `radiusMi`, `limit`, `factors` or `weights`; or only category anchors (nothing to search around) |
+| 422 | `out_of_coverage` | An address anchor is outside the covered metro area |
+
+---
+
 ## `GET /suggest`
 
 Address autocomplete for a search box. Returns up to `limit` places for what the user has typed so far, restricted to the covered area and biased toward the middle of the metro. Pass a suggestion's `latitude`/`longitude` straight to `GET /score?lat=&lon=`, which skips geocoding.
@@ -454,13 +537,13 @@ On a 503, show the coordinates (or nothing) rather than an error. Error response
 
 ## `GET /places`
 
-The nearest named places for one factor, for "what is nearby" lists. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. `premiumRetail` merges Whole Foods, Starbucks and Target, nearest first. Results are cached for 5 minutes.
+The nearest named places for one factor, for "what is nearby" lists. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. `gasConvenience` merges gas stations and convenience stores, nearest first; `shopping` returns named shops and `recreation` named parks (OpenStreetMap, ingested by `ingestion/osm_retail_parks.py`). The legacy `premiumRetail` still merges Whole Foods, Starbucks and Target, nearest first. Results are cached for 5 minutes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `lat` | number | yes | Latitude, inside the covered area |
 | `lon` | number | yes | Longitude, inside the covered area |
-| `factor` | string | yes | One of `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `gasStation`, `convenienceStore`, `transit`, `school`, `premiumRetail` |
+| `factor` | string | yes | One of `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `shopping`, `recreation`, `gasConvenience`, `transit`, `school`; the legacy `gasStation`, `convenienceStore` and `premiumRetail` also work |
 | `radiusMi` | number | no | Search radius in miles, above 0 and up to 5. Default 1 |
 | `limit` | integer | no | 1 to 20 places. Default 5 |
 
@@ -496,13 +579,13 @@ Errors:
 
 ## Priorities (`factors`)
 
-`/improve`, `/similar`, `/area/explanation` and `/score/{geoEntityId}/explanation` accept the same optional `factors` (and `weights`) query parameters as `/map/top`: the factors the user selected, for example `factors=grocery,transit,cafe`. Everything those endpoints say is then about those factors only. Weights default to the scoring weights restricted to the selected factors and renormalised, and a missing (`null`) score is ignored. Each response echoes the factors it used in `priorities`. Omitting `factors` means the 12 toggleable factors, and the endpoints keep their previous behaviour.
+`/improve`, `/similar`, `/area/explanation` and `/score/{geoEntityId}/explanation` accept the same optional `factors` (and `weights`) query parameters as `/map/top`: the factors the user selected, for example `factors=grocery,transit,cafe`. Everything those endpoints say is then about those factors only. Weights default to the scoring weights restricted to the selected factors and renormalised, and a missing (`null`) score is ignored. Each response echoes the factors it used in `priorities`. Omitting `factors` means all 13 factors, and the endpoints keep their previous behaviour. Legacy keys (`premiumRetail`, `trailPopularity`, `road`, `gasStation`, `convenienceStore`) are accepted as aliases.
 
 ---
 
 ## `GET /improve`
 
-Deterministic "what could improve this score" suggestions for the area under a point. It finds the weakest place-based factors among the selected ones (grocery, gym, cafe, restaurant, bar, transit, school; a score below 75, lowest first). `premiumRetail` is an underlying metric and is never suggested as its own factor, and for each lists nearby named places and the best neighbouring cell that scores at least 10 points higher on that factor. Factors where less is better (gas stations, traffic, noise, airports) and trails are never suggested. Nothing is generated or guessed: every sentence comes from stored scores and places. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+Deterministic "what could improve this score" suggestions for the area under a point. It finds the weakest place-based factors among the selected ones (grocery, gym, cafe, restaurant, bar, shopping, recreation, gasConvenience, transit, school; a score below 75, lowest first), and for each lists nearby named places and the best neighbouring cell that scores at least 10 points higher on that factor. Traffic, noise corridor and airport are not place-based and are never suggested. Nothing is generated or guessed: every sentence comes from stored scores and places. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
 
 The point is resolved like `/area` (the road-bounded area's score). If no area is found there, the grid cell's own score is used instead.
 
@@ -512,7 +595,7 @@ The point is resolved like `/area` (the road-bounded area's score). If no area i
 | `lon` | number | yes | Longitude, inside the covered area |
 | `radiusMi` | number | no | Search radius in miles, above 0 and up to 3. Default 1 |
 | `maxSuggestions` | integer | no | 1 to 5 factors. Default 3 |
-| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors (everything except `premiumRetail` and `trailPopularity`). Must not be empty if present; an unknown key is a 400. |
+| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for all 13 factors. Must not be empty if present; an unknown key is a 400. |
 | `weights` | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
@@ -533,16 +616,16 @@ Example response (invented for illustration, not a captured production response)
       "places": [
         { "name": "Aldi", "brand": "Aldi", "distanceMi": 0.31, "distanceLabel": "0.3 mi", "direction": "W", "latitude": 40.758, "longitude": -73.9911 }
       ],
-      "betterArea": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceMi": 0.42, "distanceLabel": "0.4 mi", "factorScore": 66, "factorGain": 25, "compositeScore": 72, "compositeGain": 4 },
-      "tip": "Grocery is your weakest factor (41). The closest option is Aldi, 0.3 mi west. The area about 0.4 mi north scores 66 on grocery."
+      "betterArea": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceMi": 0.42, "distanceLabel": "0.4 mi", "factorScore": 66, "factorGain": 25, "compositeScore": 72, "compositeGain": 4, "neighborhood": "Park Slope, Brooklyn" },
+      "tip": "Grocery is your weakest factor (41). The closest option is Aldi, 0.3 mi west. Park Slope, about 0.4 mi north, scores 66 on grocery."
     }
   ],
-  "bestNearby": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceLabel": "0.4 mi", "compositeScore": 72, "compositeGain": 4 },
-  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
+  "bestNearby": { "latitude": 40.7641, "longitude": -73.9855, "direction": "N", "distanceLabel": "0.4 mi", "compositeScore": 72, "compositeGain": 4, "neighborhood": "Park Slope, Brooklyn" },
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "shopping", "gasConvenience", "transit", "school", "traffic", "emergencyCorridor", "airport", "recreation"]
 }
 ```
 
-`places` is an empty list when nothing is within the radius, `betterArea` is `null` when no neighbouring cell gains 10 points, and `bestNearby` is `null` when no neighbouring cell raises the composite by at least 3. `suggestions` is empty when no factor is below 75. Up to 3 places are returned per factor. Gains are whole numbers.
+`places` is an empty list when nothing is within the radius, `betterArea` is `null` when no neighbouring cell gains 10 points, and `bestNearby` is `null` when no neighbouring cell raises the composite by at least 3. `suggestions` is empty when no factor is below 75. Up to 3 places are returned per factor. Gains are whole numbers. `neighborhood` (on `betterArea` and `bestNearby`) is `null` when unlabelled; the tip then says "The area about 0.4 mi north ...".
 
 Errors:
 
@@ -568,7 +651,7 @@ Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddi
 | `lon` | number | yes | Longitude, inside the covered area |
 | `k` | integer | no | Number of results, 1 to 10. Default 5 |
 | `minSeparationMi` | number | no | Minimum spacing in miles from the point and between results, 0 to 10. Default 1 |
-| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for the 12 toggleable factors (everything except `premiumRetail` and `trailPopularity`). Must not be empty if present; an unknown key is a 400. |
+| `factors` | string | no | Comma-separated factor keys the user cares about (same keys as `/map/top`). Omit for all 13 factors. Must not be empty if present; an unknown key is a 400. |
 | `weights` | string | no | Optional importance overrides as `factor:number,...`, same as `/map/top` |
 
 ```bash
@@ -596,11 +679,11 @@ Example response (invented for illustration, not a captured production response)
       "summary": "14 points better for transit, 12 points weaker for noise."
     }
   ],
-  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport"]
+  "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "shopping", "gasConvenience", "transit", "school", "traffic", "emergencyCorridor", "airport", "recreation"]
 }
 ```
 
-`similarity` is a whole number from 0 to 100: `100 * max(0, 1 - distance / 6)`, where `distance` is the straight-line gap between the two vectors. `differences` lists up to 3 selected factors where the result's score differs from the point's by at least 6, largest gap first; `delta` is signed (positive means the result scores higher, which is always better). `summary` is built from `differences`, or reads "Very similar across all factors." when there are none. `areaLabel` is the road-bounded area containing the result, or `null` when there is none. `results` can hold fewer than `k` entries when the spacing rule leaves too few.
+`similarity` is a whole number from 0 to 100: `100 * max(0, 1 - distance / 6)`, where `distance` is the straight-line gap between the two vectors. `differences` lists up to 3 selected factors where the result's score differs from the point's by at least 6, largest gap first; `delta` is signed (positive means the result scores higher, which is always better). `summary` is built from `differences`, or reads "Very similar across all factors." when there are none. `areaLabel` is the road-bounded area containing the result, or `null` when there is none; `neighborhood` is its human name (for example `"Crown Heights, Brooklyn"`), or `null`. `results` can hold fewer than `k` entries when the spacing rule leaves too few.
 
 Errors:
 
@@ -622,7 +705,7 @@ For each cell, the composite uses only the selected factors that are not `null` 
 | --- | --- | --- | --- |
 | `bbox` | string | yes | Viewport as `minLon,minLat,maxLon,maxLat`. Cells whose grid point lies inside are returned. |
 | `precision` | integer | no | `6` (default, about 0.6 x 0.4 mile cells) or `5` (about 2.3 x 3 miles; the mean of the finer cells). Use 5 when zoomed out. |
-| `factors` | string | no | Comma-separated factor keys to include, for example `transit,cafe`. Omit for all fourteen (including the underlying `premiumRetail` and `trailPopularity`); an explicit list means exactly those factors. Must not be empty if present. |
+| `factors` | string | no | Comma-separated factor keys to include, for example `transit,cafe`. Omit for all thirteen (legacy keys are accepted as aliases); an explicit list means exactly those factors. Must not be empty if present. |
 | `weights` | string | no | Overrides as `factor:number`, comma-separated, for example `transit:2,cafe:0.5`. Numbers must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use their default weight. Overrides for factors not in `factors` are ignored. |
 | `limit` | integer | no | 1 to 20000, default 8000. `truncated` is true when more cells matched. |
 
@@ -636,7 +719,7 @@ curl "http://localhost:8000/v1/map/cells?bbox=-73.99,40.74,-73.97,40.75&factors=
 {
   "precision": 6,
   "factors": ["grocery", "transit"],
-  "weights": { "grocery": 1.5, "transit": 2.0 },
+  "weights": { "grocery": 14, "gym": 9, "cafe": 8, "restaurant": 10, "bar": 5, "shopping": 4, "gasConvenience": 6, "transit": 14, "school": 10, "traffic": 4, "emergencyCorridor": 12, "airport": 5, "recreation": 5 },
   "weightsVersion": "v2-handtuned",
   "count": 4,
   "truncated": false,
@@ -650,7 +733,7 @@ A viewport spanning the whole covered area holds about 64,000 cells at `precisio
 Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min must be less than max; latitudes within +-90, longitudes within +-180), an unknown factor (including in `weights`), an empty `factors`, a weight that is not a number, is 0 or negative, is NaN/infinite or is above 1,000,000, a repeated weight, `precision` other than 5 or 6, or `limit` out of range.
 
 ```json
-{ "code": "invalid_request", "message": "unknown factor 'foo'; valid factors: grocery, gym, cafe, restaurant, bar, premiumRetail, gasStation, convenienceStore, transit, school, road, emergencyCorridor, airport, trailPopularity" }
+{ "code": "invalid_request", "message": "unknown factor 'foo'; valid factors: grocery, gym, cafe, restaurant, bar, shopping, gasConvenience, transit, school, traffic, emergencyCorridor, airport, recreation" }
 ```
 
 ---
@@ -668,18 +751,18 @@ Errors: `400 invalid_request` for a missing, malformed or inverted `bbox` (min m
 | `minSeparationMi` | number | no | Minimum distance between returned areas, in miles. 0 to 31; default about 1.9 (equal to the old 3 km default). |
 | `minSeparationKm` | number | no | **Deprecated**, still works. Kilometres, 0 to 50, default 3. Sending it together with `minSeparationMi` is a `400 invalid_request`. |
 
-You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all fourteen factors, whatever you selected for the ranking).
+You get up to `limit` results, fewer if the area (or the separation) leaves no more candidates. Each result has `geohash`, `latitude` and `longitude` (the cell's grid point), `score` (rounded to one decimal), `metroArea`, and the full `subScores` object for the cell (all thirteen factors, whatever you selected for the ranking).
 
 ```bash
 curl "https://api.benrispace.com/v1/map/top?limit=2"
 ```
 
-With no `factors` or `weights`, all fourteen factors and their default weights are used (real response, rounded; the sub-scores are shown on one line each for space):
+With no `factors` or `weights`, all thirteen factors and their default weights are used (real response, rounded; the sub-scores are shown on one line each for space):
 
 ```json
 {
-  "factors": ["grocery", "gym", "cafe", "restaurant", "bar", "premiumRetail", "gasStation", "convenienceStore", "transit", "school", "road", "emergencyCorridor", "airport", "trailPopularity"],
-  "weights": { "grocery": 1.5, "gym": 1.0, "cafe": 1.0, "restaurant": 1.0, "bar": 0.5, "premiumRetail": 0.75, "gasStation": 1.0, "convenienceStore": 0.75, "transit": 1.5, "school": 1.5, "road": 1.0, "emergencyCorridor": 0.75, "airport": 0.75, "trailPopularity": 1.25 },
+  "factors": ["grocery", "gym", "cafe", "restaurant", "bar", "shopping", "gasConvenience", "transit", "school", "traffic", "emergencyCorridor", "airport", "recreation"],
+  "weights": { "grocery": 14, "gym": 9, "cafe": 8, "restaurant": 10, "bar": 5, "shopping": 4, "gasConvenience": 6, "transit": 14, "school": 10, "traffic": 4, "emergencyCorridor": 12, "airport": 5, "recreation": 5 },
   "weightsVersion": "v2-handtuned",
   "results": [
     {
@@ -690,9 +773,9 @@ With no `factors` or `weights`, all fourteen factors and their default weights a
       "metroArea": "long_island",
       "subScores": {
         "grocery": 97.6, "gym": 96.7, "cafe": 99.9, "restaurant": 96.9, "bar": 96.5,
-        "premiumRetail": 62.6, "gasStation": 3.4, "convenienceStore": 3.1, "transit": 98.4,
-        "school": 89.9, "road": 90.9, "emergencyCorridor": 99.7, "airport": 95.2,
-        "trailPopularity": 98.5
+        "shopping": 62.6, "gasConvenience": null, "transit": 98.4,
+        "school": 89.9, "traffic": 90.9, "emergencyCorridor": 99.7, "airport": 95.2,
+        "recreation": 98.5
       }
     },
     {
@@ -703,9 +786,9 @@ With no `factors` or `weights`, all fourteen factors and their default weights a
       "metroArea": "northern_nj",
       "subScores": {
         "grocery": 98.1, "gym": 94.9, "cafe": 96.4, "restaurant": 96.0, "bar": 87.0,
-        "premiumRetail": 56.5, "gasStation": 17.5, "convenienceStore": 10.1, "transit": 96.2,
-        "school": 95.0, "road": 97.9, "emergencyCorridor": 100.0, "airport": 88.2,
-        "trailPopularity": 89.4
+        "shopping": 56.5, "gasConvenience": null, "transit": 96.2,
+        "school": 95.0, "traffic": 97.9, "emergencyCorridor": 100.0, "airport": 88.2,
+        "recreation": 89.4
       }
     }
   ]

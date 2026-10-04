@@ -95,6 +95,20 @@ describe("ScoreHeader", () => {
       expect(container.querySelector("[title]:has([data-testid=composite-score])")).toBeNull();
     });
   });
+
+  it("leads the subtitle with the neighborhood, then the street boundary", () => {
+    const area = makeAreaScore().area;
+    render(
+      <ScoreHeader
+        address="x"
+        score={makeScore({ neighborhood: "Park Slope, Brooklyn" })}
+        area={{ ...area, boundedBy: ["Bedford Ave", "Nostrand Ave"] }}
+      />,
+    );
+    expect(
+      screen.getByText("Park Slope, Brooklyn · bounded by Bedford Ave and Nostrand Ave"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("ScoreSummary", () => {

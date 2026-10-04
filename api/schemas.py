@@ -41,15 +41,14 @@ class SubScores(CamelModel):
     cafe: float | None = None
     restaurant: float | None = None
     bar: float | None = None
-    premium_retail: float | None = None
-    gas_station: float | None = None
-    convenience_store: float | None = None
+    shopping: float | None = None
+    gas_convenience: float | None = None
     transit: float | None = None
     school: float | None = None
-    road: float | None = None
+    traffic: float | None = None
     emergency_corridor: float | None = None
     airport: float | None = None
-    trail_popularity: float | None = None
+    recreation: float | None = None
 
 
 class SchoolInfo(CamelModel):
@@ -73,6 +72,8 @@ class ScoreResponse(CamelModel):
     weights_version: str
     computed_at: datetime
     school: SchoolInfo | None = None
+    # Human name such as 'Park Slope, Brooklyn'; null when not labelled.
+    neighborhood: str | None = None
 
 
 class ExplanationResponse(CamelModel):
@@ -91,6 +92,7 @@ class AreaExplanationResponse(CamelModel):
     source: Literal["ai", "rules"]
     area_id: int | None = None
     priorities: list[str] = []
+    neighborhood: str | None = None
 
 
 class AnchorPoint(CamelModel):
@@ -154,6 +156,7 @@ class MapTopResult(CamelModel):
     score: float
     metro_area: str
     sub_scores: SubScores
+    neighborhood: str | None = None
 
 
 class MapTopResponse(CamelModel):
@@ -214,6 +217,7 @@ class BetterArea(CamelModel):
     factor_gain: int
     composite_score: int
     composite_gain: int
+    neighborhood: str | None = None
 
 
 class ImproveSuggestion(CamelModel):
@@ -232,6 +236,7 @@ class BestNearby(CamelModel):
     distance_label: str | None
     composite_score: int
     composite_gain: int
+    neighborhood: str | None = None
 
 
 class ImproveResponse(CamelModel):
@@ -239,7 +244,7 @@ class ImproveResponse(CamelModel):
     radius_mi: float
     suggestions: list[ImproveSuggestion]
     best_nearby: BestNearby | None = None
-    # Factor keys used (the request's `factors`, or the 12 toggleable ones).
+    # Factor keys used (the request's `factors`, or the 13 factors).
     priorities: list[str] = []
 
 
@@ -257,6 +262,7 @@ class SimilarArea(CamelModel):
     similarity: int
     composite_score: int
     area_label: str | None = None
+    neighborhood: str | None = None
     differences: list[SimilarDifference]
     summary: str
 

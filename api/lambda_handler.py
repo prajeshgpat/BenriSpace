@@ -50,55 +50,49 @@ def load_database_url_from_ssm() -> None:
 
 
 LOCATIONIQ_SSM_PARAM_ENV = "LOCATIONIQ_API_KEY_SSM_PARAM"
+ANTHROPIC_SSM_PARAM_ENV = "ANTHROPIC_API_KEY_SSM_PARAM"
+OPENROUTESERVICE_SSM_PARAM_ENV = "OPENROUTESERVICE_API_KEY_SSM_PARAM"
+
+
+def load_optional_key_from_ssm(param_env: str, target_env: str, fallback: str) -> None:
+    """Optional secret: copy the SSM SecureString named by `param_env` into
+    `target_env`. Unlike the database URL any failure is logged (error type
+    only, never the value) and ignored, and `fallback` says what the API does
+    without the key. An unset or placeholder parameter means "not configured"."""
+    param_name = os.environ.get(param_env)
+    if not param_name:
+        return
+    try:
+        import boto3
+        from botocore.config import Config
+
+        client = boto3.client(
+            "ssm",
+            config=Config(connect_timeout=3, read_timeout=3, retries={"total_max_attempts": 2}),
+        )
+        value = client.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
+    except Exception as exc:  # noqa: BLE001 - optional secret, any failure means the fallback
+        print(f"{target_env} not loaded from SSM ({type(exc).__name__}); {fallback}")
+        return
+    if value.strip() and not value.startswith("placeholder"):
+        os.environ[target_env] = value.strip()
 
 
 def load_locationiq_key_from_ssm() -> None:
-    """Optional: address suggestions fall back to Photon without the key, so
-    unlike the database URL any failure here is logged (error type only,
-    never the value) and ignored. An unset or placeholder parameter means
-    "not configured yet"."""
-    param_name = os.environ.get(LOCATIONIQ_SSM_PARAM_ENV)
-    if not param_name:
-        return
-    try:
-        import boto3
-        from botocore.config import Config
-
-        client = boto3.client(
-            "ssm",
-            config=Config(connect_timeout=3, read_timeout=3, retries={"total_max_attempts": 2}),
-        )
-        value = client.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
-    except Exception as exc:  # noqa: BLE001 - optional secret, any failure means Photon
-        print(f"LocationIQ key not loaded from SSM ({type(exc).__name__}); using Photon")
-        return
-    if value.strip() and not value.startswith("placeholder"):
-        os.environ["LOCATIONIQ_API_KEY"] = value.strip()
-
-
-ANTHROPIC_SSM_PARAM_ENV = "ANTHROPIC_API_KEY_SSM_PARAM"
+    """Without the key address suggestions fall back to Photon."""
+    load_optional_key_from_ssm(LOCATIONIQ_SSM_PARAM_ENV, "LOCATIONIQ_API_KEY", "using Photon")
 
 
 def load_anthropic_key_from_ssm() -> None:
-    """Optional, like the LocationIQ key: without it the API keeps serving the
-    rule-based explanation. Failures log the error type only, never the value."""
-    param_name = os.environ.get(ANTHROPIC_SSM_PARAM_ENV)
-    if not param_name:
-        return
-    try:
-        import boto3
-        from botocore.config import Config
+    """Without the key the API keeps serving the rule-based explanation."""
+    load_optional_key_from_ssm(ANTHROPIC_SSM_PARAM_ENV, "ANTHROPIC_API_KEY", "AI explanations off")
 
-        client = boto3.client(
-            "ssm",
-            config=Config(connect_timeout=3, read_timeout=3, retries={"total_max_attempts": 2}),
-        )
-        value = client.get_parameter(Name=param_name, WithDecryption=True)["Parameter"]["Value"]
-    except Exception as exc:  # noqa: BLE001 - optional secret, any failure means rule-based text
-        print(f"Anthropic key not loaded from SSM ({type(exc).__name__}); AI explanations off")
-        return
-    if value.strip() and not value.startswith("placeholder"):
-        os.environ["ANTHROPIC_API_KEY"] = value.strip()
+
+def load_openrouteservice_key_from_ssm() -> None:
+    """Without the key /v1/optimize keeps its straight-line travel estimates."""
+    load_optional_key_from_ssm(
+        OPENROUTESERVICE_SSM_PARAM_ENV, "OPENROUTESERVICE_API_KEY", "using travel-time estimates"
+    )
 
 
 # Must run before anything imports common.config, which reads DATABASE_URL
@@ -106,6 +100,7 @@ def load_anthropic_key_from_ssm() -> None:
 load_database_url_from_ssm()
 load_locationiq_key_from_ssm()
 load_anthropic_key_from_ssm()
+load_openrouteservice_key_from_ssm()
 
 from mangum import Mangum
 

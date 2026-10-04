@@ -41,7 +41,9 @@ def miles_lat(mi):
 def setup(monkeypatch):
     state = {"target": scores(), "cands": [], "limit": None}
     monkeypatch.setattr(main, "get_connection", lambda: FakeConn())
-    monkeypatch.setattr(main, "get_geo_entity_by_geohash", lambda c, g: {"id": "g1", "metro_area": "nyc"})
+    monkeypatch.setattr(
+        main, "get_geo_entity_by_geohash", lambda c, g: {"id": "g1", "metro_area": "nyc"}
+    )
     monkeypatch.setattr(main, "fetch_target", lambda c, i, v: state["target"])
 
     def neighbours(c, i, v, metro, limit):
@@ -173,3 +175,37 @@ def test_no_embedding_404(setup):
     resp = get(client)
     assert resp.status_code == 404
     assert resp.json()["code"] == "not_found"
+
+
+def test_differences_cover_the_13_factor_columns_with_wire_keys():
+    target = scores()
+    row = {**scores(), "shopping_score": 80.0, "gas_convenience_score": 20.0, "road_score": 75.0}
+    target.update(shopping_score=50.0, gas_convenience_score=50.0, road_score=50.0)
+    diffs = differences(target, row)
+    assert [(d["factor"], d["delta"]) for d in diffs] == [
+        ("shopping", 30), ("gasConvenience", -30), ("traffic", 25),
+    ]  # fmt: skip
+    assert [d["label"] for d in diffs] == ["shopping", "gas and convenience", "traffic"]
+    # restricted to selected columns
+    assert [d["factor"] for d in differences(target, row, ["shopping_score"])] == ["shopping"]
+
+
+def test_similar_queries_read_legacy_columns_for_v2_rows():
+    assert (
+        "coalesce(s.shopping_score, s.premium_retail_score) as shopping_score"
+        in similar._SCORE_SELECT
+    )
+    assert (
+        "coalesce(s.recreation_score, s.trail_popularity_score) as recreation_score"
+        in similar._SCORE_SELECT
+    )
+    assert "s.gas_convenience_score" in similar._SCORE_SELECT
+
+
+def test_metro_stats_cover_the_13_factors_through_legacy_fallbacks():
+    from api import metro_stats
+
+    sql = metro_stats._sql(False)
+    assert len(metro_stats.STATS_COLUMNS) == 13
+    assert "coalesce(s.shopping_score, s.premium_retail_score)" in sql
+    assert "s.gas_convenience_score" in sql and "s.road_score" in sql

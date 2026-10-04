@@ -63,7 +63,7 @@ flowchart LR
 - **Click-to-polygon.** `/v1/area` finds the road-bounded polygon containing the
   point (tables `areas` + `area_cells`) and returns the area-weighted average of
   the overlapping cells' latest scores. It returns 404 when no polygon fits (or
-  one is over 1.5 sq mi or 2 mi across), and the web app then falls back to the single
+  one is over 0.8 sq mi or 1.4 mi across), and the web app then falls back to the single
   cell rectangle.
 - **Serving version.** Score reads prefer the Lambda's `SCORING_WEIGHTS_VERSION`
   (production sets `v2-handtuned`; the code default is still `v1-handtuned`).
@@ -120,7 +120,7 @@ flowchart LR
   (`python -m ingestion.areas.build --source region --write`; Overpass tiles are
   cached and fetching needs `--allow-network`). They are not part of the weekly
   workflow. Areas are size-limited at build time (`ingestion/areas/limits.py`:
-  at most 1.5 sq mi and 2 mi across, ~1 mi tile cuts, slivers under 0.02 sq mi
+  at most 0.8 sq mi and 1.4 mi across, ~0.75 mi tile cuts, slivers under 0.02 sq mi
   merged into a neighbour; `areas.extent_m`/`compactness` from migration
   `0006_area_shape.sql`, apply it before `--write`). A stage-1 prototype of 5-10 block neighborhood clusters lives in
   `ingestion/areas/` but is not wired into scoring.

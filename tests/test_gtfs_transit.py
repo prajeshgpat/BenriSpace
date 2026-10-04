@@ -9,10 +9,17 @@ from ingestion.gtfs_transit import (
     aggregate_cell,
     count_and_nearest,
     fetch_agency_stops,
-    fetch_nj_transit_stops,
     parse_gtfs_zip,
     parse_stops_txt,
 )
+
+
+def _zip_bytes(stops_txt: str) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("stops.txt", stops_txt)
+    return buf.getvalue()
+
 
 SAMPLE_STOPS_TXT = """stop_id,stop_name,stop_lat,stop_lon
 1,Stop A,40.7580,-73.9855
@@ -123,18 +130,50 @@ def test_agencies_config_has_all_agencies_with_correct_source_labels():
     }
 
 
-def test_nj_transit_stubbed_without_credentials_raises_clear_error():
-    # No .env / real credentials in this sandbox -- NJ_TRANSIT_API_KEY and
-    # NJ_TRANSIT_API_USERNAME are unset, so this should fail fast with a
-    # descriptive error rather than attempting a network call.
-    with pytest.raises(RuntimeError, match="NJ_TRANSIT_API_KEY"):
-        fetch_nj_transit_stops()
+def test_nj_transit_uses_the_open_official_feeds_without_auth():
+    nj = next(a for a in AGENCIES if a.name == "nj_transit")
+    assert nj.requires_auth is False
+    assert nj.feed_urls == (
+        "https://www.njtransit.com/rail_data.zip",
+        "https://www.njtransit.com/bus_data.zip",
+    )
+    assert not any(a.requires_auth for a in AGENCIES)
 
 
-def test_fetch_agency_stops_routes_nj_transit_through_stub():
-    nj_transit = next(a for a in AGENCIES if a.name == "nj_transit")
-    with pytest.raises(RuntimeError, match="NJ_TRANSIT_API_KEY"):
-        fetch_agency_stops(nj_transit)
+def test_nj_transit_fetch_downloads_each_feed_and_needs_no_credentials(monkeypatch):
+    import ingestion.gtfs_transit as gt
+
+    nj = next(a for a in AGENCIES if a.name == "nj_transit")
+    rail = _zip_bytes("stop_id,stop_name,stop_lat,stop_lon\n1,Rail A,40.70,-74.10\n")
+    bus = _zip_bytes("stop_id,stop_name,stop_lat,stop_lon\n9,Bus B,40.80,-74.20\n")
+    served = {nj.feed_urls[0]: rail, nj.feed_urls[1]: bus}
+    requested = []
+
+    class FakeResponse:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            pass
+
+    class FakeClient:
+        def get(self, url):
+            requested.append(url)
+            return FakeResponse(served[url])
+
+    monkeypatch.delenv("NJ_TRANSIT_API_KEY", raising=False)
+    stops = gt.fetch_agency_stops(nj, client=FakeClient())
+    assert requested == list(nj.feed_urls)
+    assert stops == [(40.70, -74.10), (40.80, -74.20)]
+    stops2, places = gt.fetch_agency_stops_and_places(nj, client=FakeClient())
+    assert stops2 == stops and {p.name for p in places} == {"Rail A", "Bus B"}
+
+
+def test_a_feed_that_demands_auth_still_fails_clearly():
+    from ingestion.gtfs_transit import AgencyFeed
+
+    with pytest.raises(RuntimeError, match="requires auth"):
+        fetch_agency_stops(AgencyFeed("x", "gtfs_x", requires_auth=True))
 
 
 def test_parse_stops_named_dedupes_platforms_and_skips_blank():

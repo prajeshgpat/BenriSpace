@@ -8,7 +8,6 @@
 }
 
 .summary {
-  cursor: pointer;
   min-height: 2.5rem;
   display: flex;
   align-items: center;
@@ -100,4 +99,10 @@
   height: 1rem;
   border-radius: 0.25rem;
   background: var(--surface-sunken);
+}
+
+.betterArea {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
 }

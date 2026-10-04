@@ -49,9 +49,15 @@ def test_no_facility_factor_one_term_zero_nearest_none():
 
 
 def test_police_weighs_less_than_fire():
-    assert raw([], [fac(100, 0.5)])["emergency_corridor_facility_raw"] < raw([], [fac(100, 1.0)])["emergency_corridor_facility_raw"]
+    assert (
+        raw([], [fac(100, 0.5)])["emergency_corridor_facility_raw"]
+        < raw([], [fac(100, 1.0)])["emergency_corridor_facility_raw"]
+    )
     roads = [seg("primary", 50)]
-    assert raw(roads, [fac(300, 0.5)])["emergency_corridor_facility_raw"] < raw(roads, [fac(300, 1.0)])["emergency_corridor_facility_raw"]
+    assert (
+        raw(roads, [fac(300, 0.5)])["emergency_corridor_facility_raw"]
+        < raw(roads, [fac(300, 1.0)])["emergency_corridor_facility_raw"]
+    )
 
 
 def test_hospital_emergency_yes_weight():
@@ -76,7 +82,9 @@ def test_far_facility_adds_nothing():
 
 def test_minor_street_never_contributes():
     for hw in ("residential", "tertiary", "service"):
-        assert raw([seg(hw, 50)], [fac(100)])["emergency_corridor_facility_raw"] == pytest.approx(1.0 / (1 + 100 / 150), abs=0.01)  # facility term only
+        assert raw([seg(hw, 50)], [fac(100)])["emergency_corridor_facility_raw"] == pytest.approx(
+            1.0 / (1 + 100 / 150), abs=0.01
+        )  # facility term only
 
 
 def test_major_road_near_facility_penalised_more():
@@ -86,8 +94,10 @@ def test_major_road_near_facility_penalised_more():
 
 
 def test_way_with_center_handled():
-    els = [{"type": "way", "center": {"lat": LAT, "lon": LON}, "tags": {"amenity": "fire_station"}},
-           {"type": "relation", "tags": {"amenity": "fire_station"}}]  # no center -> skipped
+    els = [
+        {"type": "way", "center": {"lat": LAT, "lon": LON}, "tags": {"amenity": "fire_station"}},
+        {"type": "relation", "tags": {"amenity": "fire_station"}},
+    ]  # no center -> skipped
     got = parse_facilities(els)
     assert got == [{"lat": LAT, "lon": LON, "weight": 1.0}]
 
@@ -104,7 +114,14 @@ def test_old_column_unchanged_and_omitted_without_facilities():
     ri = index_segments([seg("primary", 100)])
     legacy = classify_cell(LAT, LON, ri)
     assert "emergency_corridor_facility_raw" not in legacy
-    with_fac = classify_cell(LAT, LON, index_segments(annotate_segments_with_factor([seg("primary", 100)], index_facilities([fac(50)]))), index_facilities([fac(50)]))
+    with_fac = classify_cell(
+        LAT,
+        LON,
+        index_segments(
+            annotate_segments_with_factor([seg("primary", 100)], index_facilities([fac(50)]))
+        ),
+        index_facilities([fac(50)]),
+    )
     assert with_fac["emergency_corridor_proxy_raw"] == legacy["emergency_corridor_proxy_raw"]
     assert with_fac["emergency_corridor_facility_raw"] > legacy["emergency_corridor_proxy_raw"]
 

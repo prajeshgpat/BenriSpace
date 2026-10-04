@@ -5,9 +5,11 @@ nearest-neighbor fallback, mapping a `scores` row onto the SubScores
 response shape) are plain functions over dicts -- see tests/test_api.py.
 """
 
+from api.factors import FACTOR_COLUMNS, to_snake
 from api.schemas import SchoolInfo, ScoreResponse, SubScores
+from common.db import get_neighborhoods_by_geohash
 from common.geo import haversine_m
-from scoring.engine import CATEGORY_SPECS
+from scoring.engine import LEGACY_FALLBACK_COLUMNS
 
 # Fallback bounding-box half-width in degrees, used when the exact
 # geohash6 cell (encoded the same way ingestion/grid.py builds the grid)
@@ -18,6 +20,23 @@ from scoring.engine import CATEGORY_SPECS
 # unindexed-feeling bbox scan plus a Python nearest-neighbor pass is fine
 # without reaching for PostGIS.
 FALLBACK_BBOX_MARGIN_DEG = 0.03
+
+
+def neighborhood_map(conn, geohashes) -> dict[str, str]:
+    """{geohash: neighborhood} for the labelled cells among `geohashes`
+    (empty before migration 0008, or when none is given)."""
+    wanted = [g for g in geohashes if g]
+    return get_neighborhoods_by_geohash(conn, wanted) if wanted else {}
+
+
+def with_neighborhood(conn, geo_entity: dict | None) -> dict | None:
+    """The geo_entity row plus its `neighborhood` (None when unlabelled)."""
+    if geo_entity is None:
+        return None
+    if "neighborhood" in geo_entity:
+        return geo_entity
+    names = neighborhood_map(conn, [geo_entity.get("geohash")])
+    return {**geo_entity, "neighborhood": names.get(geo_entity.get("geohash"))}
 
 
 def bbox_around(
@@ -37,16 +56,26 @@ def nearest_geo_entity(lat: float, lon: float, candidates: list[dict]) -> dict |
     return min(candidates, key=lambda c: haversine_m(lat, lon, c["latitude"], c["longitude"]))
 
 
+def factor_value(score_row: dict, column: str):
+    """A factor's score from a `scores`-shaped row: the column itself, else its
+    legacy column (v2 rows keep Shopping in premium_retail_score and Recreation
+    in trail_popularity_score), else None."""
+    value = score_row.get(column)
+    if value is None and column in LEGACY_FALLBACK_COLUMNS:
+        value = score_row.get(LEGACY_FALLBACK_COLUMNS[column])
+    return value
+
+
 def sub_scores_from_score_row(score_row: dict) -> SubScores:
-    """Maps `scores` table columns (grocery_score, gas_station_score, ...)
-    onto the SubScores response shape (grocery, gas_station -> gasStation
-    on the wire via CamelModel's alias_generator) using
-    scoring.engine.CATEGORY_SPECS as the single source of truth for the
-    column-name -> field-name mapping (strip the '_score' suffix)."""
+    """Maps `scores` table columns onto the 13-factor SubScores response shape
+    (grocery_score -> grocery, gas_convenience_score -> gasConvenience on the
+    wire via CamelModel's alias_generator, road_score -> traffic). v2 rows are
+    read through their legacy columns where one exists (shopping <-
+    premium_retail_score, recreation <- trail_popularity_score) and have
+    gasConvenience null."""
     fields = {}
-    for spec in CATEGORY_SPECS:
-        field_name = spec.score_column.removesuffix("_score")
-        fields[field_name] = score_row.get(spec.score_column)
+    for key, column in FACTOR_COLUMNS.items():
+        fields[to_snake(key)] = factor_value(score_row, column)
     return SubScores(**fields)
 
 
@@ -96,4 +125,5 @@ def build_score_response(
         weights_version=score_row["weights_version"],
         computed_at=score_row["computed_at"],
         school=school_info_from_rows(score_row, feature_row),
+        neighborhood=geo_entity.get("neighborhood"),
     )

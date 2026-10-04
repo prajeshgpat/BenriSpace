@@ -7,40 +7,17 @@ import math
 import re
 from dataclasses import dataclass
 
-from api.lookup import sub_scores_from_score_row
+from api.factors import (  # noqa: F401 (re-exported)
+    DEFAULT_FACTOR_WEIGHTS,
+    FACTOR_ALIASES,
+    FACTOR_COLUMNS,
+    canonical_factor,
+)
+from api.lookup import factor_value, neighborhood_map, sub_scores_from_score_row
 from api.schemas import MapCellsResponse, MapTopResponse, MapTopResult
 from common.config import SCORING_WEIGHTS_VERSION
 from common.db import MapBbox, get_map_top_candidates
 from common.geo import haversine_m
-from scoring.engine import DEFAULT_WEIGHTS, UNDERLYING_SCORE_COLUMNS
-
-# Wire factor key -> `scores` column. The only place that maps them; ordering
-# is the contract's FactorKey order. tests/test_mapdata.py fails if a scored
-# category is added to scoring.engine.CATEGORY_SPECS without a row here.
-FACTOR_COLUMNS: dict[str, str] = {
-    "grocery": "grocery_score",
-    "gym": "gym_score",
-    "cafe": "cafe_score",
-    "restaurant": "restaurant_score",
-    "bar": "bar_score",
-    "premiumRetail": "premium_retail_score",
-    "gasStation": "gas_station_score",
-    "convenienceStore": "convenience_store_score",
-    "transit": "transit_score",
-    "school": "school_score",
-    "road": "road_score",
-    "emergencyCorridor": "emergency_corridor_score",
-    "airport": "airport_score",
-    "trailPopularity": "trail_popularity_score",
-}
-
-# API keys of underlying metrics: they count toward the composite (an omitted
-# `factors` means all 14) but the website offers no toggle for them.
-UNDERLYING_FACTOR_KEYS: tuple[str, ...] = tuple(
-    key
-    for key, column in FACTOR_COLUMNS.items()
-    if column in UNDERLYING_SCORE_COLUMNS
-)
 
 MAX_WEIGHT = 1_000_000.0
 SCORE_DECIMALS = 1
@@ -91,7 +68,8 @@ def parse_bbox(raw: str) -> MapBbox:
 
 
 def parse_factors(raw: str | None) -> list[str]:
-    """Comma-separated FactorKeys; None = all. Returned in contract order."""
+    """Comma-separated FactorKeys (legacy aliases accepted); None = all.
+    Returned deduplicated, in contract order."""
     if raw is None:
         return list(FACTOR_COLUMNS)
     requested = set()
@@ -101,19 +79,20 @@ def parse_factors(raw: str | None) -> list[str]:
             raise InvalidMapRequest(
                 "factors must be a non-empty comma-separated list with no blank entries"
             )
-        if key not in FACTOR_COLUMNS:
+        canonical = canonical_factor(key)
+        if canonical is None:
             raise InvalidMapRequest(
                 f"unknown factor {key!r}; valid factors: {', '.join(FACTOR_COLUMNS)}"
             )
-        requested.add(key)
+        requested.add(canonical)
     return [f for f in FACTOR_COLUMNS if f in requested]
 
 
 def parse_weights(raw: str | None, factors: list[str]) -> dict[str, float]:
     """Effective weight per included factor: defaults, then overrides from
-    `factor:number,...` (overrides for factors not included are ignored, but
-    must still be well formed)."""
-    weights = {f: DEFAULT_WEIGHTS[FACTOR_COLUMNS[f]] for f in factors}
+    `factor:number,...` (legacy aliases accepted; overrides for factors not
+    included are ignored, but must still be well formed)."""
+    weights = {f: DEFAULT_FACTOR_WEIGHTS[f] for f in factors}
     if raw is None:
         return weights
     seen: set[str] = set()
@@ -122,13 +101,14 @@ def parse_weights(raw: str | None, factors: list[str]) -> dict[str, float]:
         key, value = key.strip(), value.strip()
         if not sep or not key or not value:
             raise InvalidMapRequest(f"weights entries must look like factor:number, got {part!r}")
-        if key not in FACTOR_COLUMNS:
+        canonical = canonical_factor(key)
+        if canonical is None:
             raise InvalidMapRequest(
                 f"unknown factor {key!r} in weights; valid factors: {', '.join(FACTOR_COLUMNS)}"
             )
-        if key in seen:
+        if canonical in seen:
             raise InvalidMapRequest(f"weight for {key!r} given more than once")
-        seen.add(key)
+        seen.add(canonical)
         if not _NUMBER.fullmatch(value):
             raise InvalidMapRequest(f"weight for {key!r} is not a number: {value!r}")
         number = float(value)
@@ -136,8 +116,8 @@ def parse_weights(raw: str | None, factors: list[str]) -> dict[str, float]:
             raise InvalidMapRequest(
                 f"weight for {key!r} must be greater than 0 and at most {MAX_WEIGHT:g}"
             )
-        if key in weights:
-            weights[key] = number
+        if canonical in weights:
+            weights[canonical] = number
     return weights
 
 
@@ -153,7 +133,7 @@ def composite_from_row(row: dict, spec: ScoreSpec) -> float | None:
     total = 0.0
     weighted = 0.0
     for f in spec.factors:
-        value = row.get(FACTOR_COLUMNS[f])
+        value = factor_value(row, FACTOR_COLUMNS[f])
         if value is None:
             continue
         weighted += spec.weights[f] * float(value)
@@ -196,7 +176,11 @@ def select_separated(candidates: list[dict], limit: int, min_separation_km: floa
 
 
 def build_top_response(
-    candidates: list[dict], spec: ScoreSpec, limit: int, min_separation_km: float
+    candidates: list[dict],
+    spec: ScoreSpec,
+    limit: int,
+    min_separation_km: float,
+    neighborhoods: dict[str, str] | None = None,
 ) -> MapTopResponse:
     chosen = select_separated(candidates, limit, min_separation_km)
     return MapTopResponse(
@@ -211,6 +195,7 @@ def build_top_response(
                 score=round(float(c["score"]), SCORE_DECIMALS),
                 metro_area=c["metro_area"],
                 sub_scores=sub_scores_from_score_row(c),
+                neighborhood=(neighborhoods or {}).get(c["geohash"]),
             )
             for c in chosen
         ],
@@ -231,4 +216,6 @@ def find_top(
         enough = len(select_separated(candidates, limit, min_separation_km)) == limit
         if enough or len(candidates) < pool:
             break
-    return build_top_response(candidates, spec, limit, min_separation_km)
+    chosen = select_separated(candidates, limit, min_separation_km)
+    names = neighborhood_map(conn, [c["geohash"] for c in chosen])
+    return build_top_response(candidates, spec, limit, min_separation_km, names)

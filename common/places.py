@@ -13,6 +13,7 @@ from common.units import M_PER_MI
 PLACE_CATEGORIES = (
     "grocery", "gym", "cafe", "restaurant", "bar", "gas_station",
     "convenience_store", "school", "transit", "whole_foods", "starbucks", "target",
+    "shopping", "park",
 )  # fmt: skip
 
 
@@ -108,3 +109,58 @@ def nearby_places(
             )
     found.sort(key=lambda p: p["distance_m"])
     return found[:limit]
+
+
+def normalize_name(text: str | None) -> str:
+    """Lower-cased, apostrophe-free, whitespace-collapsed text for brand
+    matching ("Trader Joe's" -> "trader joes")."""
+    if not text:
+        return ""
+    for quote in ("'", "’", "`"):
+        text = text.replace(quote, "")
+    return " ".join(text.lower().split())
+
+
+def name_matches(query: str, name: str | None, brand: str | None) -> bool:
+    """Case-insensitive substring match of `query` on a place's name or brand."""
+    needle = normalize_name(query)
+    return bool(needle) and (needle in normalize_name(name) or needle in normalize_name(brand))
+
+
+def _like_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def places_by_brand_in_box(
+    conn, query: str, min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[dict]:
+    """Places whose name or brand contains `query` (case-insensitive, ignoring
+    apostrophes) inside a lat/lon box. Dicts: name, brand, category, latitude,
+    longitude. The box prefilter runs first so the text match sees few rows."""
+    needle = normalize_name(query)
+    if not needle:
+        return []
+    pattern = f"%{_like_escape(needle)}%"
+    strip = "replace(replace(lower({col}), '''', ''), chr(8217), '')"
+    with conn.cursor() as cur:
+        cur.execute(
+            "select name, brand, category, latitude, longitude from places "
+            "where latitude between %s and %s and longitude between %s and %s "
+            f"and ({strip.format(col='name')} like %s or {strip.format(col='brand')} like %s)",
+            (min_lat, max_lat, min_lon, max_lon, pattern, pattern),
+        )
+        rows = [dict(r) for r in cur]
+    return [r for r in rows if name_matches(query, r["name"], r["brand"])]
+
+
+def places_by_category_in_box(
+    conn, category: str, min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[dict]:
+    """Every place of one category inside a lat/lon box."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select name, brand, category, latitude, longitude from places "
+            "where category = %s and latitude between %s and %s and longitude between %s and %s",
+            (category, min_lat, max_lat, min_lon, max_lon),
+        )
+        return [dict(r) for r in cur]

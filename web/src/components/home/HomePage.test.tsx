@@ -36,13 +36,13 @@ describe("HomePage", () => {
     ).toHaveAttribute("type", "submit");
   });
 
-  it("lists the twelve factors with icons, names and one sentence", () => {
+  it("lists the thirteen factors with icons, names and one sentence", () => {
     render(<HomePage />);
-    expect(FACTOR_KEYS).toHaveLength(12);
+    expect(FACTOR_KEYS).toHaveLength(13);
     const items = screen
       .getAllByRole("listitem")
       .filter((li) => li.hasAttribute("data-factor"));
-    expect(items).toHaveLength(12);
+    expect(items).toHaveLength(13);
     for (const key of FACTOR_KEYS) {
       const item = items.find((li) => li.getAttribute("data-factor") === key)!;
       expect(

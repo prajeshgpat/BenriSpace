@@ -134,4 +134,52 @@ describe("ImproveCard", () => {
     expect(screen.queryByText("Stale tip.")).not.toBeInTheDocument();
     expect(screen.getByText("Second point tip.")).toBeInTheDocument();
   });
+
+  it("is always expanded and shows only the top three suggestions until Show more", async () => {
+    const suggestion = (factor: string, label: string) => ({
+      ...BODY.suggestions[0],
+      factor,
+      label,
+      betterArea: { ...BODY.suggestions[0].betterArea, neighborhood: "Park Slope, Brooklyn" },
+    });
+    const body = {
+      ...BODY,
+      bestNearby: { ...BODY.bestNearby, neighborhood: "Fort Greene, Brooklyn" },
+      suggestions: [
+        suggestion("grocery", "Groceries"),
+        suggestion("cafe", "Cafes"),
+        suggestion("bar", "Bars"),
+        suggestion("gym", "Gym"),
+        suggestion("transit", "Public transit"),
+      ],
+    };
+    const onPreview = vi.fn();
+    render(
+      <ImproveCard
+        coordinates={POINT}
+        client={clientWith(async () => json(body))}
+        onPreview={onPreview}
+      />,
+    );
+    expect(await screen.findByText("Improve this area")).toBeInTheDocument();
+    expect(document.querySelector("details")).toBeNull();
+    expect(screen.queryByText("Gym")).not.toBeInTheDocument();
+    const more = screen.getByRole("button", { name: "Show 2 more" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getByText("Gym")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show better area for Groceries on map" }));
+    expect(onPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "Park Slope, Brooklyn",
+        subtitle: "Better area for Groceries",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show best move nearby on map" }));
+    expect(onPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ label: "Fort Greene, Brooklyn", subtitle: "Best move nearby" }),
+    );
+  });
 });

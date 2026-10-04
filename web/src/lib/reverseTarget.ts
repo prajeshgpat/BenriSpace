@@ -1,5 +1,5 @@
 import { formatLatLon, type ScoreTarget } from "@/lib/address";
-import { areaTitle } from "@/lib/map/presentation";
+import { UNNAMED_AREA } from "@/lib/map/presentation";
 
 type CoordinateTarget = Extract<ScoreTarget, { kind: "coordinates" }>;
 
@@ -14,10 +14,8 @@ export function needsReadableAddress(
   if (target?.kind !== "coordinates") return false;
   return (
     target.label === formatLatLon(target) ||
-    target.label === areaTitle({
-      latitude: target.lat,
-      longitude: target.lon,
-      metroArea: "",
-    })
+    target.label === UNNAMED_AREA ||
+    // Older links and rows labelled a ranked area by its coordinates.
+    /^Area near -?\d/.test(target.label ?? "")
   );
 }

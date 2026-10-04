@@ -159,9 +159,7 @@ def build_overpass_query(min_lat: float, max_lat: float, min_lon: float, max_lon
     # shop=department_store), plus name/brand fallback on shop=* elements.
     # amenity=cafe is already fetched above, covering Starbucks-by-name.
     ids = "|".join(sorted(i for r in BRAND_RULES.values() for i in r["wikidata"]))
-    names = "|".join(
-        sorted(re.escape(n) for r in BRAND_RULES.values() for n in r["names"])
-    )
+    names = "|".join(sorted(re.escape(n) for r in BRAND_RULES.values() for n in r["names"]))
     statements.append(f'nwr["brand:wikidata"~"^({ids})$"]({bbox});')
     statements.append(f'nwr["shop"]["brand"~"^({names})$",i]({bbox});')
     statements.append(f'nwr["shop"]["name"~"^({names})$",i]({bbox});')
@@ -461,8 +459,7 @@ def run() -> None:
                 continue
 
             print(
-                f"osm_poi: fetching Overpass POIs for {metro_area} "
-                f"({len(cells)} cells)...",
+                f"osm_poi: fetching Overpass POIs for {metro_area} ({len(cells)} cells)...",
                 file=sys.stderr,
             )
             data = fetch_overpass_data(min_lat, max_lat, min_lon, max_lon)

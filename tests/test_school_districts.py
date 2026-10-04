@@ -19,13 +19,22 @@ FIX = Path(__file__).parent / "fixtures"
 
 def _index():
     recs_unsd = [
-        ({"GEOID": "3600001", "NAME": "A", "STATEFP": "36"}, mapping(box(-74.0, 40.0, -73.0, 41.0))),
+        (
+            {"GEOID": "3600001", "NAME": "A", "STATEFP": "36"},
+            mapping(box(-74.0, 40.0, -73.0, 41.0)),
+        ),
     ]
     recs_scsd = [  # overlaps A; lower priority
-        ({"GEOID": "3600099", "NAME": "HS overlay", "STATEFP": "36"}, mapping(box(-74.0, 40.0, -73.5, 41.0))),
+        (
+            {"GEOID": "3600099", "NAME": "HS overlay", "STATEFP": "36"},
+            mapping(box(-74.0, 40.0, -73.5, 41.0)),
+        ),
     ]
     recs_elsd = [
-        ({"GEOID": "3400002", "NAME": "B", "STATEFP": "34"}, mapping(box(-75.0, 40.0, -74.0001, 41.0))),
+        (
+            {"GEOID": "3400002", "NAME": "B", "STATEFP": "34"},
+            mapping(box(-75.0, 40.0, -74.0001, 41.0)),
+        ),
     ]
     items = (
         districts_from_records(recs_scsd, "scsd")
@@ -67,8 +76,12 @@ def test_parse_rating_rows_and_missing_stay_none():
 
 def test_normalize_within_state_percentiles_and_none():
     raw = {
-        "3600001": 10.0, "3600002": 30.0, "3600003": 50.0, "3600004": None,
-        "3400001": 90.0, "3400002": 95.0,
+        "3600001": 10.0,
+        "3600002": 30.0,
+        "3600003": 50.0,
+        "3600004": None,
+        "3400001": 90.0,
+        "3400002": 95.0,
         "0900001": 12.0,
     }
     out = normalize_within_state(raw)

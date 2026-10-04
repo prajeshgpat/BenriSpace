@@ -1,4 +1,8 @@
-import { ALL_FACTOR_KEYS } from "@/lib/score/factors";
+import {
+  ALL_FACTOR_KEYS,
+  LEGACY_FACTOR_ALIASES,
+  canonicalFactorKey,
+} from "@/lib/score/factors";
 
 import { ApiError } from "./errors";
 import type {
@@ -124,9 +128,25 @@ export function normalizeSubScores(raw: unknown): SubScores {
   return Object.fromEntries(
     ALL_FACTOR_KEYS.map((key) => {
       const value = source[key];
-      return [key, isFiniteNumber(value) ? value : null];
+      if (isFiniteNumber(value)) return [key, value];
+      // Old rows still carry the pre-v1.4 keys; fold them into the new pill.
+      const legacy = Object.entries(LEGACY_FACTOR_ALIASES)
+        .filter(([, target]) => target === key)
+        .map(([old]) => source[old])
+        .filter(isFiniteNumber);
+      return [
+        key,
+        legacy.length > 0
+          ? legacy.reduce((sum, n) => sum + n, 0) / legacy.length
+          : null,
+      ];
     }),
   ) as SubScores;
+}
+
+/** A neighborhood name, or null when absent or blank. */
+function parseNeighborhood(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
 }
 
 function parseSchool(raw: unknown): { school?: SchoolInfo } {
@@ -165,6 +185,7 @@ export function parseScore(body: unknown): Score {
     subScores: normalizeSubScores(body.subScores),
     weightsVersion: body.weightsVersion,
     computedAt: body.computedAt,
+    neighborhood: parseNeighborhood(body.neighborhood),
     ...parseSchool(body.school),
   };
 }
@@ -328,6 +349,7 @@ function parseBetterArea(raw: unknown): ImproveBetterArea | null {
     factorGain: raw.factorGain,
     compositeScore: raw.compositeScore,
     compositeGain: raw.compositeGain,
+    neighborhood: parseNeighborhood(raw.neighborhood),
   };
 }
 
@@ -350,6 +372,7 @@ function parseBestNearby(raw: unknown): ImproveBestNearby | null {
     distanceLabel: raw.distanceLabel,
     compositeScore: raw.compositeScore,
     compositeGain: raw.compositeGain,
+    neighborhood: parseNeighborhood(raw.neighborhood),
   };
 }
 
@@ -370,7 +393,7 @@ export function parseImprove(body: unknown): Improve {
     typeof item.tip === "string"
       ? [
           {
-            factor: item.factor,
+            factor: canonicalFactorKey(item.factor) ?? "grocery",
             label: item.label,
             score: item.score,
             places: Array.isArray(item.places)
@@ -412,13 +435,14 @@ export function parseSimilar(body: unknown): Similar {
             similarity: item.similarity,
             compositeScore: item.compositeScore,
             areaLabel: isNonEmptyString(item.areaLabel) ? item.areaLabel : null,
+            neighborhood: parseNeighborhood(item.neighborhood),
             differences: Array.isArray(item.differences)
               ? item.differences.flatMap((d): SimilarArea["differences"] =>
                   isObject(d) &&
                   isFactorKey(d.factor) &&
                   isNonEmptyString(d.label) &&
                   isFiniteNumber(d.delta)
-                    ? [{ factor: d.factor, label: d.label, delta: d.delta }]
+                    ? [{ factor: canonicalFactorKey(d.factor) ?? "grocery", label: d.label, delta: d.delta }]
                     : [],
                 )
               : [],
@@ -444,21 +468,31 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-const FACTOR_KEY_SET: ReadonlySet<string> = new Set(ALL_FACTOR_KEYS);
-
+/** True for a current key or a legacy alias; use `canonicalFactorKey` to read it. */
 function isFactorKey(value: unknown): value is FactorKey {
-  return typeof value === "string" && FACTOR_KEY_SET.has(value);
+  return canonicalFactorKey(value) !== null;
 }
 
 function parseWeights(raw: unknown): Record<string, number> {
   if (!isObject(raw)) return {};
-  return Object.fromEntries(
-    Object.entries(raw).filter(([, value]) => isFiniteNumber(value)),
-  ) as Record<string, number>;
+  const weights: Record<string, number> = {};
+  // Current keys win over any legacy alias that maps to the same pill.
+  for (const legacyPass of [true, false]) {
+    for (const [key, value] of Object.entries(raw)) {
+      if (!isFiniteNumber(value)) continue;
+      const canonical = canonicalFactorKey(key);
+      if (legacyPass ? canonical !== null && canonical !== key : canonical === key) {
+        weights[canonical ?? key] = value;
+      }
+    }
+  }
+  return weights;
 }
 
 function parseFactors(raw: unknown): FactorKey[] {
-  return Array.isArray(raw) ? raw.filter(isFactorKey) : [];
+  if (!Array.isArray(raw)) return [];
+  const keys = raw.flatMap((item) => canonicalFactorKey(item) ?? []);
+  return [...new Set(keys)];
 }
 
 export function parseSuggestions(body: unknown): Suggestion[] {
@@ -542,6 +576,7 @@ export function parseMapTop(body: unknown): MapTop {
             score: item.score,
             metroArea: typeof item.metroArea === "string" ? item.metroArea : "",
             subScores: normalizeSubScores(item.subScores),
+            neighborhood: parseNeighborhood(item.neighborhood),
           },
         ]
       : [],

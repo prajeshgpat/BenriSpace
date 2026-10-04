@@ -16,14 +16,14 @@ from scoring.engine import CATEGORY_SPECS
 # Mirrors ingestion/areas/limits.py (MAX_AREA_SQ_MI, MAX_EXTENT_MI); a test
 # asserts they stay equal. Areas built before the size limits (or with a
 # non-null extent_m above the cap) are treated as not found.
-AREA_MAX_SQ_MI = 1.5
-AREA_MAX_EXTENT_MI = 2.0
+AREA_MAX_SQ_MI = 0.8
+AREA_MAX_EXTENT_MI = 1.4
 SQ_M_PER_SQ_MI = 2_589_988.11
 M_PER_MI = 1609.344
 SNAP_M = 40.0
 _EARTH_R = 6_371_008.8
 
-# Every aggregated column: the 14 factor scores, the informational school
+# Every aggregated column: the 13 factor scores (plus their v2 legacy columns), the informational school
 # proximity score, and the composite. Order is the SELECT order.
 FACTOR_COLUMNS: list[str] = [s.score_column for s in CATEGORY_SPECS]
 EXTRA_COLUMNS: list[str] = [
@@ -214,6 +214,7 @@ def build_area_response(
         weights_version=aggregate.get("weights_version") or weights_version,
         computed_at=computed_at,
         school=school_info_from_rows(aggregate, feature_row),
+        neighborhood=area.get("neighborhood") or (geo_entity or {}).get("neighborhood"),
         area_id=area["id"],
         area=AreaInfo(
             geometry=area["geometry"],

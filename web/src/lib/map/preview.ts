@@ -14,6 +14,8 @@ export interface Preview {
   lat: number;
   lon: number;
   label: string;
+  /** Small muted line under the title, e.g. the street boundary or what it improves. */
+  subtitle?: string;
   kind: PreviewKind;
   summary?: PreviewSummary;
 }

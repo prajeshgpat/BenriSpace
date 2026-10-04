@@ -82,7 +82,10 @@ def test_footway_and_service_not_in_network():
         "tags": {"highway": "service"},
         "geometry": [{"lat": 40.0, "lon": -74.0}, {"lat": 40.001, "lon": -74.0}],
     }
-    assert parse_layers({"elements": [el, dict(el, id=2, tags={"highway": "footway"})]}, BBOX).roads == []
+    assert (
+        parse_layers({"elements": [el, dict(el, id=2, tags={"highway": "footway"})]}, BBOX).roads
+        == []
+    )
 
 
 def test_median_strip_is_dropped():

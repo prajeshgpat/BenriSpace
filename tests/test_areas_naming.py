@@ -35,7 +35,9 @@ def run(roads, places=None):
 
 
 def test_title_is_longest_street_plus_perpendicular():
-    roads = rect(1, 0, 0, 120, 80, ("West 4th Street", "7th Avenue South", "West 5th Street", "8th Avenue"))
+    roads = rect(
+        1, 0, 0, 120, 80, ("West 4th Street", "7th Avenue South", "West 5th Street", "8th Avenue")
+    )
     (c,), stats = run(roads)
     assert c.name.title == "W 4th St & 7th Ave S"
     assert c.name.subtitle == ""

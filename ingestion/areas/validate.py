@@ -54,7 +54,9 @@ def compute_metrics(
         "cluster_count": len(clusters),
         "neighborhood_count": len(nb),
         "rural_count": len(clusters) - len(nb),
-        "blocks_per_cluster_hist": dict(sorted(hist.items(), key=lambda kv: int(kv[0].rstrip("+")))),
+        "blocks_per_cluster_hist": dict(
+            sorted(hist.items(), key=lambda kv: int(kv[0].rstrip("+")))
+        ),
         "pct_clusters_5_to_10_blocks": 100.0 * in_range / max(len(nb), 1),
         "median_polsby_popper": statistics.median(pps) if pps else 0.0,
         "clusters_crossing_hard_barrier": crossing,
@@ -92,13 +94,20 @@ def to_geojson(items, projector, props_fn) -> dict:
     return {"type": "FeatureCollection", "features": feats}
 
 
-def write_outputs(bs: BlockSet, clusters: list[Cluster], projector, metrics: dict, out: Path) -> None:
+def write_outputs(
+    bs: BlockSet, clusters: list[Cluster], projector, metrics: dict, out: Path
+) -> None:
     out.mkdir(parents=True, exist_ok=True)
     cluster_of = {b: c.id for c in clusters for b in c.block_ids}
     blocks = to_geojson(
         bs.blocks,
         projector,
-        lambda b: {"id": b.id, "kind": b.kind, "area_m2": round(b.area), "cluster": cluster_of.get(b.id)},
+        lambda b: {
+            "id": b.id,
+            "kind": b.kind,
+            "area_m2": round(b.area),
+            "cluster": cluster_of.get(b.id),
+        },
     )
     hoods = to_geojson(
         clusters,

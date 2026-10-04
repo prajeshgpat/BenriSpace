@@ -152,7 +152,9 @@ from ingestion.grid import BOUNDING_BOXES
 
 OVERPASS_TIMEOUT_S = 180
 HTTP_TIMEOUT_S = OVERPASS_TIMEOUT_S + 30
-MAX_SPLIT_DEPTH = 3  # 4^3 = up to 64 sub-tiles per metro in the worst case, matches ingestion/roads.py
+MAX_SPLIT_DEPTH = (
+    3  # 4^3 = up to 64 sub-tiles per metro in the worst case, matches ingestion/roads.py
+)
 
 TRAIL_RADIUS_M = 800.0  # fixed by the running_trail_count_800m column name
 
@@ -201,7 +203,9 @@ STRAVA_MAX_DETAIL_CALLS = 700
 # ==========================================================================
 
 
-def build_overpass_trail_query(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> str:
+def build_overpass_trail_query(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> str:
     """One Overpass QL query for every trail/path/track way in the bbox,
     excluding foot=no and ordinary sidewalks/crossings (see
     EXCLUDED_FOOTWAY_SUBTAGS) -- filtered server-side so the excluded data
@@ -259,7 +263,9 @@ def parse_trail_elements(elements: list[dict]) -> list[dict]:
     return segments
 
 
-def build_bucket_index(points: list[dict], bucket_deg: float = BUCKET_DEG) -> dict[tuple[int, int], list[dict]]:
+def build_bucket_index(
+    points: list[dict], bucket_deg: float = BUCKET_DEG
+) -> dict[tuple[int, int], list[dict]]:
     """Buckets any {"lat", "lon", ...} points into a coarse lat/lon grid.
     Shared by the OSM trail-segment index and the Strava segment-point
     index -- both only need lat/lon keys."""
@@ -354,7 +360,9 @@ def compute_cell_osm_trail_features(
 ) -> dict[str, int | float | None]:
     """One geo_entities cell's running_trail_count_800m / _nearest_m."""
     if index is not None:
-        count, nearest = nearest_and_count_indexed(cell_lat, cell_lon, segments, index, radius_m=radius_m)
+        count, nearest = nearest_and_count_indexed(
+            cell_lat, cell_lon, segments, index, radius_m=radius_m
+        )
     else:
         count, nearest = nearest_and_count(cell_lat, cell_lon, segments, radius_m)
     return {
@@ -368,7 +376,9 @@ def compute_cell_osm_trail_features(
 # ==========================================================================
 
 
-def _fetch_trail_segments_single(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> list[dict]:
+def _fetch_trail_segments_single(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[dict]:
     query = build_overpass_trail_query(min_lat, max_lat, min_lon, max_lon)
     data = post_overpass_query(query, timeout=HTTP_TIMEOUT_S)
     return parse_trail_elements(data.get("elements", []))
@@ -409,7 +419,9 @@ def fetch_trail_segments_for_bbox(
         ):
             time.sleep(1)  # be polite to the free shared Overpass instance
             segments.extend(
-                fetch_trail_segments_for_bbox(sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon, depth + 1)
+                fetch_trail_segments_for_bbox(
+                    sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon, depth + 1
+                )
             )
         return segments
 
@@ -423,7 +435,9 @@ def _run_osm_trails(conn) -> int:
         print(f"[trails] {metro_area}: {len(segments)} trail segments", file=sys.stderr)
 
         for cell in iter_geo_entities(conn, metro_area=metro_area):
-            features = compute_cell_osm_trail_features(cell["latitude"], cell["longitude"], segments, index)
+            features = compute_cell_osm_trail_features(
+                cell["latitude"], cell["longitude"], segments, index
+            )
             upsert_feature_store(conn, cell["id"], features)
             rows_updated += 1
         conn.commit()
@@ -436,7 +450,9 @@ def _run_osm_trails(conn) -> int:
 
 
 def strava_configured() -> bool:
-    return bool(config.STRAVA_CLIENT_ID and config.STRAVA_CLIENT_SECRET and config.STRAVA_REFRESH_TOKEN)
+    return bool(
+        config.STRAVA_CLIENT_ID and config.STRAVA_CLIENT_SECRET and config.STRAVA_REFRESH_TOKEN
+    )
 
 
 class StravaRateLimiter:
@@ -493,7 +509,9 @@ def generate_explore_tiles(
     return tiles
 
 
-def build_explore_bounds_param(min_lat: float, min_lon: float, max_lat: float, max_lon: float) -> str:
+def build_explore_bounds_param(
+    min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> str:
     """Strava's `bounds` query param: "sw_lat,sw_lng,ne_lat,ne_lng"."""
     return f"{min_lat},{min_lon},{max_lat},{max_lon}"
 
@@ -512,7 +530,9 @@ def parse_explore_response(data: dict) -> list[dict]:
         end = seg.get("end_latlng")
         if seg_id is None or not start or not end:
             continue
-        out.append({"id": seg_id, "name": seg.get("name"), "start_latlng": start, "end_latlng": end})
+        out.append(
+            {"id": seg_id, "name": seg.get("name"), "start_latlng": start, "end_latlng": end}
+        )
     return out
 
 
@@ -548,7 +568,9 @@ def select_detail_call_budget(
     return min(max_detail_calls, remaining)
 
 
-def select_segments_for_detail(explore_results_by_tile: list[list[dict]], max_calls: int) -> list[int]:
+def select_segments_for_detail(
+    explore_results_by_tile: list[list[dict]], max_calls: int
+) -> list[int]:
     """Picks unique segment ids across all tiles' explore results,
     breadth-first (rank 0 from every tile, then rank 1, ...) so a capped
     detail-call budget spreads coverage across the whole metro instead of
@@ -606,7 +628,9 @@ def compute_cell_strava_features(
     skip the upsert entirely in that case (leave the columns null; see
     contracts/normalization.md -- never backfill with 0)."""
     candidates = candidates_near(index, cell_lat, cell_lon) if index is not None else points
-    within = [p for p in candidates if haversine_m(cell_lat, cell_lon, p["lat"], p["lon"]) <= radius_m]
+    within = [
+        p for p in candidates if haversine_m(cell_lat, cell_lon, p["lat"], p["lon"]) <= radius_m
+    ]
     if not within:
         return None
     return {
@@ -620,7 +644,9 @@ def compute_cell_strava_features(
 # ==========================================================================
 
 
-def refresh_access_token(client: httpx.Client, client_id: str, client_secret: str, refresh_token: str) -> str:
+def refresh_access_token(
+    client: httpx.Client, client_id: str, client_secret: str, refresh_token: str
+) -> str:
     """POST https://www.strava.com/oauth/token, grant_type=refresh_token.
     Returns a short-lived access token."""
     resp = client.post(
@@ -676,7 +702,10 @@ def fetch_segment_detail(client: httpx.Client, access_token: str, segment_id: in
 def _fetch_and_apply_strava(conn) -> int:
     with httpx.Client() as client:
         access_token = refresh_access_token(
-            client, config.STRAVA_CLIENT_ID, config.STRAVA_CLIENT_SECRET, config.STRAVA_REFRESH_TOKEN
+            client,
+            config.STRAVA_CLIENT_ID,
+            config.STRAVA_CLIENT_SECRET,
+            config.STRAVA_REFRESH_TOKEN,
         )
         limiter = StravaRateLimiter()
 

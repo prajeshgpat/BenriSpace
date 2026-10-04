@@ -259,9 +259,9 @@ describe("Workspace: scoring an address", () => {
     expect(screen.getByTestId("composite-score")).toHaveTextContent("63");
     // Selected filters show their score (or a muted n/a ring); others show none.
     expect(
-      screen.getByRole("checkbox", { name: /^Grocery stores, on, no data/ }),
+      screen.getByRole("checkbox", { name: /^Groceries, on, no data/ }),
     ).toBeInTheDocument();
-    expect(screen.getAllByTestId("factor-ring")).toHaveLength(12);
+    expect(screen.getAllByTestId("factor-ring")).toHaveLength(13);
     expect(screen.queryByText("No data")).not.toBeInTheDocument();
     expect(screen.queryByText("Factor breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Weights/)).not.toBeInTheDocument();
@@ -513,7 +513,7 @@ describe("Workspace: the map and its controls", () => {
 
     await waitFor(() => expect(getMapCells).toHaveBeenCalledTimes(2));
     const factors = getMapCells.mock.calls[1][0].factors ?? [];
-    expect(factors).toHaveLength(11);
+    expect(factors).toHaveLength(12);
     expect(factors).not.toContain("cafe");
     await waitFor(() =>
       expect(getMapTop.mock.lastCall?.[0].factors).toEqual(factors),
@@ -530,7 +530,7 @@ describe("Workspace: the map and its controls", () => {
 
     await waitFor(() =>
       expect(getMapCells).toHaveBeenLastCalledWith(
-        expect.objectContaining({ factors: ["transit", "airport", "road"] }),
+        expect.objectContaining({ factors: ["transit", "airport", "gasConvenience", "traffic"] }),
         expect.anything(),
       ),
     );
@@ -542,7 +542,7 @@ describe("Workspace: the map and its controls", () => {
     await mapReady();
     sendViewport();
     await waitFor(() => expect(getMapCells).toHaveBeenCalled());
-    await screen.findByText("Strongest: Grocery stores 98, Public transit 95", {
+    await screen.findByText("Strongest: Groceries 98, Public transit 95", {
       exact: false,
     });
 
@@ -570,7 +570,7 @@ describe("Workspace: the map and its controls", () => {
     );
 
     expect(
-      screen.getByRole("checkbox", { name: /Grocery stores/ }),
+      screen.getByRole("checkbox", { name: /Groceries/ }),
     ).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
     await mapReady();
@@ -860,7 +860,7 @@ describe("Workspace: choosing a place on the map", () => {
     expect(pushState).toHaveBeenCalledWith(
       null,
       "",
-      "/app?address=Area+near+40.755%2C+-73.985&lat=40.7546&lon=-73.985",
+      "/app?address=Unnamed+area&lat=40.7546&lon=-73.985",
     );
     expect(await screen.findByTestId("composite-score")).toHaveTextContent("63");
     expect(String(fetchMock.mock.calls[0][0])).toBe(
@@ -1176,17 +1176,17 @@ describe("selection reaches the point endpoints", () => {
     expect(screen.getByRole("button", { name: "Show similar area 1 on map" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Cafes/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Gyms/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Gym/ }));
 
     await waitFor(() => expect(getSimilar).toHaveBeenCalledTimes(2), { timeout: 2000 });
     expect(getSimilar.mock.calls[1][2]).toMatchObject({
       factors: expect.not.arrayContaining(["cafe", "gym"]),
     });
-    expect((getSimilar.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(10);
+    expect((getSimilar.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(11);
     await waitFor(() => expect(getImprove).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(2));
     expect(getImprove.mock.calls[1][2]).toMatchObject({ factors: expect.any(Array) });
-    expect((getAreaExplanation.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(10);
+    expect((getAreaExplanation.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(11);
     // Two toggles, one request each.
     expect(getSimilar).toHaveBeenCalledTimes(2);
   });

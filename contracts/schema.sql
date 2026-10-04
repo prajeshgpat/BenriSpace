@@ -89,6 +89,16 @@ create table feature_store (
     school_district_rating double precision,
     school_rating_source text,
 
+    -- v2.1 columns (contracts/migrations/0009_v2_1.sql, not yet applied) — all nullable, imperial units
+    shopping_count_1mi int,
+    shopping_nearest_ft double precision,
+    shopping_variety_count_1mi int,
+    shopping_raw double precision,
+    park_count_1mi int,
+    park_nearest_ft double precision,
+    park_largest_sq_ft_half_mi double precision,
+    recreation_raw double precision,
+
     updated_at                  timestamptz not null default now()
 );
 
@@ -118,6 +128,12 @@ create table scores (
     bar_score                double precision,
     premium_retail_score     double precision,
     school_proximity_score   double precision,  -- informational, not a composite factor
+    -- v2.1 columns (contracts/migrations/0009_v2_1.sql, not yet applied) — nullable.
+    -- Traffic is road_score. v2 rows keep Shopping in premium_retail_score and
+    -- Recreation in trail_popularity_score (the API reads them as a fallback).
+    shopping_score           double precision,
+    recreation_score         double precision,
+    gas_convenience_score    double precision,
 
     composite_score     numeric not null,
 
@@ -220,3 +236,8 @@ create table if not exists llm_usage (
 );
 
 create index if not exists llm_usage_created_at_idx on llm_usage (created_at);
+
+-- Neighborhood names (migration 0008, not yet applied): 'Park Slope, Brooklyn',
+-- from OSM place nodes (ingestion/neighborhoods.py).
+alter table geo_entities add column if not exists neighborhood text;
+alter table areas add column if not exists neighborhood text;

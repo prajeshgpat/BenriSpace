@@ -2,8 +2,8 @@
 /similar and the two explanation endpoints: the user's selected priorities.
 
 Parsing and weighting reuse api/mapdata.py (same keys and semantics as
-/map/top). Omitted `factors` means the 12 toggleable factors (the website's
-toggles), not the two underlying metrics (premiumRetail, trailPopularity).
+/map/top). Omitted `factors` means all 13 factors (the website's toggles);
+legacy keys (premiumRetail, gasStation, road, ...) are accepted as aliases.
 `explicit` records whether the caller chose anything, so endpoints can keep
 their stored-composite behaviour when nothing was chosen.
 """
@@ -12,16 +12,14 @@ from dataclasses import dataclass
 
 from api.mapdata import (
     FACTOR_COLUMNS,
-    UNDERLYING_FACTOR_KEYS,
     ScoreSpec,
     composite_from_row,
     parse_factors,
     parse_weights,
 )
 
-TOGGLEABLE_FACTORS: tuple[str, ...] = tuple(
-    k for k in FACTOR_COLUMNS if k not in UNDERLYING_FACTOR_KEYS
-)
+# Every factor is a toggle on the website; there are no hidden factors.
+TOGGLEABLE_FACTORS: tuple[str, ...] = tuple(FACTOR_COLUMNS)
 
 
 @dataclass(frozen=True)

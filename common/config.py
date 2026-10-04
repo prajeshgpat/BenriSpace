@@ -20,6 +20,7 @@ DATABASE_URL = os.environ.get(
 # Read directly from the environment at call time by api/suggest.py (so Lambda can
 # inject it from SSM before import and tests can unset it); listed here for discovery.
 LOCATIONIQ_API_KEY = os.environ.get("LOCATIONIQ_API_KEY")
+# Unused since 2026-10-04: NJ Transit GTFS is an open download (ingestion/gtfs_transit.py).
 NJ_TRANSIT_API_KEY = os.environ.get("NJ_TRANSIT_API_KEY")
 NJ_TRANSIT_API_USERNAME = os.environ.get("NJ_TRANSIT_API_USERNAME")
 

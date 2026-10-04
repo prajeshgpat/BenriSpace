@@ -68,19 +68,11 @@ export const BarIcon = icon(
   </>,
 );
 
-export const GasStationIcon = icon(
-  "gasStation",
+export const GasConvenienceIcon = icon(
+  "gasConvenience",
   <>
     <path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M6 8h6" />
     <path d="M14 10h2a2 2 0 0 1 2 2v4a1.5 1.5 0 0 0 3 0V8l-3-3" />
-  </>,
-);
-
-export const ConvenienceStoreIcon = icon(
-  "convenienceStore",
-  <>
-    <path d="M3 9l1.5-5h15L21 9M3 9h18M3 9a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
-    <path d="M5 12v9h14v-9M10 21v-5h4v5" />
   </>,
 );
 
@@ -102,59 +94,64 @@ export const SchoolIcon = icon(
   </>,
 );
 
-export const RoadIcon = icon(
-  "road",
+export const TrafficIcon = icon(
+  "traffic",
   <>
-    <path d="M8 3L4 21M16 3l4 18M12 4v3M12 11v3M12 18v3" />
+    <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" />
+    <circle cx="7" cy="17" r="2" />
+    <path d="M9 17h6" />
+    <circle cx="17" cy="17" r="2" />
   </>,
 );
 
 export const EmergencyCorridorIcon = icon(
   "emergencyCorridor",
   <>
-    <path d="M4 10v4h3l5 4V6L7 10zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12" />
+    <path d="M7 18v-6a5 5 0 1 1 10 0v6" />
+    <path d="M5 21a1 1 0 0 0 1-1v-1a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1a1 1 0 0 0 1 1z" />
+    <path d="M21 12h1M2 12h1M12 2v1M4.9 4.9l.7.7M19.1 4.9l-.7.7M12 12v6" />
   </>,
 );
 
+/** A real airplane silhouette (not the paper-plane "send" arrow). */
 export const AirportIcon = icon(
   "airport",
   <>
-    <path d="M10.5 13.5L3 11l1.5-1.5 8-.5L16 5a2 2 0 0 1 3 3l-4 3.5.5 8L14 21l-2.5-7.5" />
+    <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />
   </>,
 );
 
-export const PremiumRetailIcon = icon(
-  "premiumRetail",
+export const ShoppingIcon = icon(
+  "shopping",
   <>
-    <path d="M6 3h12l3 6-9 12L3 9z" />
-    <path d="M3 9h18M9 3l-2 6 5 12M15 3l2 6-5 12" />
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+    <path d="M3 6h18" />
+    <path d="M16 10a4 4 0 0 1-8 0" />
   </>,
 );
 
-export const TrailPopularityIcon = icon(
-  "trailPopularity",
+export const RecreationIcon = icon(
+  "recreation",
   <>
-    <path d="M3 20c4 0 4-5 8-5s3-6 6-6 2-5 4-5" />
-    <circle cx="4" cy="20" r="1" />
-    <circle cx="20" cy="4" r="1" />
+    <path d="M12 3l4.5 6H14l4.5 6h-13L10 9H7.5z" />
+    <path d="M12 15v6" />
   </>,
 );
 
 export const FACTOR_ICONS: Record<FactorKey, ComponentType<FactorIconProps>> = {
   grocery: GroceryIcon,
-  gym: GymIcon,
-  cafe: CafeIcon,
   restaurant: RestaurantIcon,
+  cafe: CafeIcon,
   bar: BarIcon,
-  premiumRetail: PremiumRetailIcon,
-  gasStation: GasStationIcon,
-  convenienceStore: ConvenienceStoreIcon,
+  gym: GymIcon,
+  shopping: ShoppingIcon,
   transit: TransitIcon,
-  school: SchoolIcon,
-  road: RoadIcon,
-  emergencyCorridor: EmergencyCorridorIcon,
   airport: AirportIcon,
-  trailPopularity: TrailPopularityIcon,
+  gasConvenience: GasConvenienceIcon,
+  traffic: TrafficIcon,
+  school: SchoolIcon,
+  emergencyCorridor: EmergencyCorridorIcon,
+  recreation: RecreationIcon,
 };
 
 /** The icon for a factor key; decorative, so it always sits next to the label. */

@@ -252,15 +252,24 @@ def test_compute_cell_features_all_columns_present():
 
     # exactly the feature_store columns this job owns, nothing more/less
     assert set(features) == {
-        "restaurant_count_500m", "restaurant_nearest_m",
-        "bar_count_500m", "bar_nearest_m",
-        "whole_foods_nearest_m", "starbucks_nearest_m", "target_nearest_m",
+        "restaurant_count_500m",
+        "restaurant_nearest_m",
+        "bar_count_500m",
+        "bar_nearest_m",
+        "whole_foods_nearest_m",
+        "starbucks_nearest_m",
+        "target_nearest_m",
         "premium_retail_raw",
-        "grocery_count_500m", "grocery_nearest_m",
-        "gym_count_500m", "gym_nearest_m",
-        "cafe_count_500m", "cafe_nearest_m",
-        "gas_station_count_500m", "gas_station_nearest_m",
-        "convenience_store_count_500m", "convenience_store_nearest_m",
+        "grocery_count_500m",
+        "grocery_nearest_m",
+        "gym_count_500m",
+        "gym_nearest_m",
+        "cafe_count_500m",
+        "cafe_nearest_m",
+        "gas_station_count_500m",
+        "gas_station_nearest_m",
+        "convenience_store_count_500m",
+        "convenience_store_nearest_m",
     }
 
 
@@ -338,9 +347,9 @@ def test_brand_name_fallback_case_insensitive_and_restricted():
     # Not shop/cafe -> no name fallback
     assert categorize_poi_all({"amenity": "restaurant", "name": "Starbucks"}) == ["restaurant"]
     # Different brand's wikidata wins over a coincidental name
-    assert categorize_poi_all({"shop": "supermarket", "name": "Target", "brand:wikidata": "Q1"}) == [
-        "grocery"
-    ]
+    assert categorize_poi_all(
+        {"shop": "supermarket", "name": "Target", "brand:wikidata": "Q1"}
+    ) == ["grocery"]
     # Exact match only
     assert categorize_poi_all({"shop": "mall", "name": "Target Center Mall"}) == []
 
@@ -421,21 +430,41 @@ def test_split_gives_up_at_max_depth(monkeypatch):
 
 
 def test_merge_overpass_elements_keeps_idless():
-    m = overpass.merge_overpass_elements([{"elements": [_el(1), {"type": "node"}]}, {"elements": [_el(1)]}])
+    m = overpass.merge_overpass_elements(
+        [{"elements": [_el(1), {"type": "node"}]}, {"elements": [_el(1)]}]
+    )
     assert len(m["elements"]) == 2
 
 
 def test_extract_places():
     data = {
         "elements": [
-            {"type": "node", "id": 1, "lat": 40.1, "lon": -73.1,
-             "tags": {"amenity": "cafe", "name": "  Joe's   Cafe "}},
-            {"type": "way", "id": 2, "center": {"lat": 40.2, "lon": -73.2},
-             "tags": {"shop": "supermarket", "name": "Whole Foods Market",
-                      "brand": "Whole Foods", "brand:wikidata": "Q1809448"}},
+            {
+                "type": "node",
+                "id": 1,
+                "lat": 40.1,
+                "lon": -73.1,
+                "tags": {"amenity": "cafe", "name": "  Joe's   Cafe "},
+            },
+            {
+                "type": "way",
+                "id": 2,
+                "center": {"lat": 40.2, "lon": -73.2},
+                "tags": {
+                    "shop": "supermarket",
+                    "name": "Whole Foods Market",
+                    "brand": "Whole Foods",
+                    "brand:wikidata": "Q1809448",
+                },
+            },
             {"type": "node", "id": 3, "lat": 40.3, "lon": -73.3, "tags": {"amenity": "bar"}},
-            {"type": "node", "id": 4, "lat": 40.3, "lon": -73.3,
-             "tags": {"amenity": "bar", "name": "   "}},
+            {
+                "type": "node",
+                "id": 4,
+                "lat": 40.3,
+                "lon": -73.3,
+                "tags": {"amenity": "bar", "name": "   "},
+            },
             {"type": "way", "id": 5, "tags": {"amenity": "bar", "name": "No Center"}},
         ]
     }
