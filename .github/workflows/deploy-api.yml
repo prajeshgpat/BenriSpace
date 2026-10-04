@@ -1,4 +1,4 @@
-# Builds and deploys the API to the `benrispace-api` Lambda (PROJECT.md
+# Builds and deploys the API to the `benrispace-api` Lambda (docs/ROADMAP.md
 # "Hosting & Domain"). Terraform (infra/) owns the function's configuration;
 # this workflow only ever replaces its code.
 #

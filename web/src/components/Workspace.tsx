@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   useEffect,
@@ -9,7 +8,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type MouseEvent,
   type ReactNode,
   type Ref,
 } from "react";
@@ -24,7 +22,6 @@ import {
   ADDRESS_PARAM,
   formatLatLon,
   resolveTarget,
-  resultHref,
   targetKey,
   targetLabel,
   type LatLon,
@@ -32,7 +29,7 @@ import {
 } from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
-import type { MapTopResult, Suggestion } from "@/lib/api/types";
+import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
 import { API_BASE_URL } from "@/lib/config";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
@@ -54,7 +51,6 @@ import {
 import { bandLabel, roundScore } from "@/lib/score/presentation";
 import {
   APP_PATH,
-  EXAMPLE_ADDRESSES,
   SITE_TITLE,
   resultTitle,
 } from "@/lib/site";
@@ -69,6 +65,7 @@ import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
+import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
 import { FactorControls } from "./map/FactorControls";
@@ -104,16 +101,6 @@ function announcement(state: LookupState): string {
     default:
       return "";
   }
-}
-
-function isModifiedClick(event: MouseEvent): boolean {
-  return (
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  );
 }
 
 function roundCoordinate(value: number): number {
@@ -242,6 +229,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
+  // "Ask BenriSpace" replaces the result and filter cards while it is open.
+  const [chatOpen, setChatOpen] = useState(false);
 
   const [start] = useState(() => {
     const view = initialView(initial);
@@ -255,7 +244,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // writing down: the metro overview is what `/app` already means.
   const [viewShared, setViewShared] = useState(start.pinned);
 
-  const mobile = useIsMobile();
   // Phones show the panel as a bottom sheet: collapsed until there is a place
   // to show, and back to collapsed when it is closed.
   const [snap, setSnap] = useState<SheetSnap>(initial.target ? "half" : "peek");
@@ -492,6 +480,33 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     });
   }
 
+  function openChat() {
+    setChatOpen(true);
+    // On a phone the conversation needs the whole sheet.
+    setSnap("full");
+  }
+
+  // A place the chat found: same map preview the suggestion cards use.
+  function showChatResult(result: ChatResult) {
+    showPreview({
+      lat: result.latitude,
+      lon: result.longitude,
+      label: result.label,
+      subtitle: result.why,
+      kind: "best-move",
+      summary:
+        result.score === undefined ? undefined : { compositeScore: result.score },
+    });
+  }
+
+  function scoreChatResult(result: ChatResult) {
+    const lat = roundCoordinate(result.latitude);
+    const lon = roundCoordinate(result.longitude);
+    setPicked(null);
+    setChatOpen(false);
+    navigate({ kind: "coordinates", lat, lon, label: result.label });
+  }
+
   function selectTop(result: MapTopResult) {
     if (activeTop?.geohash === result.geohash) {
       close();
@@ -534,7 +549,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         rank: index + 1,
         lat: result.latitude,
         lon: result.longitude,
-        label: `Rank ${index + 1}, score ${Math.round(result.score)}. Show details`,
+        tooltip: `${areaTitle(result)} \u00b7 ${Math.round(result.score)}`,
+        label: `${areaTitle(result)}, score ${Math.round(result.score)}, rank ${index + 1}. Show details`,
       })),
     [topResults],
   );
@@ -586,6 +602,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </div>
       </div>
 
+      {chatOpen ? null : (
+        <button type="button" className={styles.ask} onClick={openChat}>
+          Ask BenriSpace
+        </button>
+      )}
+
       <p className="sr-only" role="status">
         {locating ? "Finding your location\u2026" : ""}
       </p>
@@ -594,7 +616,22 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         {announcement(state)}
       </p>
 
-      {target ? (
+      {chatOpen ? (
+        <ChatPanel
+          client={client}
+          context={{
+            ...(target && address ? { address } : {}),
+            ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
+            ...(priorities.factors ? { factors: priorities.factors } : {}),
+            ...(priorities.weights ? { weights: priorities.weights } : {}),
+          }}
+          onShowOnMap={showChatResult}
+          onScoreArea={scoreChatResult}
+          onClose={() => setChatOpen(false)}
+        />
+      ) : null}
+
+      {target && !chatOpen ? (
         <section
           className={styles.result}
           data-state={state.status}
@@ -627,49 +664,49 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             ) : null}
           </div>
         </section>
-      ) : mobile && snap === "peek" ? null : (
-        <Welcome onExample={handleSearch} />
-      )}
+      ) : null}
 
-      <div className={styles.controls}>
-        <FactorControls
-          selection={selection}
-          onChange={setSelection}
-          scores={state.status === "success" ? state.score.subScores : null}
-        />
-        {state.status === "success" ? (
-          <>
-            <ScoreSummary score={state.score} explanation={state.explanation} />
-            <ImproveCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
-              client={client}
-              priorities={priorities}
-              onPreview={showPreview}
-            />
-            <SimilarCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
-              client={client}
-              priorities={priorities}
-              onPreview={showPreview}
-            />
-          </>
-        ) : null}
-        <BestAreas
-          status={top.status}
-          results={topResults}
-          error={top.error}
-          selectedFactors={selection.factors}
-          activeGeohash={activeTop?.geohash ?? null}
-          onSelect={selectTop}
-          onRetry={top.retry}
-        />
-      </div>
+      {chatOpen ? null : (
+        <div className={styles.controls}>
+          <FactorControls
+            selection={selection}
+            onChange={setSelection}
+            scores={state.status === "success" ? state.score.subScores : null}
+          />
+          {state.status === "success" ? (
+            <>
+              <ScoreSummary score={state.score} explanation={state.explanation} />
+              <ImproveCard
+                coordinates={{
+                  lat: state.score.latitude,
+                  lon: state.score.longitude,
+                }}
+                client={client}
+                priorities={priorities}
+                onPreview={showPreview}
+              />
+              <SimilarCard
+                coordinates={{
+                  lat: state.score.latitude,
+                  lon: state.score.longitude,
+                }}
+                client={client}
+                priorities={priorities}
+                onPreview={showPreview}
+              />
+            </>
+          ) : null}
+          <BestAreas
+            status={top.status}
+            results={topResults}
+            error={top.error}
+            selectedFactors={selection.factors}
+            activeGeohash={activeTop?.geohash ?? null}
+            onSelect={selectTop}
+            onRetry={top.retry}
+          />
+        </div>
+      )}
       <p className="sr-only" role="status">
         {mapStatus}
       </p>
@@ -767,36 +804,5 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       snap={snap}
       onSnapChange={setSnap}
     />
-  );
-}
-
-function Welcome({ onExample }: { onExample: (address: string) => void }) {
-  return (
-    <section className={styles.welcome} aria-label="Get started">
-      <p className={styles.welcomeText}>
-        Search an address or click the map to see its score.{" "}
-        <Link href="/" prefetch={false}>
-          How scores work
-        </Link>
-      </p>
-      <p className={styles.examples}>
-        <span className={styles.examplesLabel}>Try</span>
-        {EXAMPLE_ADDRESSES.map((example) => (
-          <Link
-            key={example}
-            className={styles.example}
-            href={resultHref(example)}
-            prefetch={false}
-            onClick={(event) => {
-              if (isModifiedClick(event)) return;
-              event.preventDefault();
-              onExample(example);
-            }}
-          >
-            {example}
-          </Link>
-        ))}
-      </p>
-    </section>
   );
 }

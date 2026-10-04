@@ -68,8 +68,8 @@
 }
 
 .title {
-  max-width: 14ch;
-  font-size: clamp(2.5rem, 9vw + 0.5rem, 5.5rem);
+  max-width: 17ch;
+  font-size: clamp(2.25rem, 7vw + 0.25rem, 4.5rem);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.045em;
@@ -84,7 +84,7 @@
 }
 
 .cta:focus-visible,
-.quiet:focus-visible {
+.explore:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -109,14 +109,34 @@
   background: var(--accent-hover);
 }
 
-.quiet {
-  color: var(--text-secondary);
-  font-size: 0.9375rem;
-  text-underline-offset: 0.25em;
+.explore {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 3rem;
+  padding: 0 1.4rem;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: var(--shadow);
 }
 
-.quiet:hover {
-  color: var(--text);
+.explore:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.exploreIcon {
+  width: 1.4rem;
+  height: 1.4rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* Sections */
@@ -133,7 +153,48 @@
   text-transform: uppercase;
 }
 
+/* Benefits */
+.benefits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.benefit {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+  padding: 1.25rem 1.25rem 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.benefitTitle {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.benefitText {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
 /* Factors */
+.group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.groupName {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
 .factors {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
@@ -228,30 +289,20 @@
   }
 }
 
-/* Coming soon */
-.soon {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 1.5rem;
-  color: var(--text-subtle);
-  font-size: 0.9375rem;
+/* Coverage and data */
+.notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1.5rem;
 }
 
-.soonLabel {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.noteText {
+  color: var(--text-secondary);
+  line-height: 1.6;
 }
 
-.soonList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 1.25rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.noteText strong {
+  color: var(--text);
 }
 
 /* Closing */

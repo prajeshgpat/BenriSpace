@@ -40,11 +40,11 @@ Design calls made here (flag if wrong, easy to change):
   `narrow_bottleneck_bonus` (+0.5) fires when a segment has an explicit
   `lanes<=1` tag on an already-non-trivial road (weight>=2) — a single-lane
   stretch of an otherwise-through road is exactly the "single-lane roads
-  causing congestion" example PROJECT.md calls out, distinct from a
+  causing congestion" example docs/ROADMAP.md calls out, distinct from a
   low-traffic single-lane residential street (which never gets the bonus
   since its base weight is already low). Distance decay (`1/(1+d/200)`) is
   a simple, monotonic, easy-to-reason-about falloff — not fit to any real
-  traffic model, this is explicitly a hand-tuned MVP proxy per PROJECT.md.
+  traffic model, this is explicitly a hand-tuned MVP proxy per docs/ROADMAP.md.
   Direction is negative (scoring/engine.py inverts it) so higher = worse,
   which this formula produces.
 
@@ -53,10 +53,10 @@ Design calls made here (flag if wrong, easy to change):
   but restricted to "major corridor" segments only (class_weight >= 3, i.e.
   secondary/primary/trunk/motorway) within EMERGENCY_RADIUS_M — these are
   the roads an ambulance/fire truck would actually use as a through-route,
-  per PROJECT.md's "emergency vehicle route noise" factor. A cell three
+  per docs/ROADMAP.md's "emergency vehicle route noise" factor. A cell three
   doors down from a quiet residential street scores ~0 here even if its
   congestion_proxy_raw is nonzero from local residential density. This is
-  explicitly flagged in PROJECT.md as "proxy only — phase 2 refinement, not
+  explicitly flagged in docs/ROADMAP.md as "proxy only — phase 2 refinement, not
   precise" and weighted low (0.5x) in scoring/engine.py's DEFAULT_WEIGHTS
   accordingly — not trying to be more precise than that here.
 
@@ -179,7 +179,7 @@ def compute_congestion_proxy_raw(
 ) -> float:
     """nearby_segments: [{"highway": str, "distance_m": float, "lanes": int|None}, ...].
     Higher = worse/more congested (negative-direction raw signal per
-    contracts/normalization.md; scoring/engine.py inverts it)."""
+    docs/SCORING.md; scoring/engine.py inverts it)."""
     total = 0.0
     for seg in nearby_segments:
         if seg["distance_m"] > radius_m:

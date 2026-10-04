@@ -13,7 +13,7 @@ info:
 
     Every request is attributed to an account (web session or Business-tier
     API key) so tier limits in `usage_counters` can be enforced — see Phase 4
-    in `PROJECT.md`/`PHASES.md`. Free tier requires sign-in too; there is no
+    in `docs/ROADMAP.md`/`docs/ROADMAP.md`. Free tier requires sign-in too; there is no
     fully anonymous path.
 
 servers:
@@ -237,6 +237,50 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+
+  /chat:
+    post:
+      summary: Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+      description: >
+        The client keeps the conversation and sends it each time; only the last
+        6 messages (each cut to 2,000 characters) are used. The assistant can only
+        call read-only tools (geocode, area_score, nearby_places, improve, similar,
+        search_areas, optimize_location). `results` is built from tool output, not
+        by the model; `reply` is checked against the tool output and replaced by a
+        deterministic summary (`limited: true`) when it cannot be grounded. Each
+        visitor gets 15 messages a day.
+      operationId: chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: The assistant's reply with structured results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "400":
+          description: Invalid request (empty messages, unknown factor, last message not from the user).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: The visitor used today's 15 chat messages (code `rate_limited`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Chat is unavailable (no API key, or the model call failed; code `chat_unavailable`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /suggest:
     get:
@@ -1112,6 +1156,69 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OptimizeAnchorResult"
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: {type: string, enum: [user, assistant]}
+        content: {type: string, description: Cut to 2000 characters.}
+
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/ChatMessage"}
+          description: Must end with a user message; only the last 6 are used.
+        context:
+          type: object
+          properties:
+            address: {type: string}
+            latitude: {type: number}
+            longitude: {type: number}
+            factors:
+              type: array
+              items: {$ref: "#/components/schemas/FactorKey"}
+            weights:
+              type: object
+              additionalProperties: {type: number}
+
+    ChatResult:
+      type: object
+      required: [label, latitude, longitude, why]
+      properties:
+        label: {type: string, description: Neighborhood name or area label.}
+        latitude: {type: number}
+        longitude: {type: number}
+        score: {type: integer}
+        weeklyMinutes: {type: integer}
+        why: {type: string}
+
+    ChatSource:
+      type: object
+      required: [tool, summary]
+      properties:
+        tool: {type: string}
+        summary: {type: string}
+
+    ChatResponse:
+      type: object
+      required: [reply, results, sources]
+      properties:
+        reply: {type: string}
+        results:
+          type: array
+          maxItems: 3
+          items: {$ref: "#/components/schemas/ChatResult"}
+        sources:
+          type: array
+          items: {$ref: "#/components/schemas/ChatSource"}
+        limited:
+          type: boolean
+          description: True when the reply is a deterministic fallback or chat is paused.
 
     OptimizeResponse:
       type: object

@@ -109,6 +109,7 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     reverseGeocode: unexpected("reverseGeocode"),
     getMapCells: unexpected("getMapCells"),
     getMapTop: unexpected("getMapTop"),
+    chat: unexpected("chat"),
     ...overrides,
   };
 }

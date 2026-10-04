@@ -3,7 +3,7 @@
 -- the API that reads these columns. v2 rows keep working with the new columns null.
 -- Mirrored into contracts/schema.sql so a fresh database already has them.
 --
--- v2.1 makes every scoring factor a user-facing pill (SCORING_FRAMEWORK.md v1.4).
+-- v2.1 makes every scoring factor a user-facing pill (docs/SCORING.md v1.4).
 -- New feature_store columns are named in imperial units (owner rule).
 -- Each statement below is a single statement (one per semicolon).
 

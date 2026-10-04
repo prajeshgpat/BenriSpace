@@ -12,7 +12,7 @@ export interface FactorGuideEntry {
   better: string;
   /** Why that direction is treated as good. */
   why: string;
-  /** Default relative weight in the overall score (SCORING_FRAMEWORK.md section 2). */
+  /** Default relative weight in the overall score (docs/SCORING.md section 2). */
   weight: number;
   /** An honest limit of the data or method. */
   caveat: string;
@@ -20,7 +20,7 @@ export interface FactorGuideEntry {
 
 /**
  * Plain-language guide to the thirteen factors. Weights are the relative
- * defaults from SCORING_FRAMEWORK.md (only their ratios matter); the distances
+ * defaults from docs/SCORING.md (only their ratios matter); the distances
  * mirror the scoring curves, shown in feet and miles.
  */
 export const FACTOR_GUIDE: Record<FactorKey, FactorGuideEntry> = {

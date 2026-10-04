@@ -1,4 +1,4 @@
-# Weekly/monthly ingestion pipeline (PROJECT.md Phase 1: GitHub Actions is
+# Weekly/monthly ingestion pipeline (docs/ROADMAP.md Phase 1: GitHub Actions is
 # sufficient at this refresh cadence, no Airflow needed yet).
 #
 # Order matters: grid generation must run first (every other job writes
@@ -18,7 +18,7 @@
 # Scoring runs even if one source failed: feature_store keeps the previous
 # values for that source, and the failed job still turns the run red.
 #
-# Inert until DATABASE_URL is set as a repo secret — see PHASES.md
+# Inert until DATABASE_URL is set as a repo secret — see docs/ROADMAP.md
 # "Blocking Phase 1 today". STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN are optional;
 # trails.py degrades gracefully when they are absent. NJ Transit's rail and bus
 # GTFS feeds are now open downloads, so NJ_TRANSIT_API_KEY/USERNAME are unused
@@ -29,7 +29,7 @@
 # are set — timeout-minutes below is a safety ceiling, not the expected
 # case. On a private repo this also eats real GitHub Actions minutes
 # against the free-tier monthly budget (~600 min/month at weekly cadence)
-# — worth knowing given this project's $0/month target (see PROJECT.md
+# — worth knowing given this project's $0/month target (see docs/ROADMAP.md
 # Cost Constraints).
 
 name: Ingestion Pipeline

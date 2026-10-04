@@ -1,14 +1,14 @@
 """Airport proximity ingestion job — populates
 feature_store.nearest_tier1_airport_code and feature_store.airport_drive_time_min
-per PROJECT.md's "Proximity to tier-1 airports" scoring factor
+per docs/ROADMAP.md's "Proximity to tier-1 airports" scoring factor
 ("Hardcoded list + drive time via routing engine").
 
 Design calls made here (flag if wrong, easy to change):
 
-- **Tier-1 airport list, hardcoded, NYC-metro only.** PROJECT.md's factor
+- **Tier-1 airport list, hardcoded, NYC-metro only.** docs/ROADMAP.md's factor
   table names "JFK, Dulles, SFO-class" as illustrative examples of
   tier-1-caliber commercial airports nationally — not a literal in-scope
-  list for a NYC-metro-only v1 (PROJECT.md's v1 scope: five boroughs, Long
+  list for a NYC-metro-only v1 (docs/ROADMAP.md's v1 scope: five boroughs, Long
   Island, Westchester, Hudson Valley, northern NJ, Fairfield County CT).
   For this instance the relevant tier-1 airports are the three major
   commercial airports actually inside that service radius: JFK, LaGuardia
@@ -21,7 +21,7 @@ Design calls made here (flag if wrong, easy to change):
   factor.
 
 - **Pluggable routing abstraction** (`DriveTimeRouter` below), because
-  Valhalla isn't hosted yet — PHASES.md Phase 2 "Requirements from you"
+  Valhalla isn't hosted yet — docs/ROADMAP.md Phase 2 "Requirements from you"
   explicitly defers *where* it runs to a later decision.
   `common.config.VALHALLA_URL` is the signal this job reads: set -> real
   routed drive time via Valhalla's HTTP `/route` API; unset (today's
@@ -63,7 +63,7 @@ class Airport:
     lon: float
 
 
-# See module docstring for why these three and not PROJECT.md's illustrative
+# See module docstring for why these three and not docs/ROADMAP.md's illustrative
 # Dulles/SFO examples.
 TIER1_AIRPORTS = [
     Airport("JFK", "John F. Kennedy International", 40.6413, -73.7781),
@@ -88,7 +88,7 @@ class DriveTimeRouter:
 class ValhallaRouter(DriveTimeRouter):
     """Real routed drive time via Valhalla's `/route` HTTP API.
 
-    NOT exercised against a live instance in this sandbox — PHASES.md
+    NOT exercised against a live instance in this sandbox — docs/ROADMAP.md
     Phase 2 "Requirements from you" defers where Valhalla is hosted, so
     VALHALLA_URL is unset here and this path is untestable live. The
     request/response shape below follows Valhalla's documented `/route`
@@ -134,7 +134,7 @@ class HaversineFallbackRouter(DriveTimeRouter):
     """KNOWN-APPROXIMATE PLACEHOLDER — NOT a real drive-time estimate.
 
     Used whenever VALHALLA_URL is unset (today's reality; Phase 2 hasn't
-    decided where Valhalla runs yet — see PHASES.md). Converts straight-line
+    decided where Valhalla runs yet — see docs/ROADMAP.md). Converts straight-line
     distance (`common.geo.haversine_m`) to estimated minutes using an
     assumed average speed of **30 mph (~48 km/h)** — a rough blend of
     highway + local-road travel and typical NYC-metro traffic, not measured

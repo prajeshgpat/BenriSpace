@@ -47,7 +47,7 @@ describe("HomePage", () => {
       const item = items.find((li) => li.getAttribute("data-factor") === key)!;
       expect(
         within(item).getByRole("heading", {
-          level: 3,
+          level: 4,
           name: FACTORS[key].label,
         }),
       ).toBeInTheDocument();
@@ -55,13 +55,13 @@ describe("HomePage", () => {
       expect(item.querySelector("svg")).not.toBeNull();
     }
     expect(
-      screen.getByRole("heading", { level: 3, name: "Noise corridor" }),
+      screen.getByRole("heading", { level: 4, name: "Noise corridor" }),
     ).toBeInTheDocument();
   });
 
   it("shows the three steps and mentions feet and miles", () => {
     render(<HomePage />);
-    for (const name of ["Search", "See the score", "Understand why"]) {
+    for (const name of ["Search", "See the score", "Make it yours"]) {
       expect(
         screen.getByRole("heading", { level: 3, name }),
       ).toBeInTheDocument();
@@ -69,14 +69,32 @@ describe("HomePage", () => {
     expect(screen.getByText(/feet and miles/)).toBeInTheDocument();
   });
 
-  it("lists what is coming soon", () => {
+  it("states the value proposition and what you get", () => {
     render(<HomePage />);
     expect(
-      screen.getByRole("heading", { level: 2, name: "Coming soon" }),
+      screen.getByRole("heading", { level: 1, name: /10-minute radius/ }),
     ).toBeInTheDocument();
-    for (const item of ["AI explanations", "Similar areas", "Compare places"]) {
-      expect(screen.getByText(item)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "What you get" }),
+    ).toBeInTheDocument();
+    for (const name of [
+      "One score from 13 factors",
+      "Real neighborhoods",
+      "Improve this area",
+      "Similar neighborhoods",
+      "Plan multiple stops",
+    ]) {
+      expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
     }
+  });
+
+  it("groups the factors and explains coverage and data", () => {
+    render(<HomePage />);
+    for (const name of ["Daily amenities", "Getting around", "Neighborhood"]) {
+      expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
+    }
+    expect(screen.getByText(/New York, New Jersey and Connecticut/)).toBeInTheDocument();
+    expect(screen.getByText(/Built from OpenStreetMap/)).toBeInTheDocument();
   });
 
   it("links to the app from the hero and the closing call to action", () => {

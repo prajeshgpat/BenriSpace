@@ -29,7 +29,7 @@ def test_categorize_supermarket_and_grocery_as_grocery():
 
 
 def test_categorize_convenience_store_is_not_grocery():
-    # PROJECT.md: convenience stores are their own negative-signal category,
+    # docs/ROADMAP.md: convenience stores are their own negative-signal category,
     # not a grocery synonym — a single POI must never count as both.
     assert categorize_poi({"shop": "convenience"}) == "convenience_store"
     assert categorize_poi({"shop": "kiosk"}) == "convenience_store"

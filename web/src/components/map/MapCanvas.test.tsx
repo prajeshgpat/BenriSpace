@@ -5,6 +5,7 @@ const gl = vi.hoisted(() => ({
   calls: [] as string[],
   handlers: {} as Record<string, () => void>,
   removed: false,
+  elements: [] as HTMLElement[],
 }));
 
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
@@ -67,6 +68,7 @@ vi.mock("maplibre-gl", () => {
       return this;
     }
     addTo() {
+      gl.elements.push(this.element);
       return this;
     }
     remove() {
@@ -88,6 +90,7 @@ import { MapCanvas } from "./MapCanvas";
 
 beforeEach(() => {
   gl.calls = [];
+  gl.elements = [];
   vi.spyOn(window, "matchMedia").mockImplementation(
     (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList,
   );
@@ -117,5 +120,43 @@ describe("MapCanvas teardown", () => {
     const last = gl.calls.lastIndexOf("map.remove");
     expect(last).toBe(gl.calls.length - 1);
     expect(gl.calls.filter((c) => c === "marker.remove").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("MapCanvas marker tooltips", () => {
+  it("gives a ranked marker a name-and-score tooltip and a descriptive label", () => {
+    render(
+      <MapCanvas
+        initialView={{ lat: 40, lon: -74, zoom: 12 }}
+        cells={{ type: "FeatureCollection", features: [] } as never}
+        markers={[
+          {
+            id: "a",
+            rank: 1,
+            lat: 40,
+            lon: -74,
+            label: "Park Slope, Brooklyn, score 87, rank 1. Show details",
+            tooltip: "Park Slope, Brooklyn \u00b7 87",
+          },
+        ]}
+        activeMarkerId={null}
+        highlightGeohash={null}
+        theme="light"
+        pin={null}
+        previewPin={null}
+        flyRequest={null}
+        onViewportChange={() => {}}
+        onCellClick={() => {}}
+        onMarkerClick={() => {}}
+        onUnavailable={() => {}}
+      />,
+    );
+    act(() => gl.handlers.load?.());
+    const button = gl.elements.find((el) => el.dataset.markerId === "a")!;
+    expect(button.getAttribute("aria-label")).toContain("Park Slope, Brooklyn");
+    expect(button.getAttribute("aria-label")).toContain("87");
+    const tip = button.querySelector("span")!;
+    expect(tip).toHaveTextContent("Park Slope, Brooklyn \u00b7 87");
+    expect(tip).toHaveAttribute("aria-hidden", "true");
   });
 });

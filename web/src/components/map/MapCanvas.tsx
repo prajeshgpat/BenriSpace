@@ -82,6 +82,8 @@ export interface MarkerSpec {
   lat: number;
   lon: number;
   label: string;
+  /** Short hover/focus text, e.g. "Park Slope, Brooklyn \u00b7 87". */
+  tooltip?: string;
 }
 
 export interface FlyRequest {
@@ -574,6 +576,14 @@ export function MapCanvas({
       button.type = "button";
       button.className = styles.marker;
       button.textContent = String(spec.rank);
+      if (spec.tooltip) {
+        const tip = document.createElement("span");
+        tip.className = styles.tip;
+        tip.textContent = spec.tooltip;
+        tip.setAttribute("role", "presentation");
+        tip.setAttribute("aria-hidden", "true");
+        button.appendChild(tip);
+      }
       button.setAttribute("aria-label", spec.label);
       button.dataset.markerId = spec.id;
       button.addEventListener("click", (event) => {

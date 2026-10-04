@@ -151,7 +151,7 @@ def log_ingestion_run(
 ) -> str:
     """Insert (run_id=None) or update (run_id given) an ingestion_runs row.
     Call once with status='running' at job start, then again with
-    status='success'/'failed' at job end, per PROJECT.md's per-source
+    status='success'/'failed' at job end, per docs/ROADMAP.md's per-source
     ingestion job pattern.
 
     Deliberately opens its own short-lived, non-pipelined connection

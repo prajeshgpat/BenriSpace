@@ -2,7 +2,7 @@ import { scorePillColor } from "@/lib/score/pillColors";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { emptySubScores, makeAreaScore, makeScore } from "@/test/fixtures";
+import { makeAreaScore, makeScore } from "@/test/fixtures";
 
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 
@@ -125,53 +125,20 @@ describe("ScoreSummary", () => {
     expect(screen.getByText(/explanation isn.t available/)).toBeInTheDocument();
   });
 
-  it("captions AI-written text only", () => {
-    const { rerender } = render(<Summary />);
-    expect(screen.queryByText("AI-written summary")).not.toBeInTheDocument();
-
-    rerender(<Summary explanation={{ ...READY, explanationSource: "ai" }} />);
-    expect(screen.getByText("AI-written summary")).toBeInTheDocument();
-    expect(screen.getByTestId("ai-caption")).toHaveAttribute(
-      "title",
-      expect.stringContaining("may be imperfect"),
+  it("shows the summary text without an AI caption or school details", () => {
+    render(
+      <Summary
+        explanation={{ ...READY, explanationSource: "ai" }}
+        score={makeScore({
+          school: { proximity: 90, ratingAvailable: true, districtName: "Great Neck UFSD", source: "SEDA" },
+        })}
+      />,
     );
-  });
-
-  describe("school detail", () => {
-    const GS = "https://www.greatschools.org/school-district-boundaries-map/";
-
-    it("is absent for v1 responses without a school object", () => {
-      render(<Summary />);
-      expect(screen.queryByTestId("school-detail")).not.toBeInTheDocument();
-    });
-
-    it("shows proximity without a fabricated rating when none exists", () => {
-      render(
-        <Summary
-          score={makeScore({
-            school: { proximity: 72.4, ratingAvailable: false, districtName: null, source: null },
-          })}
-        />,
-      );
-      expect(
-        screen.getByText("Proximity 72 \u00b7 school rating unavailable here"),
-      ).toBeInTheDocument();
-      const link = screen.getByRole("link", { name: "Explore school ratings on GreatSchools" });
-      expect(link).toHaveAttribute("href", GS);
-      expect(link).toHaveAttribute("rel", "noreferrer");
-    });
-
-    it("shows district and source when a rating exists", () => {
-      render(
-        <Summary
-          score={makeScore({
-            subScores: { ...emptySubScores, school: 81 },
-            school: { proximity: 90, ratingAvailable: true, districtName: "Great Neck UFSD", source: "SEDA" },
-          })}
-        />,
-      );
-      expect(screen.getByText("Great Neck UFSD \u00b7 Rating source: SEDA")).toBeInTheDocument();
-    });
+    expect(screen.getByText(READY.text)).toBeInTheDocument();
+    expect(screen.queryByText(/AI-written summary/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/may be imperfect/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Rating source/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /GreatSchools/ })).not.toBeInTheDocument();
   });
 });
 

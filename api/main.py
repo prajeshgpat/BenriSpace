@@ -3,9 +3,9 @@ three data endpoints: GET /score, GET /score/{geoEntityId}/explanation,
 POST /triangulate.
 
 **Phase 4 (auth + rate limiting) is intentionally NOT implemented here.**
-Per PROJECT.md, that's a later addition on top of this app: a
+Per docs/ROADMAP.md, that's a later addition on top of this app: a
 Depends(...)-style auth dependency plus middleware checking `usage_counters`
-(PHASES.md Phase 4). Route handlers below are kept as plain functions with
+(docs/ROADMAP.md Phase 4). Route handlers below are kept as plain functions with
 ordinary FastAPI parameter declarations (Query/path params, a Pydantic
 request-body model) -- no custom dependency-injection container, no
 module-level state touched at import time -- specifically so Phase 4 can
@@ -36,6 +36,7 @@ from api.areas import (
     pick_area,
     usable_areas,
 )
+from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.geocoding import geocode_address
 from api.improve import build_improve, search_box
@@ -672,3 +673,21 @@ def post_optimize(body: OptimizeRequest):
         return _error(400, "invalid_request", str(exc))
     except OptimizeOutOfCoverage as exc:
         return _error(422, "out_of_coverage", str(exc))
+
+
+@app.post(
+    "/v1/chat",
+    response_model=ChatResponse,
+    response_model_exclude_none=True,
+    responses={400: {"model": Error}, 429: {"model": Error}, 503: {"model": Error}},
+)
+def post_chat(body: ChatRequest, request: Request):
+    """Ask BenriSpace: a tool-using assistant grounded in our own data."""
+    try:
+        return handle_chat(
+            body,
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        )
+    except ChatHttpError as exc:
+        return _error(exc.status, exc.code, exc.message)

@@ -1,4 +1,4 @@
--- BenriSpace similar-areas embeddings (pgvector). NOT yet applied to production.
+-- BenriSpace similar-areas embeddings (pgvector). Applied to production on 2026-10-03.
 -- Additive only; idempotent. Mirrored into contracts/schema.sql.
 --
 -- scores.embedding : 14-dim vector, one dimension per sub-score, z-scored across

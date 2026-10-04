@@ -68,18 +68,6 @@
   white-space: nowrap;
 }
 
-/* On phones the hint is read by screen readers only, so the filters fit at half. */
-@media (max-width: 56.1875rem) {
-  .search p[id$="-hint"] {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
-
 .placeholder {
   display: grid;
   flex: 1;
@@ -114,46 +102,6 @@
 .unavailable p {
   max-width: 28rem;
   color: var(--text-secondary);
-}
-
-.welcome {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.welcomeText {
-  color: var(--text-secondary);
-  font-size: 0.9375rem;
-  text-wrap: pretty;
-}
-
-.examples {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-}
-
-.examplesLabel {
-  color: var(--text-secondary);
-}
-
-.example {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2rem;
-  padding: 0.125rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text);
-  text-decoration: none;
-  transition: border-color 120ms ease;
-}
-
-.example:hover {
-  border-color: var(--border-strong);
 }
 
 .result {
@@ -258,15 +206,6 @@
     bottom: 0;
   }
 
-  .search label {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip-path: none;
-    white-space: normal;
-  }
-
   .panel {
     position: relative;
     inset: auto;
@@ -324,4 +263,27 @@
   .mapLocate {
     top: calc(4.875rem + var(--menu-clearance));
   }
+}
+
+/* The entry point to the chat, directly under the search field. */
+.ask {
+  justify-self: start;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ask:hover {
+  background: var(--surface-sunken);
+}
+
+.ask:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }

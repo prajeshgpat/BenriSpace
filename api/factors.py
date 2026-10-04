@@ -46,7 +46,7 @@ def canonical_factor(key: str) -> str | None:
     return FACTOR_ALIASES.get(key)
 
 
-# Default relative weight per factor (SCORING_FRAMEWORK.md section 2); only the
+# Default relative weight per factor (docs/SCORING.md section 2); only the
 # ratios matter because the composite is normalized by the weight of the factors
 # that have a score.
 DEFAULT_FACTOR_WEIGHTS: dict[str, float] = {

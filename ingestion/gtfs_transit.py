@@ -1,9 +1,9 @@
 """Populates feature_store.transit_stop_count_800m / transit_nearest_m /
 transit_agencies from GTFS static feeds.
 
-PROJECT.md's v1 scope note: "This radius spans multiple transit agencies
+docs/ROADMAP.md's v1 scope note: "This radius spans multiple transit agencies
 (MTA, LIRR, Metro-North, NJ Transit)... treat each as a separate ingestion
-job, not one unified feed." PHASES.md Phase 1 breaks that into four
+job, not one unified feed." docs/ROADMAP.md Phase 1 breaks that into four
 checklist items (MTA/LIRR/Metro-North/NJ Transit).
 
 Design calls made here (flag if wrong, easy to change):
