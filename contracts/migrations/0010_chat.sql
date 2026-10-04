@@ -1,4 +1,4 @@
--- BenriSpace "Ask BenriSpace" chat migration. NOT yet applied.
+-- BenriSpace "Ask BenriSpace" chat migration. Applied to production on 2026-10-04.
 -- Additive only, idempotent. Mirrored into contracts/schema.sql.
 -- Run by hand after review; the API works without it (the per-visitor chat limit is
 -- simply skipped while the table is missing, see api/chat.py).
