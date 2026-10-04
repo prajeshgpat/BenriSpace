@@ -11,6 +11,11 @@ describe("needsReadableAddress", () => {
 
   it("is true for a best-areas stand-in title", () => {
     expect(needsReadableAddress({ ...point, label: "Area near 40.731, -74.064" })).toBe(true);
+    expect(needsReadableAddress({ ...point, label: "Unnamed area" })).toBe(true);
+  });
+
+  it("is false for a neighborhood title", () => {
+    expect(needsReadableAddress({ ...point, label: "Park Slope, Brooklyn" })).toBe(false);
   });
 
   it("is false when the point already has a name", () => {

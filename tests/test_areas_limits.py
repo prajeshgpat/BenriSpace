@@ -26,9 +26,9 @@ MI = limits.M_PER_MI
 
 
 def test_caps_are_the_agreed_values_and_api_mirrors_them():
-    assert limits.MAX_AREA_SQ_MI == 1.5
-    assert limits.TARGET_TILE_MI == 1.0
-    assert limits.MAX_EXTENT_MI == 2.0
+    assert limits.MAX_AREA_SQ_MI == 0.8
+    assert limits.TARGET_TILE_MI == 0.75
+    assert limits.MAX_EXTENT_MI == 1.4
     assert limits.MIN_SLIVER_SQ_MI == 0.02
     assert api_areas.AREA_MAX_SQ_MI == limits.MAX_AREA_SQ_MI
     assert api_areas.AREA_MAX_EXTENT_MI == limits.MAX_EXTENT_MI
@@ -49,18 +49,20 @@ def test_split_big_square():
     big = box(0, 0, 4.2 * MI, 3.1 * MI)  # ~13 sq mi
     pieces = split_oversized(big, PROJ)
     _check_pieces(big, pieces)
-    assert len(pieces) <= 20
+    assert len(pieces) <= 30
 
 
 def test_split_concave_face_keeps_union():
-    big = Polygon([(0, 0), (4 * MI, 0), (4 * MI, 1 * MI), (1 * MI, 1 * MI), (1 * MI, 3.5 * MI), (0, 3.5 * MI)])
+    big = Polygon(
+        [(0, 0), (4 * MI, 0), (4 * MI, 1 * MI), (1 * MI, 1 * MI), (1 * MI, 3.5 * MI), (0, 3.5 * MI)]
+    )
     pieces = split_oversized(big, PROJ)
     _check_pieces(big, pieces)
     assert all(p.geom_type == "Polygon" for p in pieces)
 
 
 def test_thin_long_face_is_split_by_extent_not_area():
-    thin = box(0, 0, 6 * MI, 0.15 * MI)  # 0.9 sq mi but 6 mi long
+    thin = box(0, 0, 6 * MI, 0.1 * MI)  # 0.6 sq mi but 6 mi long
     assert measure(thin, PROJ)[0] < limits.MAX_AREA_M2
     pieces = split_oversized(thin, PROJ)
     _check_pieces(thin, pieces)
@@ -68,7 +70,7 @@ def test_thin_long_face_is_split_by_extent_not_area():
 
 
 def test_compliant_face_is_untouched():
-    ok = box(0, 0, 1.0 * MI, 1.0 * MI)
+    ok = box(0, 0, 0.85 * MI, 0.85 * MI)
     assert split_oversized(ok, PROJ) == [ok]
 
 
@@ -85,8 +87,8 @@ def test_sliver_merges_into_neighbour_with_longest_shared_boundary():
 
 
 def test_sliver_not_merged_when_caps_would_break():
-    near_cap = box(0, 0, 1.22 * MI, 1.22 * MI)  # 1.49 sq mi
-    sliver = box(1.22 * MI, 0, 1.22 * MI + 25, 1.22 * MI)  # 0.019 sq mi
+    near_cap = box(0, 0, 0.89 * MI, 0.89 * MI)  # 0.79 sq mi
+    sliver = box(0.89 * MI, 0, 0.89 * MI + 25, 0.89 * MI)  # 0.019 sq mi
     out = merge_slivers([near_cap, sliver], PROJ)
     assert len(out) == 2
 

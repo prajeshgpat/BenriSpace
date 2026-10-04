@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ALL_FACTOR_KEYS, FACTOR_KEYS, FACTORS, UNDERLYING_FACTOR_KEYS } from "@/lib/score/factors";
+import { ALL_FACTOR_KEYS, FACTOR_KEYS } from "@/lib/score/factors";
 
 import { FACTOR_GUIDE, MAX_FACTOR_WEIGHT } from "./factorGuide";
 
@@ -9,12 +9,9 @@ describe("factor guide", () => {
     expect(Object.keys(FACTOR_GUIDE).sort()).toEqual([...ALL_FACTOR_KEYS].sort());
   });
 
-  it("flags exactly the underlying metrics", () => {
-    expect(UNDERLYING_FACTOR_KEYS.sort()).toEqual(["premiumRetail", "trailPopularity"]);
-    expect(FACTOR_KEYS).toHaveLength(12);
-    for (const key of ALL_FACTOR_KEYS) {
-      expect(Boolean(FACTOR_GUIDE[key].underlying), key).toBe(Boolean(FACTORS[key].underlying));
-    }
+  it("has thirteen user-facing factors and no hidden ones", () => {
+    expect(FACTOR_KEYS).toHaveLength(13);
+    expect(ALL_FACTOR_KEYS).toEqual(FACTOR_KEYS);
   });
 
   it("gives every entry a weight and complete copy", () => {
@@ -24,30 +21,28 @@ describe("factor guide", () => {
         expect(text.trim().length, key).toBeGreaterThan(10);
       }
     }
-    expect(MAX_FACTOR_WEIGHT).toBe(1.5);
+    expect(MAX_FACTOR_WEIGHT).toBe(14);
   });
 
-  it("matches the default weights in scoring/engine.py", () => {
+  it("matches the default weights in the scoring framework", () => {
     const weights = Object.fromEntries(
       Object.entries(FACTOR_GUIDE).map(([key, entry]) => [key, entry.weight]),
     );
     expect(weights).toEqual({
-      grocery: 1.5,
-      gym: 1.0,
-      cafe: 1.0,
-      restaurant: 1.0,
-      bar: 0.5,
-      premiumRetail: 0.75,
-      gasStation: 1.0,
-      convenienceStore: 0.75,
-      transit: 1.5,
-      school: 1.5,
-      road: 1.0,
-      emergencyCorridor: 0.75,
-      airport: 0.75,
-      trailPopularity: 1.25,
-    });
-  });
+      grocery: 14,
+      transit: 14,
+      emergencyCorridor: 12,
+      restaurant: 10,
+      school: 10,
+      gym: 9,
+      cafe: 8,
+      gasConvenience: 6,
+      bar: 5,
+      airport: 5,
+      recreation: 5,
+      shopping: 4,
+      traffic: 4,
+    });  });
 
   it("explains the school 20/80 rule and the real emergency facilities", () => {
     expect(FACTOR_GUIDE.school.measures).toMatch(/20%/);

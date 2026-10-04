@@ -52,11 +52,19 @@ describe("SimilarCard", () => {
 
     expect(await screen.findByText("Similar areas")).toBeInTheDocument();
     expect(String(fetchMock.mock.calls[0][0])).toContain("/similar?");
-    expect(screen.getAllByRole("button", { name: /Show similar area/ })).toHaveLength(5);
+    // Always expanded (no <details>), top three rows first.
+    expect(document.querySelector("details")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /Show similar area/ })).toHaveLength(3);
     expect(screen.getByText("Area bounded by Road 1")).toBeInTheDocument();
-    expect(screen.queryByText("Area bounded by Road 6")).not.toBeInTheDocument();
     expect(screen.getAllByText(/1 mi SE · 88% similar/)).toHaveLength(1);
-    expect(screen.getAllByLabelText("Score 71")).toHaveLength(5);
+    expect(screen.getAllByLabelText("Score 71")).toHaveLength(3);
+
+    const more = screen.getByRole("button", { name: "Show 2 more" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getAllByRole("button", { name: /Show similar area/ })).toHaveLength(5);
+    expect(screen.queryByText("Area bounded by Road 6")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
 
     const first = screen.getAllByRole("list", { name: "Differences from here" })[0];
     const chips = Array.from(first.querySelectorAll("li")).map((li) => li.textContent);
@@ -72,6 +80,36 @@ describe("SimilarCard", () => {
       />,
     );
     expect(await screen.findByText("Area to the SE")).toBeInTheDocument();
+  });
+
+  it("titles a row by neighborhood with the street boundary as a subtitle", async () => {
+    const onPreview = vi.fn();
+    render(
+      <SimilarCard
+        coordinates={POINT}
+        client={clientWith(async () =>
+          json({
+            ...BODY,
+            results: [
+              result(1, {
+                neighborhood: "Park Slope, Brooklyn",
+                areaLabel: "Area bounded by Bedford Ave, Nostrand Ave",
+              }),
+            ],
+          }),
+        )}
+        onPreview={onPreview}
+      />,
+    );
+    expect(await screen.findByText("Park Slope, Brooklyn")).toBeInTheDocument();
+    expect(screen.getByText("Bounded by Bedford Ave, Nostrand Ave")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show similar area 1 on map" }));
+    expect(onPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        label: "Park Slope, Brooklyn",
+        subtitle: "Bounded by Bedford Ave, Nostrand Ave",
+      }),
+    );
   });
 
   it("shows a skeleton while loading", () => {

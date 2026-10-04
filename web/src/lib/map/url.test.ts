@@ -247,4 +247,14 @@ describe("legacyMapQuery", () => {
   it("takes the first of a repeated parameter", () => {
     expect(legacyMapQuery({ z: ["12", "14"] })).toBe("z=12");
   });
+
+describe("legacy factor keys in shared links", () => {
+  it("maps old keys onto the new pills and drops duplicates", () => {
+    const { selection } = parse(
+      "factors=premiumRetail,trailPopularity,road,gasStation,convenienceStore,grocery&importance=road:high,gasStation:low",
+    );
+    expect(selection.factors).toEqual(["grocery", "shopping", "gasConvenience", "traffic", "recreation"]);
+    expect(selection.importance).toEqual({ traffic: "high", gasConvenience: "low" });
+  });
+});
 });

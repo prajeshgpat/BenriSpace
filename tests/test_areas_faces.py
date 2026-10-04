@@ -116,7 +116,9 @@ def test_overlaps_sum_to_face_area(sample):
 def test_overlaps_restricted_to_known_geohashes(sample):
     _, proj, roads, coast, faces = sample
     known = frozenset(gh for f in faces[:10] for gh, _ in f.cells[:1])
-    again = build_faces(roads, coast, frame_for(SAMPLE_BBOX, proj), FaceParams(proj, geohashes=known))
+    again = build_faces(
+        roads, coast, frame_for(SAMPLE_BBOX, proj), FaceParams(proj, geohashes=known)
+    )
     assert all(gh in known for f in again for gh, _ in f.cells)
     assert any(f.cells for f in again)
     for f in again:
@@ -155,12 +157,21 @@ def island_ring(ccw=True):
 
 def test_left_of_coast_rule_island_and_mainland():
     roads = [road(1, "Main Street", (0, -2000), (0, 0), (1, 2))]
-    faces = build_faces(roads, [mainland_coast(), island_ring(True)], FRAME, FaceParams(P, enforce_size_limits=False))
-    centers = sorted((round(f.geometry.centroid.x, 4), round(f.geometry.centroid.y, 4)) for f in faces)
+    faces = build_faces(
+        roads,
+        [mainland_coast(), island_ring(True)],
+        FRAME,
+        FaceParams(P, enforce_size_limits=False),
+    )
+    centers = sorted(
+        (round(f.geometry.centroid.x, 4), round(f.geometry.centroid.y, 4)) for f in faces
+    )
     assert len(faces) == 3
     lat = lambda y: P.inv(0, y)[1]
     ys = sorted(c[1] for c in centers)
-    assert ys[0] < lat(-1) and ys[1] < lat(-1) and lat(800) < ys[2] < lat(1500)  # 2 mainland + island
+    assert (
+        ys[0] < lat(-1) and ys[1] < lat(-1) and lat(800) < ys[2] < lat(1500)
+    )  # 2 mainland + island
     # nothing in the open sea north of the coast, around the island
     sea = Point(*P.inv(1500, 400))
     assert not any(f.geometry.contains(sea) for f in faces)
@@ -168,7 +179,9 @@ def test_left_of_coast_rule_island_and_mainland():
 
 def test_clockwise_ring_is_water():
     # Same ring, reversed: land would be on the outside (right of travel is inside).
-    faces = build_faces([], [mainland_coast(), island_ring(False)], FRAME, FaceParams(P, enforce_size_limits=False))
+    faces = build_faces(
+        [], [mainland_coast(), island_ring(False)], FRAME, FaceParams(P, enforce_size_limits=False)
+    )
     assert len(faces) == 1  # only the mainland; the reversed ring encloses water
     assert faces[0].geometry.centroid.y < P.inv(0, 0)[1]
 
@@ -195,7 +208,12 @@ def test_small_area_threshold():
         road(3, "C", (60, -60), (-0.0, -60), (5, 6)),
     ]
     big = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, enforce_size_limits=False))
-    strict = build_faces(roads, [mainland_coast()], FRAME, FaceParams(P, min_area_m2=1_000_000, enforce_size_limits=False))
+    strict = build_faces(
+        roads,
+        [mainland_coast()],
+        FRAME,
+        FaceParams(P, min_area_m2=1_000_000, enforce_size_limits=False),
+    )
     assert len(strict) < len(big)
 
 

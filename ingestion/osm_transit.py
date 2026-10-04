@@ -79,7 +79,9 @@ def _key(lat: float, lon: float) -> tuple[int, int]:
     return math.floor(lat / BUCKET_DEG), math.floor(lon / BUCKET_DEG)
 
 
-def _near_any(lat: float, lon: float, index: dict, within_m: float, name: str | None = None) -> bool:
+def _near_any(
+    lat: float, lon: float, index: dict, within_m: float, name: str | None = None
+) -> bool:
     cx, cy = _key(lat, lon)
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
@@ -124,7 +126,9 @@ def stops_to_places(stops: list[OsmStop]) -> list[Place]:
     ]
 
 
-def fetch_metro_stops(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> list[OsmStop]:
+def fetch_metro_stops(
+    min_lat: float, max_lat: float, min_lon: float, max_lon: float
+) -> list[OsmStop]:
     def fetch(lat0: float, lat1: float, lon0: float, lon1: float) -> dict:
         return post_overpass_query(build_query(lat0, lat1, lon0, lon1), timeout=HTTP_TIMEOUT_S)
 

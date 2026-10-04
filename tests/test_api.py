@@ -80,13 +80,15 @@ def test_sub_scores_from_score_row_maps_columns_to_fields():
     row = {
         "grocery_score": 80.0,
         "gym_score": 40.0,
-        "gas_station_score": 90.0,
+        "gas_convenience_score": 90.0,
+        "road_score": 33.0,
         "airport_score": None,
     }
     sub = sub_scores_from_score_row(row)
     assert sub.grocery == 80.0
     assert sub.gym == 40.0
-    assert sub.gas_station == 90.0
+    assert sub.gas_convenience == 90.0
+    assert sub.traffic == 33.0
     assert sub.airport is None
     # Categories absent from the row should also come through as None,
     # not raise.
@@ -105,7 +107,7 @@ def test_build_score_response_shape_and_camelcase_serialization():
         "weights_version": "v1-handtuned",
         "computed_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
         "grocery_score": 80.0,
-        "gas_station_score": 90.0,
+        "gas_convenience_score": 90.0,
     }
     resp = build_score_response(geo_entity, score_row)
     assert isinstance(resp, ScoreResponse)
@@ -116,7 +118,7 @@ def test_build_score_response_shape_and_camelcase_serialization():
     assert dumped["geoEntityId"] == str(geo_entity["id"])
     assert dumped["compositeScore"] == 72.5
     assert dumped["weightsVersion"] == "v1-handtuned"
-    assert dumped["subScores"]["gasStation"] == 90.0
+    assert dumped["subScores"]["gasConvenience"] == 90.0
 
 
 def test_build_score_response_falls_back_to_latlon_when_no_formatted_address():
@@ -225,18 +227,39 @@ def test_rank_candidates_respects_limit():
 def test_sub_scores_model_has_a_field_for_every_scored_category():
     # trail_popularity_score was computed and stored but silently dropped
     # from responses because SubScores had no field for it.
+    from api.factors import to_snake
+    from api.mapdata import FACTOR_COLUMNS
     from api.schemas import SubScores
-    from scoring.engine import CATEGORY_SPECS
+    from scoring.engine import CATEGORY_SPECS_V2_1
 
-    expected = {spec.score_column.removesuffix("_score") for spec in CATEGORY_SPECS}
-    assert set(SubScores.model_fields) == expected
+    assert len(SubScores.model_fields) == 13
+    assert set(SubScores.model_fields) == {to_snake(k) for k in FACTOR_COLUMNS}
+    assert set(FACTOR_COLUMNS.values()) == {s.score_column for s in CATEGORY_SPECS_V2_1}
 
 
-def test_sub_scores_from_score_row_includes_trail_popularity():
+def test_v2_rows_are_read_through_legacy_columns():
     from api.lookup import sub_scores_from_score_row
 
-    sub_scores = sub_scores_from_score_row({"trail_popularity_score": 42.0})
-    assert sub_scores.model_dump(by_alias=True)["trailPopularity"] == 42.0
+    v2 = sub_scores_from_score_row(
+        {
+            "trail_popularity_score": 42.0,
+            "premium_retail_score": 61.0,
+            "road_score": 12.0,
+            "gas_station_score": 90.0,  # negative-direction legacy score: not mapped
+            "convenience_store_score": 80.0,
+        }
+    ).model_dump(by_alias=True)
+    assert v2["recreation"] == 42.0 and v2["shopping"] == 61.0 and v2["traffic"] == 12.0
+    assert v2["gasConvenience"] is None
+    assert set(v2) >= {"shopping", "recreation", "gasConvenience", "traffic"}
+    assert not {"premiumRetail", "trailPopularity", "gasStation", "road"} & set(v2)
+
+    both = sub_scores_from_score_row(
+        {"recreation_score": 70.0, "trail_popularity_score": 42.0, "shopping_score": 0.0,
+         "premium_retail_score": 50.0}
+    )  # fmt: skip
+    assert both.recreation == 70.0  # the new column wins
+    assert both.shopping == 0.0  # a real 0 is not treated as missing
 
 
 def test_error_body_omits_upgrade_url_when_unset():
@@ -305,13 +328,17 @@ def test_nearest_mi_by_factor_picks_nearest_premium_brand_and_nulls():
         }
     )
     assert out["grocery"] == pytest.approx(1.0)
-    assert out["premiumRetail"] == pytest.approx(0.5)
+    assert out["shopping"] == pytest.approx(0.5)
     assert out["emergencyCorridor"] == 0.0
     assert out["gym"] is None
     assert set(out) == {
-        "grocery", "gym", "cafe", "restaurant", "bar", "gasStation", "convenienceStore",
-        "transit", "school", "trailPopularity", "premiumRetail", "emergencyCorridor",
+        "grocery", "gym", "cafe", "restaurant", "bar", "gasConvenience",
+        "transit", "school", "recreation", "shopping", "emergencyCorridor",
     }  # fmt: skip
+    # v2.1 columns are feet; the nearest of old and new wins
+    ft = nearest_mi_by_factor({"shopping_nearest_ft": 2640, "starbucks_nearest_m": 3218.688,
+                               "park_nearest_ft": 528})  # fmt: skip
+    assert ft["shopping"] == pytest.approx(0.5) and ft["recreation"] == pytest.approx(0.1)
     assert all(v is None for v in nearest_mi_by_factor(None).values())
 
 
@@ -337,7 +364,9 @@ def test_school_info_populated_for_v2_rows():
         "proximity": 72.0, "ratingAvailable": False,
         "districtName": "Garden City UFSD", "source": "niche",
     }  # fmt: skip
-    rated = build_score_response(geo, _score_row(school_proximity_score=72.0, school_score=80), feature)
+    rated = build_score_response(
+        geo, _score_row(school_proximity_score=72.0, school_score=80), feature
+    )
     assert rated.school.rating_available is True
 
 
@@ -364,9 +393,16 @@ def test_triangulate_bbox_contains_circle_and_modes_combine():
 def test_triangulate_prefilter_gives_same_ranking_as_full_scan():
     from api.triangulate_sql import combined_bbox
 
-    circles = [anchor_to_circle(40.70, -73.90, 15, "drive"), anchor_to_circle(40.72, -73.88, 15, "walk")]
+    circles = [
+        anchor_to_circle(40.70, -73.90, 15, "drive"),
+        anchor_to_circle(40.72, -73.88, 15, "walk"),
+    ]
     cells = [
-        {"latitude": 40.70 + i * 0.004, "longitude": -73.90 + j * 0.004, "composite_score": i * 7 + j}
+        {
+            "latitude": 40.70 + i * 0.004,
+            "longitude": -73.90 + j * 0.004,
+            "composite_score": i * 7 + j,
+        }
         for i in range(-30, 30)
         for j in range(-30, 30)
     ]
@@ -376,7 +412,9 @@ def test_triangulate_prefilter_gives_same_ranking_as_full_scan():
             c for c in cells
             if box[0] <= c["latitude"] <= box[1] and box[2] <= c["longitude"] <= box[3]
         ]  # fmt: skip
-        assert rank_candidates(pre, circles, mode, 1000) == rank_candidates(cells, circles, mode, 1000)
+        assert rank_candidates(pre, circles, mode, 1000) == rank_candidates(
+            cells, circles, mode, 1000
+        )
 
 
 def test_triangulate_sql_and_empty_box_short_circuits():

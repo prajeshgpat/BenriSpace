@@ -167,7 +167,9 @@ def test_nearest_and_count_basic():
     ]
     count, nearest = nearest_and_count(CELL_LAT, CELL_LON, points, radius_m=TRAIL_RADIUS_M)
     assert count == 1
-    assert nearest == pytest.approx(haversine_m(CELL_LAT, CELL_LON, points[0]["lat"], points[0]["lon"]))
+    assert nearest == pytest.approx(
+        haversine_m(CELL_LAT, CELL_LON, points[0]["lat"], points[0]["lon"])
+    )
 
 
 def test_indexed_matches_brute_force():
@@ -175,7 +177,11 @@ def test_indexed_matches_brute_force():
 
     random.seed(42)
     points = [
-        {"lat": CELL_LAT + random.uniform(-0.02, 0.02), "lon": CELL_LON + random.uniform(-0.02, 0.02), "tag": "path"}
+        {
+            "lat": CELL_LAT + random.uniform(-0.02, 0.02),
+            "lon": CELL_LON + random.uniform(-0.02, 0.02),
+            "tag": "path",
+        }
         for _ in range(200)
     ]
     index = build_bucket_index(points)
@@ -210,7 +216,9 @@ def test_indexed_expands_ring_instead_of_brute_forcing_when_ring1_empty():
     poisoned_points = _PoisonedList(points)  # raises if ever iterated/scanned directly
     count, nearest = nearest_and_count_indexed(CELL_LAT, CELL_LON, poisoned_points, index)
     assert count == 0
-    assert nearest == pytest.approx(haversine_m(CELL_LAT, CELL_LON, near_far_point["lat"], near_far_point["lon"]))
+    assert nearest == pytest.approx(
+        haversine_m(CELL_LAT, CELL_LON, near_far_point["lat"], near_far_point["lon"])
+    )
 
 
 def test_indexed_falls_back_to_brute_force_only_when_every_ring_is_empty():
@@ -227,7 +235,9 @@ class _PoisonedList(list):
     a code path never falls back to scanning the full point list."""
 
     def __iter__(self):
-        raise AssertionError("brute-force fallback was invoked when ring expansion should have sufficed")
+        raise AssertionError(
+            "brute-force fallback was invoked when ring expansion should have sufficed"
+        )
 
 
 def test_candidates_near_finds_neighboring_bucket():
@@ -250,7 +260,9 @@ def test_compute_cell_osm_trail_features_shape():
 
 def test_compute_cell_osm_trail_features_without_index_matches_with_index():
     points = [{"lat": CELL_LAT + 0.003, "lon": CELL_LON, "tag": "path"}]
-    with_index = compute_cell_osm_trail_features(CELL_LAT, CELL_LON, points, build_bucket_index(points))
+    with_index = compute_cell_osm_trail_features(
+        CELL_LAT, CELL_LON, points, build_bucket_index(points)
+    )
     without_index = compute_cell_osm_trail_features(CELL_LAT, CELL_LON, points, None)
     assert with_index == without_index
 
@@ -268,7 +280,10 @@ def test_generate_explore_tiles_covers_all_metro_areas():
 
 
 def test_generate_explore_tiles_stay_within_parent_bbox():
-    boxes_by_metro = {m: (min_lat, max_lat, min_lon, max_lon) for m, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES}
+    boxes_by_metro = {
+        m: (min_lat, max_lat, min_lon, max_lon)
+        for m, min_lat, max_lat, min_lon, max_lon in BOUNDING_BOXES
+    }
     for metro_area, min_lat, max_lat, min_lon, max_lon in generate_explore_tiles():
         p_min_lat, p_max_lat, p_min_lon, p_max_lon = boxes_by_metro[metro_area]
         assert p_min_lat <= min_lat < max_lat <= p_max_lat
@@ -352,7 +367,9 @@ def test_compute_segment_popularity_raw_monotonic_in_each_input():
 
 
 def test_select_detail_call_budget_respects_daily_budget():
-    budget = select_detail_call_budget(explore_calls_made=227, daily_budget=900, max_detail_calls=700)
+    budget = select_detail_call_budget(
+        explore_calls_made=227, daily_budget=900, max_detail_calls=700
+    )
     assert budget == 673  # 900 - 227
 
 
@@ -362,7 +379,9 @@ def test_select_detail_call_budget_respects_hard_cap():
 
 
 def test_select_detail_call_budget_never_negative():
-    budget = select_detail_call_budget(explore_calls_made=5000, daily_budget=900, max_detail_calls=700)
+    budget = select_detail_call_budget(
+        explore_calls_made=5000, daily_budget=900, max_detail_calls=700
+    )
     assert budget == 0
 
 
@@ -531,7 +550,9 @@ def test_refresh_access_token_sends_documented_request_shape():
 def test_refresh_access_token_raises_on_missing_access_token():
     class FakeClient:
         def post(self, url, data, timeout):
-            return httpx.Response(200, json={"error": "invalid_grant"}, request=httpx.Request("POST", url))
+            return httpx.Response(
+                200, json={"error": "invalid_grant"}, request=httpx.Request("POST", url)
+            )
 
     with pytest.raises(RuntimeError):
         refresh_access_token(FakeClient(), "id", "secret", "token")
@@ -540,7 +561,9 @@ def test_refresh_access_token_raises_on_missing_access_token():
 def test_refresh_access_token_raises_on_http_error():
     class FakeClient:
         def post(self, url, data, timeout):
-            return httpx.Response(401, json={"message": "Unauthorized"}, request=httpx.Request("POST", url))
+            return httpx.Response(
+                401, json={"message": "Unauthorized"}, request=httpx.Request("POST", url)
+            )
 
     with pytest.raises(httpx.HTTPStatusError):
         refresh_access_token(FakeClient(), "id", "secret", "token")
@@ -556,7 +579,11 @@ def test_fetch_explore_segments_sends_bounds_and_auth_header():
             captured["headers"] = headers
             return httpx.Response(
                 200,
-                json={"segments": [{"id": 1, "name": "s", "start_latlng": [1, 2], "end_latlng": [3, 4]}]},
+                json={
+                    "segments": [
+                        {"id": 1, "name": "s", "start_latlng": [1, 2], "end_latlng": [3, 4]}
+                    ]
+                },
                 request=httpx.Request("GET", url),
             )
 

@@ -3,7 +3,7 @@ import type { AreaScore, Explanation, Score, SubScores } from "@/lib/api/types";
 
 export const GEO_ENTITY_ID = "21c5d4bd-e66e-423b-8f4c-8e569604f187";
 
-/** Captured from the live API: every sub-score but one is null, and `trailPopularity` is absent. */
+/** Captured from the live API: every sub-score but one is null, and uses the pre-v1.4 keys. */
 export const liveScoreBody = {
   geoEntityId: GEO_ENTITY_ID,
   address: "40.74920,-73.98500",
@@ -35,36 +35,34 @@ export const liveExplanationBody = {
 
 export const emptySubScores: SubScores = {
   grocery: null,
-  gym: null,
-  cafe: null,
   restaurant: null,
+  cafe: null,
   bar: null,
-  premiumRetail: null,
-  gasStation: null,
-  convenienceStore: null,
+  gym: null,
+  shopping: null,
+  recreation: null,
+  gasConvenience: null,
   transit: null,
-  school: null,
-  road: null,
-  emergencyCorridor: null,
   airport: null,
-  trailPopularity: null,
+  traffic: null,
+  school: null,
+  emergencyCorridor: null,
 };
 
 export const fullSubScores: SubScores = {
   grocery: 91.4,
-  gym: 72,
-  cafe: 88.6,
   restaurant: 80,
+  cafe: 88.6,
   bar: 55,
-  premiumRetail: 70,
-  gasStation: 40,
-  convenienceStore: 35.2,
+  gym: 72,
+  shopping: 70,
+  recreation: 100,
+  gasConvenience: 38,
   transit: 97,
-  school: 64.5,
-  road: 22,
-  emergencyCorridor: 0,
   airport: 62.79,
-  trailPopularity: 100,
+  traffic: 22,
+  school: 64.5,
+  emergencyCorridor: 0,
 };
 
 export function makeScore(overrides: Partial<Score> = {}): Score {

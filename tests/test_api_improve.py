@@ -23,9 +23,8 @@ class FakeConn:
 
 def aggregate(**scores):
     base = {c: 90.0 for c in (
-        "grocery", "gym", "cafe", "restaurant", "bar", "transit", "school", "premium_retail",
-        "gas_station", "convenience_store", "road", "emergency_corridor", "airport",
-        "trail_popularity",
+        "grocery", "gym", "cafe", "restaurant", "bar", "transit", "school", "shopping",
+        "gas_convenience", "road", "emergency_corridor", "airport", "recreation",
     )}  # fmt: skip
     base.update(scores)
     row = {f"{k}_score": v for k, v in base.items()}
@@ -70,7 +69,7 @@ def test_weak_selection_order_and_skips_negative(setup):
     state, client = setup
     # Negative factors are very low but must never be suggested.
     state["agg"] = aggregate(
-        grocery=41.0, cafe=60.0, gym=20.0, gas_station=1.0, road=2.0, airport=3.0, bar=75.0
+        grocery=41.0, cafe=60.0, gym=20.0, emergency_corridor=1.0, road=2.0, airport=3.0, bar=75.0
     )
     body = get(client).json()
     assert [s["factor"] for s in body["suggestions"]] == ["gym", "grocery", "cafe"]
@@ -81,9 +80,16 @@ def test_weak_selection_order_and_skips_negative(setup):
 
 
 def test_weak_factors_threshold_and_none():
-    scores = {"grocery": 74.9, "gym": 75.0, "cafe": None, "premiumRetail": 10, "gasStation": 0}
-    # premiumRetail is never its own suggestion
-    assert [k for k, _ in weak_factors(scores, 5)] == ["grocery"]
+    scores = {
+        "grocery": 74.9,
+        "gym": 75.0,
+        "cafe": None,
+        "traffic": 10,
+        "airport": 0,
+        "shopping": 20,
+    }
+    # traffic / airport / noise are not place-based, so never their own suggestion
+    assert [k for k, _ in weak_factors(scores, 5)] == ["shopping", "grocery"]
 
 
 def test_no_weak_factors(setup):
@@ -145,6 +151,7 @@ def test_best_nearby_threshold(setup):
         "distanceLabel": "0.6 mi",
         "compositeScore": 73,
         "compositeGain": 3,
+        "neighborhood": None,
     }
     state["cells"] = [cell(miles_lat(0.3), 72.9)]
     assert get(client).json()["bestNearby"] is None
@@ -190,3 +197,34 @@ def test_404_and_cell_fallback(setup, monkeypatch):
     monkeypatch.setattr(main, "get_latest_score", lambda c, i, v: state["agg"])
     r = get(client)
     assert r.status_code == 200 and r.json()["suggestions"][0]["factor"] == "gym"
+
+
+def test_place_based_new_factors_are_suggested_with_places_and_legacy_columns(setup):
+    state, client = setup
+    state["agg"] = aggregate(shopping=30.0, recreation=10.0, gas_convenience=50.0)
+    state["places"] = {
+        "recreation": [place("Prospect Park")],
+        "gasConvenience": [place("Shell", brand="Shell")],
+        "shopping": [place("Macy's")],
+    }
+    state["cells"] = [
+        # A v2-era neighbour: Shopping lives in premium_retail_score.
+        cell(miles_lat(0.4), 80, geohash="n1", premium_retail=70.0, recreation=60.0),
+    ]
+    body = get(client, maxSuggestions=3).json()
+    assert [s["factor"] for s in body["suggestions"]] == [
+        "recreation",
+        "shopping",
+        "gasConvenience",
+    ]
+    assert [s["label"] for s in body["suggestions"]] == [
+        "Recreation",
+        "Shopping",
+        "Gas & convenience",
+    ]
+    by = {s["factor"]: s for s in body["suggestions"]}
+    assert by["recreation"]["places"][0]["name"] == "Prospect Park"
+    assert by["gasConvenience"]["places"][0]["brand"] == "Shell"
+    assert by["recreation"]["betterArea"]["factorScore"] == 60
+    assert by["shopping"]["betterArea"]["factorScore"] == 70  # via the legacy column
+    assert by["gasConvenience"]["betterArea"] is None

@@ -77,7 +77,9 @@ class Resp:
     def raise_for_status(self):
         if self.status_code >= 400:
             req = httpx.Request("GET", f"https://x.test/?key={KEY}")
-            raise httpx.HTTPStatusError("boom", request=req, response=httpx.Response(self.status_code, request=req))
+            raise httpx.HTTPStatusError(
+                "boom", request=req, response=httpx.Response(self.status_code, request=req)
+            )
 
 
 def fake_client(routes: dict, calls: list):
@@ -138,7 +140,10 @@ def test_nothing_usable_is_none():
 
 
 def test_unknown_states_are_left_as_is_and_duplicates_dropped():
-    assert build_label({"street": "Main St", "locality": "Main St", "state": "Ohio"}) == "Main St, Ohio"
+    assert (
+        build_label({"street": "Main St", "locality": "Main St", "state": "Ohio"})
+        == "Main St, Ohio"
+    )
 
 
 def test_photon_label():
@@ -165,7 +170,11 @@ def test_route_uses_locationiq_when_keyed(monkeypatch):
     calls = install(monkeypatch, {reverse_mod.LOCATIONIQ_REVERSE_URL: Resp(200, LIQ_HOUSE)})
     resp = get()
     assert resp.status_code == 200
-    assert resp.json() == {"label": "14A Rock Street, Jersey City, NJ", "latitude": 40.7276, "longitude": -74.062}
+    assert resp.json() == {
+        "label": "14A Rock Street, Jersey City, NJ",
+        "latitude": 40.7276,
+        "longitude": -74.062,
+    }
     assert resp.headers["cache-control"] == "public, max-age=300"
     assert [c[0] for c in calls] == [reverse_mod.LOCATIONIQ_REVERSE_URL]
     assert calls[0][1]["zoom"] == 18 and calls[0][1]["format"] == "json"
@@ -195,25 +204,40 @@ def test_locationiq_404_unable_to_geocode_is_null_not_fallback(monkeypatch):
 
 @pytest.mark.parametrize(
     "outcome",
-    [Resp(429, {}), Resp(401, {}), Resp(500, {}), httpx.ReadTimeout("t"), Resp(200, ValueError("bad"))],
+    [
+        Resp(429, {}),
+        Resp(401, {}),
+        Resp(500, {}),
+        httpx.ReadTimeout("t"),
+        Resp(200, ValueError("bad")),
+    ],
 )
 def test_locationiq_failures_fall_back_to_photon(monkeypatch, outcome):
     monkeypatch.setenv(reverse_mod.LOCATIONIQ_KEY_ENV, KEY)
     calls = install(
         monkeypatch,
-        {reverse_mod.LOCATIONIQ_REVERSE_URL: outcome, reverse_mod.PHOTON_REVERSE_URL: Resp(200, PHOTON_HOUSE)},
+        {
+            reverse_mod.LOCATIONIQ_REVERSE_URL: outcome,
+            reverse_mod.PHOTON_REVERSE_URL: Resp(200, PHOTON_HOUSE),
+        },
     )
     resp = get()
     assert resp.status_code == 200
     assert resp.json()["label"] == "14A Rock Street, Jersey City, NJ"
-    assert [c[0] for c in calls] == [reverse_mod.LOCATIONIQ_REVERSE_URL, reverse_mod.PHOTON_REVERSE_URL]
+    assert [c[0] for c in calls] == [
+        reverse_mod.LOCATIONIQ_REVERSE_URL,
+        reverse_mod.PHOTON_REVERSE_URL,
+    ]
 
 
 def test_all_providers_failing_is_503_and_not_cached(monkeypatch):
     monkeypatch.setenv(reverse_mod.LOCATIONIQ_KEY_ENV, KEY)
     calls = install(
         monkeypatch,
-        {reverse_mod.LOCATIONIQ_REVERSE_URL: Resp(429, {}), reverse_mod.PHOTON_REVERSE_URL: httpx.ConnectTimeout("t")},
+        {
+            reverse_mod.LOCATIONIQ_REVERSE_URL: Resp(429, {}),
+            reverse_mod.PHOTON_REVERSE_URL: httpx.ConnectTimeout("t"),
+        },
     )
     resp = get()
     assert resp.status_code == 503

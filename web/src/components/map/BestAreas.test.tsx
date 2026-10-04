@@ -54,10 +54,10 @@ describe("BestAreas", () => {
     const items = screen.getAllByRole("listitem");
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent("Rank 1");
-    expect(items[0]).toHaveTextContent("Area near 40.755, -73.985");
+    expect(items[0]).toHaveTextContent("Unnamed area");
     expect(items[0]).toHaveTextContent("New York");
     expect(items[0]).toHaveTextContent(
-      "Strongest: Grocery stores 98, Public transit 95",
+      "Strongest: Groceries 98, Public transit 95",
     );
     expect(items[0]).toHaveTextContent("100 out of 100");
   });
@@ -138,5 +138,43 @@ describe("BestAreas", () => {
   it("marks the list busy while it refreshes", () => {
     renderList({ status: "loading" });
     expect(screen.getByRole("list")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("titles rows by neighborhood and never by coordinates", () => {
+    renderList({
+      results: [
+        { ...RESULTS[0], neighborhood: "Park Slope, Brooklyn" },
+        RESULTS[1],
+      ],
+    });
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Park Slope, Brooklyn");
+    expect(items[1]).toHaveTextContent("Unnamed area");
+    expect(document.body).not.toHaveTextContent(/Area near|40\.7/);
+  });
+
+  it("shows the top three rows and reveals the rest behind a Show more button", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 6 }, (_, i) => ({
+      ...RESULTS[0],
+      geohash: `h${i}`,
+      neighborhood: `Place ${i}`,
+    }));
+    renderList({ results: many });
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    const more = screen.getByRole("button", { name: "Show 3 more" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await user.click(more);
+    expect(screen.getAllByRole("listitem")).toHaveLength(6);
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("reveals a hidden row when its marker is the active one", () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ ...RESULTS[0], geohash: `h${i}` }));
+    renderList({ results: many, activeGeohash: "h4" });
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
   });
 });

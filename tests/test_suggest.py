@@ -113,9 +113,17 @@ def test_nameless_houses_are_labelled_by_address_and_state_is_abbreviated():
 
 
 def test_connecticut_and_pennsylvania_abbreviate_and_unknown_states_fall_back_to_full_name():
-    ct = build_candidate(feature(-73.17, 41.19, housenumber="5", street="Main St", city="Stamford", state="Connecticut"))
-    pa = build_candidate(feature(-75.1, 40.0, housenumber="5", street="Main St", city="Easton", state="Pennsylvania"))
-    other = build_candidate(feature(-74.0, 40.7, housenumber="5", street="Main St", city="Somewhere", state="Delaware"))
+    ct = build_candidate(
+        feature(
+            -73.17, 41.19, housenumber="5", street="Main St", city="Stamford", state="Connecticut"
+        )
+    )
+    pa = build_candidate(
+        feature(-75.1, 40.0, housenumber="5", street="Main St", city="Easton", state="Pennsylvania")
+    )
+    other = build_candidate(
+        feature(-74.0, 40.7, housenumber="5", street="Main St", city="Somewhere", state="Delaware")
+    )
     assert ct.label == "5 Main St, Stamford, CT"
     assert pa.label == "5 Main St, Easton, PA"
     assert other.label == "5 Main St, Somewhere, Delaware"
@@ -139,15 +147,42 @@ def test_features_without_a_usable_label_are_dropped():
 
 
 def test_near_identical_coordinates_are_merged_even_when_labels_differ():
-    a = feature(-73.98566, 40.74844, housenumber="350", street="5th Avenue", city="New York", state="New York")
-    b = feature(-73.98567, 40.74845, name="Empire State Building", type="house", osm_key="office", city="New York", state="New York")
-    assert [s.label for s in clean_suggestions([a, b], "350 5th", 5)] == ["350 5th Avenue, New York, NY"]
+    a = feature(
+        -73.98566,
+        40.74844,
+        housenumber="350",
+        street="5th Avenue",
+        city="New York",
+        state="New York",
+    )
+    b = feature(
+        -73.98567,
+        40.74845,
+        name="Empire State Building",
+        type="house",
+        osm_key="office",
+        city="New York",
+        state="New York",
+    )
+    assert [s.label for s in clean_suggestions([a, b], "350 5th", 5)] == [
+        "350 5th Avenue, New York, NY"
+    ]
 
 
 def test_digit_led_queries_list_addresses_before_streets_and_pois():
-    street = feature(-73.99, 40.75, name="5th Avenue", type="street", osm_key="highway", city="New York", state="New York")
+    street = feature(
+        -73.99,
+        40.75,
+        name="5th Avenue",
+        type="street",
+        osm_key="highway",
+        city="New York",
+        state="New York",
+    )
     poi = feature(-73.95, 40.70, name="Fifth Ave Deli", city="New York", state="New York")
-    addr = feature(-73.90, 40.80, housenumber="5", street="5th Avenue", city="New York", state="New York")
+    addr = feature(
+        -73.90, 40.80, housenumber="5", street="5th Avenue", city="New York", state="New York"
+    )
     result = clean_suggestions([poi, street, addr], "5 fifth", 5)
     assert [s.label for s in result] == [
         "5 5th Avenue, New York, NY",
@@ -189,7 +224,11 @@ def test_route_returns_cleaned_suggestions_with_cache_headers(monkeypatch):
     assert resp.headers["cache-control"] == "public, max-age=300"
     assert resp.json() == {
         "suggestions": [
-            {"label": "350 5th Avenue, New York, NY", "latitude": 40.7484421, "longitude": -73.9856589}
+            {
+                "label": "350 5th Avenue, New York, NY",
+                "latitude": 40.7484421,
+                "longitude": -73.9856589,
+            }
         ]
     }
 
@@ -208,7 +247,9 @@ def test_repeat_queries_hit_the_cache_not_the_provider(monkeypatch):
     assert len(calls) == 2  # same normalized q+limit shares an entry; a new limit does not
 
 
-@pytest.mark.parametrize("params", [{"q": "ab"}, {"q": "  a  "}, {}, {"q": "abc", "limit": 0}, {"q": "abc", "limit": 11}])
+@pytest.mark.parametrize(
+    "params", [{"q": "ab"}, {"q": "  a  "}, {}, {"q": "abc", "limit": 0}, {"q": "abc", "limit": 11}]
+)
 def test_route_rejects_bad_input_with_invalid_request(params):
     resp = client.get("/v1/suggest", params=params)
     assert resp.status_code == 400
@@ -221,15 +262,20 @@ def test_route_rejects_bad_input_with_invalid_request(params):
     [
         httpx.ReadTimeout("slow"),
         httpx.ConnectError("down"),
-        httpx.HTTPStatusError("502", request=httpx.Request("GET", "x"), response=httpx.Response(502)),
+        httpx.HTTPStatusError(
+            "502", request=httpx.Request("GET", "x"), response=httpx.Response(502)
+        ),
         json.JSONDecodeError("bad", "", 0),
     ],
 )
 def test_provider_failures_become_503_never_500_and_are_not_cached(monkeypatch, failure):
     class FakeClient:
         def __init__(self, *a, **k): ...
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
         def get(self, *a, **k):
             if isinstance(failure, httpx.HTTPStatusError):
@@ -249,8 +295,11 @@ def test_provider_failures_become_503_never_500_and_are_not_cached(monkeypatch, 
 def test_malformed_provider_payload_is_unavailable(monkeypatch):
     class FakeClient:
         def __init__(self, *a, **k): ...
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
         def get(self, *a, **k):
             return httpx.Response(200, json={"features": "nope"}, request=httpx.Request("GET", "x"))
@@ -294,7 +343,12 @@ LIQ_RESULTS = [
         "lon": "-73.9855",
         "class": "highway",
         "type": "primary",
-        "address": {"name": "Broadway", "road": "Broadway", "town": "Hoboken", "state": "New Jersey"},
+        "address": {
+            "name": "Broadway",
+            "road": "Broadway",
+            "town": "Hoboken",
+            "state": "New Jersey",
+        },
     },
     {"lat": "bad", "lon": "x", "address": {}},
     "junk",
@@ -315,8 +369,11 @@ def test_locationiq_non_list_payload_is_unavailable():
 def _fake_client(response=None, error=None, seen=None):
     class FakeClient:
         def __init__(self, *a, **k): ...
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
 
         def get(self, url, params=None, headers=None):
             if seen is not None:
@@ -335,7 +392,9 @@ def _resp(status, payload):
 def test_locationiq_is_used_when_a_key_is_set_and_photon_is_not_called(monkeypatch):
     monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "secret-key-123")
     seen = []
-    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(_resp(200, LIQ_RESULTS), seen=seen))
+    monkeypatch.setattr(
+        suggest_mod.httpx, "Client", _fake_client(_resp(200, LIQ_RESULTS), seen=seen)
+    )
     monkeypatch.setattr(
         suggest_mod, "fetch_photon_features", lambda q, limit: pytest.fail("Photon called")
     )
@@ -380,7 +439,9 @@ def test_locationiq_failures_fall_back_to_photon(monkeypatch, response, error):
 
 def test_the_api_key_never_appears_in_provider_error_messages(monkeypatch):
     secret = "super-secret-key-999"
-    url_error = httpx.ConnectError(f"failed for https://api.locationiq.com/v1/autocomplete?key={secret}")
+    url_error = httpx.ConnectError(
+        f"failed for https://api.locationiq.com/v1/autocomplete?key={secret}"
+    )
     monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(error=url_error))
     with pytest.raises(suggest_mod.SuggestUnavailable) as caught:
         suggest_mod.fetch_locationiq_features(secret, "q", 5)

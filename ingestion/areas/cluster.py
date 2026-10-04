@@ -24,7 +24,9 @@ def polsby_popper(geom) -> float:
     return 4 * math.pi * geom.area / geom.length**2
 
 
-def _components(nodes: list[int], adj: dict[int, dict[int, tuple[float, float]]]) -> list[list[int]]:
+def _components(
+    nodes: list[int], adj: dict[int, dict[int, tuple[float, float]]]
+) -> list[list[int]]:
     seen: set[int] = set()
     comps = []
     for s in nodes:
@@ -103,7 +105,8 @@ def _absorb(
     while True:
         owner = {b: i for i, g in enumerate(groups) for b in g}
         order = sorted(
-            (i for i, g in enumerate(groups) if len(g) < below), key=lambda i: (len(groups[i]), groups[i][0])
+            (i for i, g in enumerate(groups) if len(g) < below),
+            key=lambda i: (len(groups[i]), groups[i][0]),
         )
         merged = False
         for i in order:
@@ -161,8 +164,12 @@ def cluster_blocks(bs: BlockSet, params: ClusterParams | None = None) -> list[Cl
             groups = [district]
         else:
             groups = _grow(district, geom, adj, hard, p)
-            groups = _absorb(groups, geom, adj, hard, p.soft_absorb_below, p.max_blocks, p.max_area_m2)
-            groups = _absorb(groups, geom, adj, hard, p.absorb_below, p.absorb_max_blocks, p.max_area_m2)
+            groups = _absorb(
+                groups, geom, adj, hard, p.soft_absorb_below, p.max_blocks, p.max_area_m2
+            )
+            groups = _absorb(
+                groups, geom, adj, hard, p.absorb_below, p.absorb_max_blocks, p.max_area_m2
+            )
         for g in groups:
             final.append((g, d_idx, "neighborhood"))
 

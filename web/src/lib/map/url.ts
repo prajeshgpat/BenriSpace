@@ -5,7 +5,7 @@ import {
   type ScoreTarget,
 } from "@/lib/address";
 import type { FactorKey } from "@/lib/api/types";
-import { FACTOR_KEYS } from "@/lib/score/factors";
+import { FACTOR_KEYS, canonicalFactorKey } from "@/lib/score/factors";
 import { APP_PATH } from "@/lib/site";
 
 import {
@@ -32,8 +32,6 @@ const MAX_ZOOM = 19;
 export const PLACE_ZOOM = 14;
 const DEFAULT_CENTER_ZOOM = 12;
 
-const isFactorKey = (value: string): value is FactorKey =>
-  (FACTOR_KEYS as readonly string[]).includes(value);
 
 function number(raw: string | null | undefined): number | null {
   if (raw === null || raw === undefined || raw.trim() === "") return null;
@@ -65,15 +63,18 @@ function parseZoom(raw: string | null): number | null {
 function parseFactors(raw: string | null): FactorKey[] | null {
   if (raw === null) return null;
   if (raw === "none") return [];
-  const keys = raw.split(",").filter(isFactorKey);
+  const keys = [
+    ...new Set(raw.split(",").flatMap((key) => canonicalFactorKey(key) ?? [])),
+  ];
   return keys.length > 0 ? keys : null;
 }
 
 function parseImportance(raw: string | null): ImportanceOverrides {
   const overrides: ImportanceOverrides = {};
   for (const pair of raw?.split(",") ?? []) {
-    const [key, level] = pair.split(":");
-    if (isFactorKey(key) && (level === "low" || level === "high")) {
+    const [rawKey, level] = pair.split(":");
+    const key = canonicalFactorKey(rawKey);
+    if (key !== null && (level === "low" || level === "high")) {
       overrides[key] = level;
     }
   }

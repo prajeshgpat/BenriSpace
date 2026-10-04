@@ -1,11 +1,15 @@
 "use client";
 
-import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useId } from "react";
+
 import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
 import type { PriorityQuery, SimilarDifference } from "@/lib/api/types";
 import type { Preview } from "@/lib/map/preview";
+import { boundaryFromLabel } from "@/lib/map/presentation";
 import { roundScore } from "@/lib/score/presentation";
+
+import { ShowMoreButton, useShowMore } from "./ShowMore";
 
 import styles from "./SimilarCard.module.css";
 
@@ -43,8 +47,9 @@ export function SimilarCard({
   onPreview,
 }: SimilarCardProps) {
   const { status, data, updating } = useSimilar(coordinates, client, priorities);
-  // Tall content stays a single summary row on phones until opened.
-  const mobile = useIsMobile();
+  const listId = useId();
+  const results = (data?.results ?? []).slice(0, MAX_ROWS);
+  const { visible, hidden, open, toggle } = useShowMore(results);
 
   if (status === "idle" || status === "unavailable") return null;
 
@@ -62,18 +67,26 @@ export function SimilarCard({
     );
   }
 
-  const results = data.results.slice(0, MAX_ROWS);
   if (results.length === 0) return null;
 
   return (
-    <details className={styles.card} open={!mobile} aria-busy={updating || undefined}>
-      <summary className={styles.summary}>
+    <section
+      className={styles.card}
+      aria-label="Similar areas"
+      aria-busy={updating || undefined}
+    >
+      <div className={styles.summary}>
         <h3 className={styles.title}>Similar areas</h3>
         {updating ? <span className={styles.updating}>Updating…</span> : null}
-      </summary>
-      <ul className={styles.list} aria-label="Areas with a similar profile">
-        {results.map((area, index) => {
-          const name = area.areaLabel ?? `Area to the ${area.direction}`;
+      </div>
+      <ul id={listId} className={styles.list} aria-label="Areas with a similar profile">
+        {visible.map((area, index) => {
+          const boundary = boundaryFromLabel(area.areaLabel);
+          const name =
+            area.neighborhood ?? area.areaLabel ?? `Area to the ${area.direction}`;
+          // The street boundary is a subtitle only when a neighborhood is the title.
+          const subtitle =
+            area.neighborhood && boundary ? `Bounded by ${boundary}` : null;
           return (
             <li key={`${area.latitude},${area.longitude}`} className={styles.item}>
               <div className={styles.head}>
@@ -85,6 +98,7 @@ export function SimilarCard({
                   {roundScore(area.compositeScore)}
                 </span>
               </div>
+              {subtitle ? <p className={styles.boundary}>{subtitle}</p> : null}
               <p className={styles.meta}>
                 {area.distanceLabel} {area.direction} &middot;{" "}
                 {Math.round(area.similarity)}% similar
@@ -105,6 +119,7 @@ export function SimilarCard({
                     lat: area.latitude,
                     lon: area.longitude,
                     label: name,
+                    subtitle: subtitle ?? undefined,
                     kind: "similar",
                     summary: {
                       compositeScore: area.compositeScore,
@@ -123,6 +138,7 @@ export function SimilarCard({
           );
         })}
       </ul>
-    </details>
+      <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
+    </section>
   );
 }

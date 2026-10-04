@@ -75,6 +75,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/optimize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find neighborhoods that minimise weekly travel to several destinations.
+         * @description Takes anchors (an address such as work, a brand such as "Trader Joe's", or a category such as "gym") and returns the best-scoring, well-separated places to live: those with the lowest weekly travel time (`tripsPerWeek` x 2 for the round trip x minutes, summed over anchors), ties broken by the priority-weighted score. Brand and category anchors use the nearest matching place to each candidate. Walk and drive minutes are refined with live routing when available (`approx: false`); otherwise, and for transit, they are estimates (`approx: true`).
+         */
+        post: operations["optimize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/suggest": {
         parameters: {
             query?: never;
@@ -236,22 +256,21 @@ export interface components {
             /** @description Present on rate-limit errors for Free-tier accounts — link to the Pro upgrade flow (Stripe Checkout). Omitted otherwise. */
             upgradeUrl?: string;
         };
-        /** @description Normalized 0-100 sub-scores. Direction is already applied — higher is always better, even for factors that are a negative raw signal (e.g. gas station density). A factor is null when there is no data for it at this location yet — that means "not measured", never 0. */
+        /** @description Normalized 0-100 sub-scores. Direction is already applied — higher is always better, even for factors that are a negative raw signal (e.g. traffic or the noise corridor). A factor is null when there is no data for it at this location yet — that means "not measured", never 0. All 13 keys are always present. Rows scored with the older `v2-handtuned` model have no `gasConvenience` (null) and report `shopping` / `recreation` from their premium-retail / trail signals. */
         SubScores: {
             grocery?: number | null;
             gym?: number | null;
             cafe?: number | null;
             restaurant?: number | null;
             bar?: number | null;
-            premiumRetail?: number | null;
-            gasStation?: number | null;
-            convenienceStore?: number | null;
+            shopping?: number | null;
+            gasConvenience?: number | null;
             transit?: number | null;
             school?: number | null;
-            road?: number | null;
+            traffic?: number | null;
             emergencyCorridor?: number | null;
             airport?: number | null;
-            trailPopularity?: number | null;
+            recreation?: number | null;
         };
         ScoreResponse: {
             /** Format: uuid */
@@ -267,6 +286,8 @@ export interface components {
             /** Format: date-time */
             computedAt: string;
             school?: components["schemas"]["SchoolInfo"];
+            /** @description Human neighborhood name such as "Park Slope, Brooklyn" or "Montclair, NJ" (OpenStreetMap place nodes); null until the neighborhoods job has run or when nothing is nearby. For an area, the area's own label, else the representative cell's. */
+            neighborhood?: string | null;
         };
         /** @description A `ScoreResponse` for a road-bounded area. `geoEntityId` is the representative grid cell (the one under the clicked point); `latitude`/`longitude` echo the clicked point; `address` is the area's label ("Area bounded by ..."). */
         AreaScoreResponse: components["schemas"]["ScoreResponse"] & {
@@ -346,11 +367,92 @@ export interface components {
         TriangulateResponse: {
             results: components["schemas"]["RankedAddress"][];
         };
+        OptimizeAnchor: {
+            /** @enum {string} */
+            kind: "address" | "brand" | "category";
+            /** @description An address, a brand or place name (case-insensitive, matches name or brand), or a category word (grocery, gym, cafe, restaurant, bar, transit, school, gas_station, convenience_store, plus common synonyms). */
+            query: string;
+            /**
+             * Format: double
+             * @description Address anchors only; skips geocoding. Give with `longitude`.
+             */
+            latitude?: number;
+            /** Format: double */
+            longitude?: number;
+            /** @description One-way trips per week are counted twice (round trip). Defaults: 5 for the first address anchor (work), 3 for gyms, 1 otherwise. */
+            tripsPerWeek?: number;
+            /**
+             * @description Defaults to the request's `defaultMode`.
+             * @enum {string}
+             */
+            mode?: "walk" | "drive" | "transit";
+        };
+        OptimizeRequest: {
+            anchors: components["schemas"]["OptimizeAnchor"][];
+            /**
+             * @default drive
+             * @enum {string}
+             */
+            defaultMode: "walk" | "drive" | "transit";
+            /**
+             * @description Candidate search radius in miles around the centroid of the fixed anchors.
+             * @default 15
+             */
+            radiusMi: number;
+            /** @default 3 */
+            limit: number;
+            /** @description Priorities for the tie-break score; same keys as /map/top (comma-separated string or array). */
+            factors?: string | components["schemas"]["FactorKey"][];
+            /** @description Importance overrides; `factor:number,...` string or a factor-to-number object. */
+            weights?: string | {
+                [key: string]: number;
+            };
+        };
+        OptimizeAnchorResult: {
+            query: string;
+            /** @enum {string} */
+            kind: "address" | "brand" | "category";
+            /** @description The matched place (the nearest branch for brand and category anchors). */
+            name: string;
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            /** @description One-way travel minutes. */
+            minutes: number;
+            /** @description Straight-line distance in feet or miles, e.g. "0.4 mi". */
+            distanceLabel: string | null;
+            /** @enum {string} */
+            mode: "walk" | "drive" | "transit";
+            /** @description True when minutes are estimated rather than routed. */
+            approx: boolean;
+        };
+        OptimizeResult: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            neighborhood?: string | null;
+            areaLabel?: string | null;
+            /** @description Total weekly travel minutes across all anchors, round trips included. */
+            weeklyMinutes: number;
+            /** @description Priority-weighted overall score, 0-100. */
+            score: number;
+            anchors: components["schemas"]["OptimizeAnchorResult"][];
+        };
+        OptimizeResponse: {
+            results: components["schemas"]["OptimizeResult"][];
+            assumptions: string[];
+            unresolved: {
+                query: string;
+                reason: string;
+            }[];
+        };
         /**
-         * @description A scoring factor. Same keys as `SubScores`. `premiumRetail` and `trailPopularity` are underlying signals: they count toward the overall score, but the website does not expose them as toggles. The API treats them like any other factor. `emergencyCorridor` is displayed as "Noise corridor" (main roads near fire stations, hospitals and police stations, where sirens and through-traffic noise are most likely; a rough proxy, default weight 0.75); the key is unchanged.
+         * @description A scoring factor. Same keys as `SubScores`; each is a toggle on the website (none are hidden). Pill names: grocery "Groceries", gym "Gym", cafe "Cafes", restaurant "Restaurants", bar "Bars", shopping "Shopping", gasConvenience "Gas & Convenience", transit "Public transit", school "Schools", traffic "Traffic", emergencyCorridor "Noise Corridor" (main roads near fire stations, hospitals and police stations plus gas stations and convenience stores right next door), airport "Airport", recreation "Recreation" (parks and trails). Default relative weights: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. Parameters that take factors also accept the legacy aliases `premiumRetail` (shopping), `trailPopularity` (recreation), `road` (traffic), `gasStation` and `convenienceStore` (gasConvenience). `/places` accepts `grocery`, `gym`, `cafe`, `restaurant`, `bar`, `shopping`, `recreation`, `gasConvenience`, `transit`, `school` and the legacy `gasStation`, `convenienceStore`, `premiumRetail`.
          * @enum {string}
          */
-        FactorKey: "grocery" | "gym" | "cafe" | "restaurant" | "bar" | "premiumRetail" | "gasStation" | "convenienceStore" | "transit" | "school" | "road" | "emergencyCorridor" | "airport" | "trailPopularity";
+        FactorKey: "grocery" | "gym" | "cafe" | "restaurant" | "bar" | "shopping" | "gasConvenience" | "transit" | "school" | "traffic" | "emergencyCorridor" | "airport" | "recreation";
         Suggestion: {
             /** @example 350 5th Avenue, New York, NY */
             label: string;
@@ -397,6 +499,8 @@ export interface components {
             /** @example nyc */
             metroArea: string;
             subScores: components["schemas"]["SubScores"];
+            /** @description Human name such as Park Slope, Brooklyn. */
+            neighborhood?: string | null;
         };
         MapTopResponse: {
             factors: components["schemas"]["FactorKey"][];
@@ -414,6 +518,8 @@ export interface components {
             source: "ai" | "rules";
             areaId: number | null;
             priorities?: components["schemas"]["Priorities"];
+            /** @description Human name such as Park Slope, Brooklyn. */
+            neighborhood?: string | null;
         };
         Place: {
             name: string;
@@ -444,6 +550,8 @@ export interface components {
             factorGain: number;
             compositeScore: number;
             compositeGain: number;
+            /** @description Human name such as Park Slope, Brooklyn. */
+            neighborhood?: string | null;
         };
         ImproveSuggestion: {
             factor: components["schemas"]["FactorKey"];
@@ -466,6 +574,8 @@ export interface components {
                 distanceLabel: string;
                 compositeScore: number;
                 compositeGain: number;
+                /** @description Human name such as Park Slope, Brooklyn. */
+                neighborhood?: string | null;
             } | null;
             priorities?: components["schemas"]["Priorities"];
         };
@@ -485,6 +595,8 @@ export interface components {
             similarity: number;
             compositeScore: number;
             areaLabel?: string | null;
+            /** @description Human name such as Park Slope, Brooklyn. */
+            neighborhood?: string | null;
             differences: components["schemas"]["SimilarDifference"][];
             summary: string;
         };
@@ -520,7 +632,7 @@ export interface components {
         };
     };
     parameters: {
-        /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+        /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present. */
         PriorityFactors: string;
         /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
         PriorityWeights: string;
@@ -639,7 +751,7 @@ export interface operations {
     getScoreExplanation: {
         parameters: {
             query?: {
-                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present. */
                 factors?: components["parameters"]["PriorityFactors"];
                 /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
                 weights?: components["parameters"]["PriorityWeights"];
@@ -712,6 +824,49 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    optimize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OptimizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Ranked places with per-anchor travel details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizeResponse"];
+                };
+            };
+            /** @description Invalid request (bad anchors, radius, limit, factors or weights). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A fixed (address) anchor is outside the covered metro area. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             429: components["responses"]["TooManyRequests"];
         };
     };
@@ -807,7 +962,7 @@ export interface operations {
             query: {
                 lat: number;
                 lon: number;
-                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present. */
                 factors?: components["parameters"]["PriorityFactors"];
                 /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
                 weights?: components["parameters"]["PriorityWeights"];
@@ -863,7 +1018,7 @@ export interface operations {
                 lon: number;
                 radiusMi?: number;
                 maxSuggestions?: number;
-                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present. */
                 factors?: components["parameters"]["PriorityFactors"];
                 /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
                 weights?: components["parameters"]["PriorityWeights"];
@@ -919,7 +1074,7 @@ export interface operations {
                 lon: number;
                 k?: number;
                 minSeparationMi?: number;
-                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for the 12 toggleable factors. Must not be empty if present. */
+                /** @description Comma-separated factors the user cares about (see `FactorKey`). Omit for all 13 factors (legacy keys such as `premiumRetail` are accepted as aliases). Must not be empty if present. */
                 factors?: components["parameters"]["PriorityFactors"];
                 /** @description Optional `factor:weight` importance overrides, as in `/map/cells`. */
                 weights?: components["parameters"]["PriorityWeights"];
@@ -1028,7 +1183,7 @@ export interface operations {
                 bbox: string;
                 /** @description Geohash length of the returned cells. 6 ≈ 1.2 km × 0.6 km, 5 ≈ 4.9 km × 4.9 km. */
                 precision?: 5 | 6;
-                /** @description Comma-separated factors to include (see `FactorKey`). Omit for all fourteen, including the underlying signals `premiumRetail` and `trailPopularity`. An explicit list means exactly those factors: send it without them to leave them out. At least one is required if present. (The website never lists the two underlying signals in its toggles, so it omits `factors` when nothing is narrowed.) */
+                /** @description Comma-separated factors to include (see `FactorKey`). Omit for all thirteen. An explicit list means exactly those factors. At least one is required if present. The legacy keys `premiumRetail`, `trailPopularity`, `road`, `gasStation` and `convenienceStore` are accepted as aliases of `shopping`, `recreation`, `traffic`, `gasConvenience` and `gasConvenience`; duplicates collapse. */
                 factors?: string;
                 /** @description Optional `factor:weight` overrides, e.g. `transit:2,cafe:0.5`. Weights must be greater than 0 (to drop a factor, leave it out of `factors`). Factors without an override use the default hand-tuned weight. Overrides for factors not in `factors` are ignored. */
                 weights?: string;
@@ -1068,7 +1223,7 @@ export interface operations {
             query?: {
                 /** @description Restrict to a viewport (`minLon,minLat,maxLon,maxLat`). Omit for the whole covered area. */
                 bbox?: string;
-                /** @description Same as `/map/cells`: omitted means all fourteen factors (underlying `premiumRetail` and `trailPopularity` included); an explicit list means exactly those factors. */
+                /** @description Same as `/map/cells`: omitted means all thirteen factors (legacy keys accepted as aliases); an explicit list means exactly those factors. */
                 factors?: string;
                 /** @description Same as `/map/cells`. */
                 weights?: string;

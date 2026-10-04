@@ -1,6 +1,7 @@
 """GET /v1/improve: deterministic "what could improve this score" suggestions.
 Pure functions over already-fetched rows; distances are imperial on the wire."""
 
+from api.lookup import factor_value, neighborhood_map
 from api.places import places_for_factor
 from api.priorities import TOGGLEABLE_FACTORS, Priorities
 from common.geo import haversine_m
@@ -19,11 +20,14 @@ IMPROVABLE: dict[str, tuple[str, str]] = {
     "cafe": ("cafe_score", "Cafe"),
     "restaurant": ("restaurant_score", "Restaurant"),
     "bar": ("bar_score", "Bar"),
+    "shopping": ("shopping_score", "Shopping"),
+    "recreation": ("recreation_score", "Recreation"),
+    "gasConvenience": ("gas_convenience_score", "Gas & convenience"),
     "transit": ("transit_score", "Transit"),
     "school": ("school_score", "School"),
 }
-# premiumRetail is an underlying metric with no toggle of its own, so it is never
-# suggested as a pill; it only feeds the composite.
+# Traffic, noise corridor and airport are not place-based, so they are never
+# suggested here; they still feed the composite.
 
 _WORDS = {
     "N": "north", "NE": "northeast", "E": "east", "SE": "southeast",
@@ -80,7 +84,7 @@ def _round(value: float) -> int:
 def best_area_for_factor(neighbours, lat, lon, column, base_score, base_composite) -> dict | None:
     best = None
     for cell, d in neighbours:
-        value = cell.get(column)
+        value = factor_value(cell, column)
         if value is None or float(value) - base_score < BETTER_AREA_MIN_GAIN:
             continue
         key = (float(value), float(cell["composite_score"]))
@@ -89,14 +93,16 @@ def best_area_for_factor(neighbours, lat, lon, column, base_score, base_composit
     if best is None:
         return None
     _, cell, d = best
+    value = float(factor_value(cell, column))
     return {
+        "geohash": cell.get("geohash"),
         "latitude": cell["latitude"],
         "longitude": cell["longitude"],
         "direction": compass(lat, lon, cell["latitude"], cell["longitude"]),
         "distance_mi": round(m_to_mi(d), 2),
         "distance_label": format_distance(d),
-        "factor_score": _round(float(cell[column])),
-        "factor_gain": _round(float(cell[column]) - base_score),
+        "factor_score": _round(value),
+        "factor_gain": _round(value - base_score),
         "composite_score": _round(float(cell["composite_score"])),
         "composite_gain": _round(float(cell["composite_score"]) - base_composite),
     }
@@ -112,6 +118,7 @@ def best_nearby(neighbours, lat, lon, base_composite) -> dict | None:
         return None
     gain, cell, d = best
     return {
+        "geohash": cell.get("geohash"),
         "latitude": cell["latitude"],
         "longitude": cell["longitude"],
         "direction": compass(lat, lon, cell["latitude"], cell["longitude"]),
@@ -130,10 +137,10 @@ def build_tip(label: str, score: float, rank: int, places: list[dict], better: d
             f"The closest option is {p['name']}, {p['distance_label']} {_WORDS[p['direction']]}."
         )
     if better:
-        parts.append(
-            f"The area about {better['distance_label']} {_WORDS[better['direction']]} "
-            f"scores {better['factor_score']} on {label.lower()}."
-        )
+        where = f"about {better['distance_label']} {_WORDS[better['direction']]}"
+        short = (better.get("neighborhood") or "").split(",")[0].strip()
+        subject = f"{short}, {where}," if short else f"The area {where}"
+        parts.append(f"{subject} scores {better['factor_score']} on {label.lower()}.")
     return " ".join(parts)
 
 
@@ -160,7 +167,7 @@ def build_improve(
             composite = composite if own is None else round(own, 1)
             cells = _with_selected_composite(cells, priorities)
     neighbours = neighbour_cells(cells, lat, lon, radius_mi, own_geohash)
-    suggestions = []
+    picked = []
     for rank, (key, score) in enumerate(weak_factors(sub_scores, max_suggestions, selected)):
         column, label = IMPROVABLE[key]
         places = [
@@ -179,21 +186,29 @@ def build_improve(
             for p in places_for_factor(conn, lat, lon, key, radius_mi, MAX_PLACES)
         ]
         better = best_area_for_factor(neighbours, lat, lon, column, score, composite)
-        suggestions.append(
-            {
-                "factor": key,
-                "label": label,
-                "score": _round(score),
-                "places": places,
-                "better_area": better,
-                "tip": build_tip(label, score, rank, places, better),
-            }
-        )
+        picked.append((rank, key, score, label, places, better))
+    nearby = best_nearby(neighbours, lat, lon, composite)
+    # One lookup names every suggested area (null before migration 0008).
+    named = [x for x in [nearby, *(p[5] for p in picked)] if x]
+    names = neighborhood_map(conn, [x["geohash"] for x in named])
+    for x in named:
+        x["neighborhood"] = names.get(x.pop("geohash"))
+    suggestions = [
+        {
+            "factor": key,
+            "label": label,
+            "score": _round(score),
+            "places": places,
+            "better_area": better,
+            "tip": build_tip(label, score, rank, places, better),
+        }
+        for rank, key, score, label, places, better in picked
+    ]
     return {
         "composite": composite,
         "radius_mi": radius_mi,
         "suggestions": suggestions,
-        "best_nearby": best_nearby(neighbours, lat, lon, composite),
+        "best_nearby": nearby,
         "priorities": list(selected if selected is not None else TOGGLEABLE_FACTORS),
     }
 

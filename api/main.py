@@ -45,6 +45,7 @@ from api.lookup import (
     get_feature_row,
     nearest_geo_entity,
     sub_scores_from_score_row,
+    with_neighborhood,
 )
 from api.mapdata import (
     InvalidMapRequest,
@@ -54,6 +55,13 @@ from api.mapdata import (
     parse_score_spec,
 )
 from api.metro_stats import get_stats
+from api.optimize import (
+    OptimizeInputError,
+    OptimizeOutOfCoverage,
+    OptimizeRequest,
+    OptimizeResponse,
+    optimize,
+)
 from api.places import FACTOR_CATEGORIES, places_for_factor
 from api.priorities import parse_priorities
 from api.reverse import ReverseUnavailable
@@ -98,7 +106,7 @@ from common.units import mi_to_km
 
 FACTORS_DOC = (
     "Comma-separated factor keys the user cares about (same keys as /map/top). "
-    "Omitted means the 12 toggleable factors."
+    "Omitted means all 13 factors. Legacy keys (premiumRetail, gasStation, road, ...) are accepted as aliases."
 )
 WEIGHTS_DOC = "Optional importance overrides as factor:number,... (same as /map/top)."
 
@@ -188,6 +196,7 @@ def get_score(
                 404, "not_found", "No geo entity within ingestion coverage for this location."
             )
 
+        geo_entity = with_neighborhood(conn, geo_entity)
         score_row = get_latest_score(conn, str(geo_entity["id"]), SCORING_WEIGHTS_VERSION)
         if score_row is None:
             return _error(404, "not_found", "No score on file for this geo entity yet.")
@@ -354,7 +363,7 @@ def get_places(
     response: Response,
     lat: float = Query(ge=-90, le=90, description="Latitude."),
     lon: float = Query(ge=-180, le=180, description="Longitude."),
-    factor: str = Query(description="Factor key, e.g. grocery, gasStation, premiumRetail."),
+    factor: str = Query(description="Factor key, e.g. grocery, shopping, recreation, gasConvenience."),
     radius_mi: float = Query(default=1.0, gt=0, le=5, alias="radiusMi"),
     limit: int = Query(default=5, ge=1, le=20),
 ):
@@ -398,6 +407,7 @@ def _resolve_area(lat: float, lon: float):
             )
         if geo_entity is None:
             return not_found()
+        geo_entity = with_neighborhood(conn, geo_entity)
         feature_row = get_feature_row(conn, str(geo_entity["id"]))
     return area, aggregate, geo_entity, feature_row
 
@@ -443,7 +453,8 @@ def get_area_explanation(
     resolved = _resolve_area(lat, lon)
     if isinstance(resolved, JSONResponse):
         return resolved
-    area, aggregate, _geo_entity, feature_row = resolved
+    area, aggregate, geo_entity, feature_row = resolved
+    neighborhood = area.get("neighborhood") or (geo_entity or {}).get("neighborhood")
     sub_scores = sub_scores_from_score_row(aggregate)
     nearest_m = nearest_m_by_factor(feature_row)
     with get_connection() as conn:
@@ -453,7 +464,7 @@ def get_area_explanation(
             sub_scores,
             nearest_m,
             float(aggregate["composite_score"]),
-            bounded_by_text(list(area.get("bounded_by") or [])),
+            neighborhood or bounded_by_text(list(area.get("bounded_by") or [])),
             aggregate.get("weights_version") or SCORING_WEIGHTS_VERSION,
             priorities=priorities,
             lat=lat,
@@ -467,7 +478,11 @@ def get_area_explanation(
         source = "rules"
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return AreaExplanationResponse(
-        explanation=text, source=source, area_id=area["id"], priorities=priorities.factors
+        explanation=text,
+        source=source,
+        area_id=area["id"],
+        priorities=priorities.factors,
+        neighborhood=neighborhood,
     )
 
 
@@ -642,3 +657,18 @@ def get_map_top(
         result = find_top(conn, spec, parsed_bbox, limit, min_separation_km)
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return result
+
+
+@app.post(
+    "/v1/optimize",
+    response_model=OptimizeResponse,
+    responses={400: {"model": Error}, 422: {"model": Error}},
+)
+def post_optimize(body: OptimizeRequest):
+    try:
+        with get_connection() as conn:
+            return optimize(conn, body)
+    except OptimizeInputError as exc:
+        return _error(400, "invalid_request", str(exc))
+    except OptimizeOutOfCoverage as exc:
+        return _error(422, "out_of_coverage", str(exc))

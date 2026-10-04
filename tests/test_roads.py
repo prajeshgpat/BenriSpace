@@ -142,8 +142,12 @@ def test_emergency_corridor_proxy_counts_major_roads_within_radius():
 
 
 def test_emergency_corridor_proxy_closer_major_road_is_worse():
-    close = compute_emergency_corridor_proxy_raw([{"highway": "primary", "distance_m": 50, "lanes": None}])
-    far = compute_emergency_corridor_proxy_raw([{"highway": "primary", "distance_m": 400, "lanes": None}])
+    close = compute_emergency_corridor_proxy_raw(
+        [{"highway": "primary", "distance_m": 50, "lanes": None}]
+    )
+    far = compute_emergency_corridor_proxy_raw(
+        [{"highway": "primary", "distance_m": 400, "lanes": None}]
+    )
     assert close > far
 
 

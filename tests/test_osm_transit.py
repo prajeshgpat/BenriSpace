@@ -6,12 +6,41 @@ from ingestion.osm_transit import OsmStop, dedupe_osm_stops, parse_stops, stops_
 
 RESP = {
     "elements": [
-        {"type": "node", "id": 1, "lat": 40.80, "lon": -74.20, "tags": {"railway": "station", "name": "Bay Street"}},
-        {"type": "node", "id": 2, "lat": 40.81, "lon": -74.21, "tags": {"highway": "bus_stop", "ref": "12345"}},
+        {
+            "type": "node",
+            "id": 1,
+            "lat": 40.80,
+            "lon": -74.20,
+            "tags": {"railway": "station", "name": "Bay Street"},
+        },
+        {
+            "type": "node",
+            "id": 2,
+            "lat": 40.81,
+            "lon": -74.21,
+            "tags": {"highway": "bus_stop", "ref": "12345"},
+        },
         {"type": "node", "id": 3, "lat": 40.82, "lon": -74.22, "tags": {"highway": "bus_stop"}},
-        {"type": "node", "id": 4, "lat": 40.83, "lon": -74.23, "tags": {"highway": "bus_stop", "name": "  Main   St "}},
-        {"type": "way", "id": 5, "center": {"lat": 40.0, "lon": -74.0}, "tags": {"railway": "station"}},
-        {"type": "node", "id": 1, "lat": 40.80, "lon": -74.20, "tags": {"railway": "station", "name": "Bay Street"}},
+        {
+            "type": "node",
+            "id": 4,
+            "lat": 40.83,
+            "lon": -74.23,
+            "tags": {"highway": "bus_stop", "name": "  Main   St "},
+        },
+        {
+            "type": "way",
+            "id": 5,
+            "center": {"lat": 40.0, "lon": -74.0},
+            "tags": {"railway": "station"},
+        },
+        {
+            "type": "node",
+            "id": 1,
+            "lat": 40.80,
+            "lon": -74.20,
+            "tags": {"railway": "station", "name": "Bay Street"},
+        },
         {"type": "node", "id": 6, "tags": {"railway": "halt", "name": "No Loc"}},
     ]
 }
@@ -48,7 +77,10 @@ def test_dedupe_against_gtfs_and_self():
 
 def test_aggregate_with_osm_and_gtfs():
     agency_stops = {"mta": [(40.8000, -74.2000)]}
-    osm = [OsmStop(40.80005, -74.2000, "dup", "node/1"), OsmStop(40.8100, -74.2000, "Far", "node/2")]
+    osm = [
+        OsmStop(40.80005, -74.2000, "dup", "node/1"),
+        OsmStop(40.8100, -74.2000, "Far", "node/2"),
+    ]
     kept = merge_osm_into_agency_stops(agency_stops, osm)
     assert [s.osm_id for s in kept] == ["node/2"]
     # Cell near the OSM-only stop: osm is nearest.
@@ -79,7 +111,9 @@ def test_places_named_only_with_distinct_source():
 
 def test_osm_failure_isolated(monkeypatch):
     logged = []
-    monkeypatch.setattr(gtfs_transit, "log_ingestion_run", lambda *a, **k: logged.append((a, k)) or 1)
+    monkeypatch.setattr(
+        gtfs_transit, "log_ingestion_run", lambda *a, **k: logged.append((a, k)) or 1
+    )
 
     def boom():
         raise httpx.ReadTimeout("slow")

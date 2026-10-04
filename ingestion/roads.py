@@ -184,7 +184,9 @@ def compute_congestion_proxy_raw(
     for seg in nearby_segments:
         if seg["distance_m"] > radius_m:
             continue
-        total += segment_congestion_contribution(seg["highway"], seg["distance_m"], seg.get("lanes"))
+        total += segment_congestion_contribution(
+            seg["highway"], seg["distance_m"], seg.get("lanes")
+        )
     return round(total, 3)
 
 
@@ -265,7 +267,9 @@ def _build_query(min_lat: float, min_lon: float, max_lat: float, max_lon: float)
     """
 
 
-def _fetch_bbox(client: httpx.Client, min_lat: float, min_lon: float, max_lat: float, max_lon: float) -> list[dict]:
+def _fetch_bbox(
+    client: httpx.Client, min_lat: float, min_lon: float, max_lat: float, max_lon: float
+) -> list[dict]:
     query = _build_query(min_lat, min_lon, max_lat, max_lon)
     # post_overpass_query already retries 429s with backoff internally, so
     # by the time an exception reaches fetch_segments_for_bbox's quadrant-
@@ -325,7 +329,9 @@ def fetch_segments_for_bbox(
         ):
             time.sleep(1)  # be polite to the free shared Overpass instance
             segments.extend(
-                fetch_segments_for_bbox(client, sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon, depth + 1)
+                fetch_segments_for_bbox(
+                    client, sub_min_lat, sub_max_lat, sub_min_lon, sub_max_lon, depth + 1
+                )
             )
         return segments
 
@@ -353,7 +359,9 @@ def classify_cell(
     fields = {
         "road_classification": nearest_highway,
         "congestion_proxy_raw": compute_congestion_proxy_raw(nearby, CONGESTION_RADIUS_M),
-        "emergency_corridor_proxy_raw": compute_emergency_corridor_proxy_raw(nearby, EMERGENCY_RADIUS_M),
+        "emergency_corridor_proxy_raw": compute_emergency_corridor_proxy_raw(
+            nearby, EMERGENCY_RADIUS_M
+        ),
         "street_orientation": derive_street_orientation(nearest_highway),
     }
     if facility_index is not None:
@@ -392,12 +400,17 @@ def run() -> None:
                 n_fac = sum(map(len, facility_index.values()))
                 print(f"  {metro_area}: {n_fac} emergency facilities", file=sys.stderr)
             except (httpx.HTTPError, httpx.TimeoutException) as exc:
-                print(f"  {metro_area}: facility fetch failed ({exc}); v2 columns left NULL", file=sys.stderr)
+                print(
+                    f"  {metro_area}: facility fetch failed ({exc}); v2 columns left NULL",
+                    file=sys.stderr,
+                )
                 facility_index = None
 
             metro_rows = 0
             for entity in iter_geo_entities(conn, metro_area=metro_area):
-                fields = classify_cell(entity["latitude"], entity["longitude"], index, facility_index)
+                fields = classify_cell(
+                    entity["latitude"], entity["longitude"], index, facility_index
+                )
                 upsert_feature_store(conn, entity["id"], fields)
                 metro_rows += 1
                 ctx.rows_affected += 1

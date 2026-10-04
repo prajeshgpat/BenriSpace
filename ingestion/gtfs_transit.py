@@ -4,8 +4,7 @@ transit_agencies from GTFS static feeds.
 PROJECT.md's v1 scope note: "This radius spans multiple transit agencies
 (MTA, LIRR, Metro-North, NJ Transit)... treat each as a separate ingestion
 job, not one unified feed." PHASES.md Phase 1 breaks that into four
-checklist items (MTA/LIRR/Metro-North/NJ Transit) and flags that NJ
-Transit's feed needs developer credentials the other three don't.
+checklist items (MTA/LIRR/Metro-North/NJ Transit).
 
 Design calls made here (flag if wrong, easy to change):
 
@@ -20,7 +19,7 @@ Design calls made here (flag if wrong, easy to change):
   `ingestion_runs` independently (source='gtfs_mta' / 'gtfs_lirr' /
   'gtfs_metro_north' / 'gtfs_nj_transit', matching the exact source names
   schema.sql's `ingestion_runs.source` comment lists), inside a try/except
-  in `run()`. A failure (e.g. NJ Transit with no API key configured yet)
+  in `run()`. A failure (e.g. one agency's host being down)
   is caught, logged as that agency's own 'failed' row, and the loop moves
   on — it does not abort MTA/LIRR/Metro-North. The overall script is also
   wrapped in `ingestion_job("gtfs_transit")` per the shared
@@ -43,17 +42,13 @@ Design calls made here (flag if wrong, easy to change):
   Normally exactly one agency; a tie happens when e.g. an LIRR and
   Metro-North station sit at (near-)identical coordinates (Penn
   Station/Grand Central-adjacent cases).
-- **NJ Transit is stubbed behind the same AgencyFeed interface**, not
-  implemented. `common.config.NJ_TRANSIT_API_KEY` /
-  `NJ_TRANSIT_API_USERNAME` are unset (PHASES.md: developer account not
-  created yet). `fetch_nj_transit_stops()` raises a clear, descriptive
-  RuntimeError so the per-agency try/except logs a legible failure
-  instead of a stack trace from a half-guessed auth flow. NJ Transit's
-  actual developer API (njtransit.com/developer-tools) is a
-  username/password-gated portal, not a plain public zip URL like MTA's,
-  so activating it later needs real implementation work (login/token
-  exchange, current feed endpoint), not just setting an env var -- do not
-  assume it degrades to "just add the key" once credentials exist.
+- **NJ Transit uses its open official feeds** (no account or key): rail at
+  https://www.njtransit.com/rail_data.zip and bus at
+  https://www.njtransit.com/bus_data.zip, verified downloadable 2026-10-04
+  (Mobility Database ids mdb-509 rail / mdb-508 bus). They redirect once, which
+  the shared client follows. NJ_TRANSIT_API_KEY / NJ_TRANSIT_API_USERNAME in
+  common.config are now unused and optional (kept so old secret setups stay
+  harmless); there is no auth path any more.
 - **OSM transit stops (pseudo-agency 'osm')** fill gaps where a GTFS feed is
   missing (NJ Transit, CT/Westchester/LI buses). See ingestion/osm_transit.py:
   OSM stops within 40 m of any GTFS stop, or same-named within 40 m of each
@@ -73,7 +68,6 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from common.config import NJ_TRANSIT_API_KEY, NJ_TRANSIT_API_USERNAME
 from common.db import get_connection, iter_geo_entities, log_ingestion_run, upsert_feature_store
 from common.geo import haversine_m
 from common.ingestion_log import ingestion_job
@@ -91,11 +85,11 @@ class AgencyFeed:
     name: str  # e.g. "mta" -- key used in transit_agencies output
     ingestion_source: str  # ingestion_runs.source label, matches schema.sql's comment
     feed_urls: tuple[str, ...] = field(default_factory=tuple)
-    requires_auth: bool = False
+    requires_auth: bool = False  # no feed needs auth today; kept for a future one
 
 
-# Feed URLs verified against mta.info/developers and njtransit.com/developer-tools
-# as of 2026-09; these are static-download hosts that can change -- re-verify if
+# Feed URLs verified against mta.info/developers (2026-09) and njtransit.com
+# (2026-10-04); these are static-download hosts that can change -- re-verify if
 # a run starts failing rather than assuming the parser broke.
 AGENCIES: tuple[AgencyFeed, ...] = (
     AgencyFeed(
@@ -128,11 +122,17 @@ AGENCIES: tuple[AgencyFeed, ...] = (
         ingestion_source="gtfs_path",
         feed_urls=("https://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip",),
     ),
+    # NJ Transit: open official downloads, no auth. Verified downloadable
+    # 2026-10-04 (one redirect, then application/zip). Mobility Database ids:
+    # mdb-509 (rail), mdb-508 (bus).
     AgencyFeed(
         name="nj_transit",
         ingestion_source="gtfs_nj_transit",
-        feed_urls=(),
-        requires_auth=True,
+        feed_urls=(
+            "https://www.njtransit.com/rail_data.zip",
+            "https://www.njtransit.com/bus_data.zip",
+        ),
+        requires_auth=False,
     ),
 )
 
@@ -178,9 +178,7 @@ def parse_stops_named(csv_text: str, agency_label: str) -> list[Place]:
             lat, lon = float(row.get("stop_lat") or ""), float(row.get("stop_lon") or "")
         except ValueError:
             continue
-        places.append(
-            Place(f"gtfs:{agency_label}", stop_id, "transit", name, lat, lon)
-        )
+        places.append(Place(f"gtfs:{agency_label}", stop_id, "transit", name, lat, lon))
     return dedupe_places(places)
 
 
@@ -285,35 +283,13 @@ def aggregate_cell(
 # ---------------------------------------------------------------------------
 
 
-def fetch_nj_transit_stops() -> list[tuple[float, float]]:
-    """Stubbed: NJ Transit's GTFS static feed sits behind a developer
-    account (username + password, not a bare API key) at
-    njtransit.com/developer-tools, per PHASES.md's Phase 1 "Requirements
-    from you". Raises immediately with a descriptive message rather than
-    guessing at the login/token/download sequence -- a wrong guess would
-    fail more confusingly than an honest "not configured" error, and
-    would need to be re-verified against NJT's current docs anyway once
-    the credentials actually exist."""
-    if not (NJ_TRANSIT_API_KEY and NJ_TRANSIT_API_USERNAME):
-        raise RuntimeError(
-            "NJ_TRANSIT_API_KEY / NJ_TRANSIT_API_USERNAME not set (see PHASES.md "
-            "Phase 1 'Requirements from you' -- NJ Transit developer account not "
-            "created yet). NJ Transit ingestion is stubbed until those exist."
-        )
-    raise NotImplementedError(
-        "NJ Transit credentials are set but the login/token-exchange/feed-download "
-        "flow against njtransit.com/developer-tools is not implemented yet -- verify "
-        "the current API shape against NJT's developer docs and implement here."
-    )
-
-
-def fetch_agency_stops(agency: AgencyFeed, client: httpx.Client | None = None) -> list[tuple[float, float]]:
+def fetch_agency_stops(
+    agency: AgencyFeed, client: httpx.Client | None = None
+) -> list[tuple[float, float]]:
     """Fetches and parses every feed URL for one agency, returning a
     combined list of (lat, lon) stops. Network calls happen exactly once
     per feed URL here -- never per grid cell."""
     if agency.requires_auth:
-        if agency.name == "nj_transit":
-            return fetch_nj_transit_stops()
         raise RuntimeError(f"Agency '{agency.name}' requires auth but has no fetch implementation")
 
     owns_client = client is None
@@ -334,7 +310,7 @@ def fetch_agency_stops_and_places(
     agency: AgencyFeed, client: httpx.Client | None = None
 ) -> tuple[list[tuple[float, float]], list[Place]]:
     """fetch_agency_stops plus the named, deduped places, from one download of
-    each feed. NJ Transit (no credentials) raises like fetch_agency_stops."""
+    each feed."""
     if agency.requires_auth:
         return fetch_agency_stops(agency, client=client), []
 

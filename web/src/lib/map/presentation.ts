@@ -36,10 +36,23 @@ export function metroLabel(metroArea: string): string {
   return METRO_NAMES[metroArea] ?? (metroArea.toUpperCase() || "Metro area");
 }
 
+export const UNNAMED_AREA = "Unnamed area";
+
+/** A best-area title: the neighborhood name, never raw coordinates. */
 export function areaTitle(
-  result: Pick<MapTopResult, "latitude" | "longitude" | "metroArea">,
+  result: Pick<MapTopResult, "neighborhood">,
 ): string {
-  return `Area near ${result.latitude.toFixed(3)}, ${result.longitude.toFixed(3)}`;
+  const name = result.neighborhood?.trim();
+  return name ? name : UNNAMED_AREA;
+}
+
+/**
+ * "Area bounded by Bedford Ave, Nostrand Ave" becomes "Bedford Ave, Nostrand Ave";
+ * null when the label is empty. Anything else is returned unchanged.
+ */
+export function boundaryFromLabel(areaLabel: string | null | undefined): string | null {
+  const text = areaLabel?.trim().replace(/^area bounded by(\s+|$)/i, "").trim();
+  return text ? text : null;
 }
 
 export function formatCount(n: number): string {

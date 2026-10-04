@@ -69,7 +69,11 @@ def box(lon0, lat0, lon1, lat1):
 
 def test_pick_prefers_smallest_containing():
     big = {"id": 1, "area_sq_m": 5e6, "geometry": box(LON - D, LAT - D, LON + D, LAT + D)}
-    small = {"id": 2, "area_sq_m": 1e6, "geometry": box(LON - D / 2, LAT - D / 2, LON + D / 2, LAT + D / 2)}
+    small = {
+        "id": 2,
+        "area_sq_m": 1e6,
+        "geometry": box(LON - D / 2, LAT - D / 2, LON + D / 2, LAT + D / 2),
+    }
     assert pick_area(LAT, LON, [big, small])["id"] == 2
 
 
@@ -87,7 +91,11 @@ def test_pick_no_snap_beyond_40m():
 
 def test_pick_snaps_to_nearest_and_contained_beats_snap():
     near = {"id": 1, "area_sq_m": 1, "geometry": box(LON, LAT - D, LON + D, LAT + D)}
-    nearer = {"id": 2, "area_sq_m": 9, "geometry": box(LON - 0.00035, LAT - 0.0002, LON - 0.00026, LAT + D)}
+    nearer = {
+        "id": 2,
+        "area_sq_m": 9,
+        "geometry": box(LON - 0.00035, LAT - 0.0002, LON - 0.00026, LAT + D),
+    }
     # point just west of `near` (~21 m); `nearer`'s edge is ~8 m away
     assert pick_area(LAT, LON - 0.00025, [near, nearer])["id"] == 2
     inside = {"id": 3, "area_sq_m": 99, "geometry": box(LON - D, LAT - D, LON, LAT + D)}
@@ -103,7 +111,9 @@ def test_pick_empty():
 
 def test_aggregate_columns_cover_all_factors_and_composite():
     cols = {s.score_column for s in CATEGORY_SPECS}
-    assert len(cols) == 14
+    assert len(cols) == 17  # 13 factors + the 4 v2-only legacy columns
+    assert {"shopping_score", "recreation_score", "gas_convenience_score"} <= cols
+    assert {"premium_retail_score", "trail_popularity_score"} <= cols
     assert cols <= set(AGGREGATE_COLUMNS)
     assert "composite_score" in AGGREGATE_COLUMNS
     assert "school_proximity_score" in AGGREGATE_COLUMNS
@@ -175,17 +185,45 @@ CASES = [
     ([cell(5, grocery_score=None), cell(5, grocery_score=None)], "grocery_score", None),
     ([cell(1, gym_score=40), cell(1, gym_score=None), cell(2, gym_score=70)], "gym_score", 60),
     ([cell(10, cafe_score=80), cell(30, cafe_score=40)], "cafe_score", 50),
-    ([cell(1, transit_score=100), cell(1, transit_score=50), cell(2, transit_score=0)], "transit_score", 37.5),
+    (
+        [cell(1, transit_score=100), cell(1, transit_score=50), cell(2, transit_score=0)],
+        "transit_score",
+        37.5,
+    ),
     ([cell(4, road_score=25), cell(1, road_score=100)], "road_score", 40),
-    ([cell(1, school_score=None, school_proximity_score=60), cell(1, school_score=80)], "school_score", 80),
-    ([cell(1, school_score=None, school_proximity_score=60), cell(1, school_score=80)], "school_proximity_score", 60),
+    (
+        [cell(1, school_score=None, school_proximity_score=60), cell(1, school_score=80)],
+        "school_score",
+        80,
+    ),
+    (
+        [cell(1, school_score=None, school_proximity_score=60), cell(1, school_score=80)],
+        "school_proximity_score",
+        60,
+    ),
     ([cell(3, composite_score=60), cell(1, composite_score=80)], "composite_score", 65),
     ([cell(0.5, composite_score=90), cell(1.5, composite_score=50)], "composite_score", 60),
-    ([cell(1, airport_score=20), cell(1, airport_score=40), cell(1, airport_score=90)], "airport_score", 50),
+    (
+        [cell(1, airport_score=20), cell(1, airport_score=40), cell(1, airport_score=90)],
+        "airport_score",
+        50,
+    ),
     ([cell(7, bar_score=None), cell(2, bar_score=45), cell(1, bar_score=90)], "bar_score", 60),
-    ([cell(1, emergency_corridor_score=10), cell(9, emergency_corridor_score=None)], "emergency_corridor_score", 10),
-    ([cell(2, restaurant_score=30), cell(2, restaurant_score=60), cell(4, restaurant_score=90)], "restaurant_score", 67.5),
-    ([cell(1, trail_popularity_score=0), cell(1, premium_retail_score=5)], "premium_retail_score", 5),
+    (
+        [cell(1, emergency_corridor_score=10), cell(9, emergency_corridor_score=None)],
+        "emergency_corridor_score",
+        10,
+    ),
+    (
+        [cell(2, restaurant_score=30), cell(2, restaurant_score=60), cell(4, restaurant_score=90)],
+        "restaurant_score",
+        67.5,
+    ),
+    (
+        [cell(1, trail_popularity_score=0), cell(1, premium_retail_score=5)],
+        "premium_retail_score",
+        5,
+    ),
 ]
 
 
@@ -279,26 +317,34 @@ def test_route_404_tables_missing(client, monkeypatch):
 
 
 def test_route_404_cap_exceeded(client, monkeypatch):
-    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(1.51 * 2_589_988.11)])
+    monkeypatch.setattr(
+        main, "get_area_candidates", lambda c, la, lo: [make_area(0.81 * 2_589_988.11)]
+    )
     r = client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]})
     assert r.status_code == 404
 
 
 def test_route_404_extent_exceeded_and_ok_at_limit(client, monkeypatch):
     params = {"lat": CLICK[0], "lon": CLICK[1]}
-    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=2.01 * 1609.344)])
+    monkeypatch.setattr(
+        main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=1.41 * 1609.344)]
+    )
     assert client.get("/v1/area", params=params).status_code == 404
-    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=2.0 * 1609.344)])
+    monkeypatch.setattr(
+        main, "get_area_candidates", lambda c, la, lo: [make_area(extent_m=1.4 * 1609.344)]
+    )
     assert client.get("/v1/area", params=params).status_code == 200
     # legacy row (extent_m null) under the area cap is still served
-    monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [make_area(1.49 * 2_589_988.11)])
+    monkeypatch.setattr(
+        main, "get_area_candidates", lambda c, la, lo: [make_area(0.79 * 2_589_988.11)]
+    )
     assert client.get("/v1/area", params=params).status_code == 200
 
 
 def test_route_prefers_smallest_piece_and_skips_oversized(client, monkeypatch):
     huge = make_area(9 * 2_589_988.11)
     huge["id"] = 1
-    piece = make_area(0.8 * 2_589_988.11)
+    piece = make_area(0.7 * 2_589_988.11)
     piece["id"] = 2
     monkeypatch.setattr(main, "get_area_candidates", lambda c, la, lo: [huge, piece])
     assert client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]}).json()["areaId"] == 2

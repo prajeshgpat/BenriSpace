@@ -53,15 +53,21 @@ LAYER_PRIORITY = {"unsd": 0, "elsd": 1, "scsd": 2}
 # grades". 2020 is skipped (testing was waived that spring), so 2018 is the
 # latest full year.
 URBAN_URL = (
-    "https://educationdata.urban.org/api/v1/school-districts/edfacts/assessments/"
-    "{year}/grade-99/"
+    "https://educationdata.urban.org/api/v1/school-districts/edfacts/assessments/{year}/grade-99/"
 )
 RATING_YEAR = 2018
 RATING_SOURCE_TEMPLATE = "edfacts_proficiency_{year}_state_percentile"
 # Urban Portal missing/suppressed codes are negative (-1, -2, -3).
 SUBGROUP_ALL_FIELDS = (
-    "race", "sex", "lep", "homeless", "disability", "econ_disadvantaged",
-    "foster_care", "military_connected", "migrant",
+    "race",
+    "sex",
+    "lep",
+    "homeless",
+    "disability",
+    "econ_disadvantaged",
+    "foster_care",
+    "military_connected",
+    "migrant",
 )
 
 
@@ -89,9 +95,7 @@ class DistrictIndex:
         if self._tree is None:
             return None
         point = Point(lon, lat)
-        hits = [
-            i for i in self._tree.query(point, predicate="intersects")
-        ]
+        hits = [i for i in self._tree.query(point, predicate="intersects")]
         if not hits:
             return None  # no match -> NULL district, never nearest-guess
         best = min(
@@ -146,8 +150,11 @@ def download_cached(url: str, cache_dir: Path = CACHE_DIR) -> Path:
         return dest
     tmp = dest.with_suffix(dest.suffix + ".part")
     with httpx.stream(
-        "GET", url, headers={"User-Agent": USER_AGENT},
-        timeout=REQUEST_TIMEOUT_S, follow_redirects=True,
+        "GET",
+        url,
+        headers={"User-Agent": USER_AGENT},
+        timeout=REQUEST_TIMEOUT_S,
+        follow_redirects=True,
     ) as resp:
         resp.raise_for_status()
         with tmp.open("wb") as fh:
@@ -193,7 +200,8 @@ def parse_rating_row(row: dict) -> tuple[str, float] | None:
     if leaid is None:
         return None
     values = [
-        v for v in (
+        v
+        for v in (
             _valid_pct(row.get("math_test_pct_prof_midpt")),
             _valid_pct(row.get("read_test_pct_prof_midpt")),
         )
@@ -251,4 +259,3 @@ def fetch_district_ratings(
 
 def rating_source_label(year: int = RATING_YEAR) -> str:
     return RATING_SOURCE_TEMPLATE.format(year=year)
-

@@ -73,12 +73,19 @@ describe("buildFactorSections", () => {
     );
 
     expect(labels).toMatchObject({
-      grocery: "Grocery stores",
-      gasStation: "Gas stations",
-      convenienceStore: "Convenience stores",
-      emergencyCorridor: "Noise corridor",
+      grocery: "Groceries",
       restaurant: "Restaurants",
-      bar: "Bars & pubs",
+      cafe: "Cafes",
+      bar: "Bars",
+      gym: "Gym",
+      shopping: "Shopping",
+      recreation: "Recreation",
+      gasConvenience: "Gas & Convenience",
+      transit: "Public transit",
+      airport: "Airport",
+      traffic: "Traffic",
+      school: "Schools",
+      emergencyCorridor: "Noise corridor",
     });
   });
 
@@ -110,32 +117,32 @@ describe("buildFactorSections", () => {
     expect(airport).toMatchObject({ value: 63, display: "63", band: "Good" });
   });
 
-  it("explains the direction of every inverted factor", () => {
-    for (const key of ["gasStation", "convenienceStore", "road"] as const) {
-      expect(FACTORS[key].description).toMatch(/^Higher means/);
-    }
+  it("phrases gas & convenience positively and traffic as fewer busy roads", () => {
+    expect(FACTORS.gasConvenience.description).toBe("Fuel and quick-stop stores nearby.");
+    expect(FACTORS.traffic.description).toBe("Fewer busy roads nearby.");
+    expect(FACTORS.recreation.description).toBe("Parks and trails.");
   });
 });
 
 describe("summarizeCoverage", () => {
   it("reports full coverage", () => {
     expect(summarizeCoverage(fullSubScores)).toMatchObject({
-      available: 12,
-      total: 12,
+      available: 13,
+      total: 13,
       isComplete: true,
-      summary: "Based on all 12 factors.",
+      summary: "Based on all 13 factors.",
     });
   });
 
   it("flags a composite built from partial data", () => {
     const coverage = summarizeCoverage({ ...emptySubScores, airport: 62.79 });
 
-    expect(coverage).toMatchObject({ available: 1, total: 12, isComplete: false });
-    expect(coverage.summary).toMatch(/^Based on 1 of 12 factors\./);
+    expect(coverage).toMatchObject({ available: 1, total: 13, isComplete: false });
+    expect(coverage.summary).toMatch(/^Based on 1 of 13 factors\./);
   });
 
   it("counts a zero score as available data", () => {
-    expect(summarizeCoverage({ ...emptySubScores, road: 0 }).available).toBe(1);
+    expect(summarizeCoverage({ ...emptySubScores, traffic: 0 }).available).toBe(1);
   });
 
   it("handles a score with no breakdown at all", () => {

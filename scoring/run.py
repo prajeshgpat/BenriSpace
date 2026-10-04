@@ -33,7 +33,7 @@ def run() -> None:
                 for r in rows:
                     r["geo_entity_id"] = str(r["geo_entity_id"])
 
-            scored = score_metro_cohort(rows)
+            scored = score_metro_cohort(rows, SCORING_WEIGHTS_VERSION)
             if not scored:
                 continue
 
@@ -41,7 +41,7 @@ def run() -> None:
                 for geo_id, found in scored.items():
                     # Every score column is written, NULL when absent, so a score that
                     # no longer applies (e.g. a school with no rating) clears the old value.
-                    values = {c: found.get(c) for c in all_score_columns()}
+                    values = {c: found.get(c) for c in all_score_columns(SCORING_WEIGHTS_VERSION)}
                     columns = [*values.keys(), "geo_entity_id", "weights_version"]
                     placeholders = ", ".join(["%s"] * len(columns))
                     cur.execute(

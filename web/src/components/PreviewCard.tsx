@@ -83,6 +83,7 @@ export function PreviewCard({
           <span className="sr-only">Close preview</span>
         </button>
       </div>
+      {preview.subtitle ? <p className={styles.subtitle}>{preview.subtitle}</p> : null}
       {where ? <p className={styles.meta}>{where} from the selected location</p> : null}
       {differences.length > 0 ? (
         <ul className={styles.chips} aria-label="Differences from the selected location">

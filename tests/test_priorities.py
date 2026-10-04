@@ -22,19 +22,19 @@ from tests.test_api_similar import cand, scores
 # --- parsing ----------------------------------------------------------------
 
 
-def test_default_is_the_twelve_toggleable_factors():
+def test_default_is_all_thirteen_factors_none_hidden():
     p = parse_priorities(None)
     assert not p.explicit
-    assert len(p.factors) == 12 == len(TOGGLEABLE_FACTORS)
-    assert "premiumRetail" not in p.factors and "trailPopularity" not in p.factors
+    assert len(p.factors) == 13 == len(TOGGLEABLE_FACTORS)
+    assert {"shopping", "recreation", "gasConvenience", "traffic"} <= set(p.factors)
 
 
 def test_explicit_factors_contract_order_weights_and_errors():
     p = parse_priorities("transit, cafe", "cafe:3,grocery:9")
     assert p.explicit and p.factors == ["cafe", "transit"]
-    assert p.spec.weights == {"cafe": 3.0, "transit": 1.5}  # grocery override ignored
-    assert p.ordered_by_weight() == ["cafe", "transit"]
-    assert p.cache_part == "cafe:3,transit:1.5"
+    assert p.spec.weights == {"cafe": 3.0, "transit": 14.0}  # grocery override ignored
+    assert p.ordered_by_weight() == ["transit", "cafe"]  # heaviest first
+    assert p.cache_part == "cafe:3,transit:14"
     assert parse_priorities(None, "cafe:2").explicit
     for bad in ("", "cafe,", "nope"):
         with pytest.raises(InvalidMapRequest):
@@ -44,8 +44,10 @@ def test_explicit_factors_contract_order_weights_and_errors():
 
 
 def test_composite_ignores_null_and_unselected():
-    p = parse_priorities("grocery,gym")  # default weights 1.5 and 1.0
-    assert p.composite_from_keys({"grocery": 80, "gym": 50, "cafe": 0}) == pytest.approx(68.0)
+    p = parse_priorities("grocery,gym")  # default weights 14 and 9
+    assert p.composite_from_keys({"grocery": 80, "gym": 50, "cafe": 0}) == pytest.approx(
+        (80 * 14 + 50 * 9) / 23
+    )
     assert p.composite_from_keys({"grocery": 80, "gym": None}) == 80.0
     assert p.composite_from_keys({"cafe": 10}) is None
 
@@ -80,7 +82,7 @@ def test_improve_only_considers_selected_factors(imp):
     assert body["priorities"] == ["grocery", "cafe"]
     default = get_improve(client)
     assert default["suggestions"][0]["factor"] == "gym"
-    assert len(default["priorities"]) == 12
+    assert len(default["priorities"]) == 13
 
 
 def test_improve_no_weak_selected_factor_gives_empty_suggestions_but_best_nearby(imp):
@@ -110,12 +112,16 @@ def test_best_nearby_uses_selected_composite_not_stored(imp):
     assert get_improve(client)["bestNearby"]["compositeScore"] == 99
 
 
-def test_premium_retail_is_never_a_suggestion(imp):
+def test_legacy_keys_alias_and_non_place_factors_are_never_suggestions(imp):
     state, client = imp
-    state["agg"] = aggregate(premium_retail=1.0)
-    body = get_improve(client, factors="premiumRetail,grocery")
-    assert all(s["factor"] != "premiumRetail" for s in body["suggestions"])
-    assert "premiumRetail" not in improve.IMPROVABLE
+    state["agg"] = aggregate(road=1.0, emergency_corridor=1.0, airport=1.0)
+    body = get_improve(client, factors="road,premiumRetail,grocery")
+    assert body["priorities"] == ["grocery", "shopping", "traffic"]
+    assert all(
+        s["factor"] not in ("traffic", "emergencyCorridor", "airport") for s in body["suggestions"]
+    )
+    assert not {"traffic", "emergencyCorridor", "airport"} & set(improve.IMPROVABLE)
+    assert {"shopping", "recreation", "gasConvenience"} <= set(improve.IMPROVABLE)
 
 
 # --- similar ----------------------------------------------------------------
@@ -169,7 +175,7 @@ def test_similar_without_factors_keeps_embedding_order(sim):
     body = client.get("/v1/similar", params={"lat": LAT, "lon": LON, "k": 2}).json()
     assert body["results"][0]["distanceLabel"] == "2.0 mi"
     assert state["limit"] == 40
-    assert len(body["priorities"]) == 12
+    assert len(body["priorities"]) == 13
 
 
 def test_rerank_uses_z_scores_and_missing_scores_are_average():
@@ -177,7 +183,10 @@ def test_rerank_uses_z_scores_and_missing_scores_are_average():
     stats = {"school_score": ColumnStats(50.0, 10.0, tuple(range(101)))}
     target = scores(school=None)  # imputed to the mean -> z 0
     out = similar.rerank(
-        target, [{"school_score": 80.0, "dist": 9.0}, {"school_score": 55.0, "dist": 9.0}], pri, stats
+        target,
+        [{"school_score": 80.0, "dist": 9.0}, {"school_score": 55.0, "dist": 9.0}],
+        pri,
+        stats,
     )
     # z = 0.5 and 3.0 -> weighted by 14/1 for a single factor
     assert [c["school_score"] for c in out] == [55.0, 80.0]
@@ -203,11 +212,11 @@ def test_get_stats_degrades_without_a_database():
 
 # --- evidence ---------------------------------------------------------------
 
-SUBS = SubScores(grocery=91.4, transit=72.0, gas_station=12.0, cafe=99.0)
+SUBS = SubScores(grocery=91.4, transit=72.0, gas_convenience=12.0, cafe=99.0)
 NEAREST = {"grocery": 300.0, "transit": 2000.0, "cafe": 100.0}
 STATS = {
     f"{k}_score": ColumnStats(50.0, 10.0, tuple(float(i) for i in range(101)))
-    for k in ("grocery", "transit", "gas_station", "cafe")
+    for k in ("grocery", "transit", "gas_convenience", "cafe")
 }
 PLACES = {
     "grocery": [{"name": "Key Food", "distance": "0.2 mi"}, {"name": "Aldi", "distance": "0.3 mi"}],
@@ -229,7 +238,7 @@ def test_evidence_has_priorities_percentiles_places_and_imperial_only():
     assert ev["priorities"] == ["grocery access", "transit access", "cafe access"]
     assert ev["place"] == "Area bounded by 4th Ave and Union St"
     by = {f["factor"]: f for f in ev["factors"]}
-    assert by["grocery"]["selected"] and not by["gasStation"]["selected"]
+    assert by["grocery"]["selected"] and not by["gasConvenience"]["selected"]
     assert by["grocery"]["percentile"] == 91 and by["grocery"]["metroMedian"] == 50
     assert by["cafe"]["vsMetro"] == "top 1% of the metro"
     # Places only for selected factors, keyed by label; gym is not selected.
@@ -294,7 +303,9 @@ def test_validator_normalises_apostrophes_and_ignores_sentence_starts():
     assert ai_explain.validate_output(ok, ev)
 
 
-@pytest.mark.parametrize("word", ["excellent", "exceptional", "convenient lifestyle", "everyday amenities"])
+@pytest.mark.parametrize(
+    "word", ["excellent", "exceptional", "convenient lifestyle", "everyday amenities"]
+)
 def test_validator_rejects_filler_unless_earned(word):
     text = f"Transit is ahead of 72% of the metro, a {word} point. Tradeoff: none."
     low = dict(GOOD, summary=text)
@@ -336,7 +347,14 @@ def test_cache_key_varies_with_selected_factors(monkeypatch):
 
 def test_system_prompt_rules():
     s = ai_explain.SYSTEM
-    for needle in ("priorities", "Tradeoff:", "Tip:", "65 and 85 words", "Feet and miles", "named places"):
+    for needle in (
+        "priorities",
+        "Tradeoff:",
+        "Tip:",
+        "65 and 85 words",
+        "Feet and miles",
+        "named places",
+    ):
         assert needle in s
 
 
@@ -369,6 +387,6 @@ def test_explanation_endpoints_pass_priorities_to_the_ai_layer(client, monkeypat
     r = client.get(f"/v1/score/{uuid4()}/explanation", params={"factors": "gym"})
     assert r.json()["priorities"] == ["gym"]
     assert [s[1:] for s in seen] == [(["cafe", "transit"], True), (["gym"], True)]
-    # No factors: the plain rule-based text, 12 priorities echoed.
+    # No factors: the plain rule-based text, 13 priorities echoed.
     body = client.get("/v1/area/explanation", params={"lat": CLICK[0], "lon": CLICK[1]}).json()
-    assert body["explanation"].startswith("This area's strongest") and len(body["priorities"]) == 12
+    assert body["explanation"].startswith("This area's strongest") and len(body["priorities"]) == 13

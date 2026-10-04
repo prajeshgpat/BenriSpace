@@ -2,7 +2,24 @@ import type { components, operations } from "./schema";
 
 type Schemas = components["schemas"];
 
-export type FactorKey = keyof Schemas["SubScores"];
+/** The thirteen user-facing factors (scoring framework v1.4). Hand-written until the contract is regenerated. */
+export const FACTOR_KEY_LIST = [
+  "grocery",
+  "restaurant",
+  "cafe",
+  "bar",
+  "gym",
+  "shopping",
+  "recreation",
+  "gasConvenience",
+  "transit",
+  "airport",
+  "traffic",
+  "school",
+  "emergencyCorridor",
+] as const;
+
+export type FactorKey = (typeof FACTOR_KEY_LIST)[number];
 
 /**
  * The contract types every sub-score as an optional number, but the live API
@@ -14,6 +31,8 @@ export type SubScores = Record<FactorKey, number | null>;
 
 export type Score = Omit<Schemas["ScoreResponse"], "subScores"> & {
   subScores: SubScores;
+  /** e.g. "Park Slope, Brooklyn"; absent or null until the API names it. */
+  neighborhood?: string | null;
 };
 
 export type SchoolInfo = NonNullable<Schemas["SchoolInfo"]>;
@@ -54,6 +73,7 @@ export interface ImproveBetterArea {
   factorGain: number;
   compositeScore: number;
   compositeGain: number;
+  neighborhood?: string | null;
 }
 
 export interface ImproveSuggestion {
@@ -66,6 +86,7 @@ export interface ImproveSuggestion {
 }
 
 export interface ImproveBestNearby {
+  neighborhood?: string | null;
   latitude: number;
   longitude: number;
   direction: string;
@@ -83,7 +104,7 @@ export interface Improve {
   priorities: FactorKey[];
 }
 
-/** The user's selection as the API takes it. `factors` is omitted for all 12. */
+/** The user's selection as the API takes it. `factors` is omitted for all 13. */
 export interface PriorityQuery {
   factors?: readonly FactorKey[];
   weights?: Readonly<Partial<Record<FactorKey, number>>>;
@@ -97,6 +118,8 @@ export interface SimilarDifference {
 }
 
 export interface SimilarArea {
+  /** e.g. "Park Slope, Brooklyn"; null when unknown. */
+  neighborhood?: string | null;
   latitude: number;
   longitude: number;
   direction: string;
@@ -139,6 +162,7 @@ export interface MapCells {
 
 export type MapTopResult = Omit<Schemas["MapTopResult"], "subScores"> & {
   subScores: SubScores;
+  neighborhood?: string | null;
 };
 
 export interface MapTop {

@@ -29,13 +29,16 @@ interface ScoreHeaderProps {
 
 /** "Area bounded by Broadway, Canal St and Bowery"; null when no roads are named. */
 export function areaLabel(boundedBy: readonly string[]): string | null {
+  const roads = roadList(boundedBy);
+  return roads === null ? null : `Area bounded by ${roads}`;
+}
+
+function roadList(boundedBy: readonly string[]): string | null {
   if (boundedBy.length === 0) return null;
   const head = boundedBy.slice(0, -1);
-  const roads =
-    head.length === 0
-      ? boundedBy[0]
-      : `${head.join(", ")} and ${boundedBy[boundedBy.length - 1]}`;
-  return `Area bounded by ${roads}`;
+  return head.length === 0
+    ? boundedBy[0]
+    : `${head.join(", ")} and ${boundedBy[boundedBy.length - 1]}`;
 }
 
 /** Compact header: address, composite score and the copy-link action. */
@@ -45,8 +48,16 @@ export function ScoreHeader({
   score,
   area = null,
 }: ScoreHeaderProps) {
-  const boundedLabel = area ? areaLabel(area.boundedBy) : null;
-  const subtitle = boundedLabel ?? describeScoredLocation(score, readableAddress);
+  const neighborhood = score.neighborhood?.trim() || null;
+  const roads = area ? roadList(area.boundedBy) : null;
+  const baseSubtitle = roads
+    ? neighborhood
+      ? `${neighborhood} · bounded by ${roads}`
+      : `Area bounded by ${roads}`
+    : null;
+  const located = describeScoredLocation(score, readableAddress);
+  const subtitle =
+    baseSubtitle ?? (neighborhood ? `${neighborhood} · ${located}` : located);
 
   return (
     <article

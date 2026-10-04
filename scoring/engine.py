@@ -40,9 +40,11 @@ debuggable against the source), and this module is where "higher raw
 goodness = better" gets established before normalization.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 NEAR_DISTANCE_SENTINEL_M = 5000.0  # "nothing found nearby" treated as this far
+FT_PER_M = 3.280839895
 
 
 @dataclass(frozen=True)
@@ -72,9 +74,119 @@ class CategorySpec:
     # If set, the engine also emits the normalized proximity+density part
     # under this scores column for every cell that has any data.
     proximity_score_column: str | None = None
+    # v2.1: a pure function of the whole feature row returning a "higher is
+    # always better" goodness value (None = no data). Replaces the
+    # count/nearest/single-column logic; it owns its own direction handling.
+    raw_fn: Callable[[dict], float | None] | None = None
+    # v2.1: a second signal normalized on its own and blended in with
+    # `secondary_weight` (Recreation: park signal 75% + trail signal 25%).
+    # A missing half falls back to the other one rather than scoring 0.
+    secondary: "CategorySpec | None" = None
+    secondary_weight: float = 0.25
 
 
-CATEGORY_SPECS: list[CategorySpec] = [
+# ---------------------------------------------------------------------------
+# v2.1 pure raw-signal functions (SCORING_FRAMEWORK.md 3.4, 3.5, 4.3, 5.2)
+# ---------------------------------------------------------------------------
+
+# Gas stations / convenience stores right next door are a noise-corridor
+# negative (loitering, fuel fumes): full penalty within 300 ft, falling
+# linearly to none at 800 ft. Distances in feature_store are metres.
+ADJACENCY_FULL_FT = 300.0
+ADJACENCY_ZERO_FT = 800.0
+ADJACENCY_FULL_M = ADJACENCY_FULL_FT / FT_PER_M
+ADJACENCY_ZERO_M = ADJACENCY_ZERO_FT / FT_PER_M
+# Hand-tuned, in the units of emergency_corridor_facility_raw: one adjacent
+# station costs about as much as a secondary road at its closest (class
+# weight 3 / (1 + 0)). Both kinds adjacent cost more, capped at 1.5x.
+ADJACENCY_FULL_PENALTY = 3.0
+ADJACENCY_MAX_SHARE = 1.5
+# Share of the shopping score a Whole Foods / Starbucks / Target anchor can add
+# (premium_retail_raw tops out at 2.5, so at most +0.2 on a 0-1 signal).
+SHOPPING_ANCHOR_WEIGHT = 0.08
+
+
+def adjacency_share(nearest_m: float | None) -> float:
+    """1.0 within 300 ft, linear to 0.0 at 800 ft, 0.0 when unknown/farther."""
+    if nearest_m is None:
+        return 0.0
+    d = float(nearest_m)
+    if d <= ADJACENCY_FULL_M:
+        return 1.0
+    if d >= ADJACENCY_ZERO_M:
+        return 0.0
+    return (ADJACENCY_ZERO_M - d) / (ADJACENCY_ZERO_M - ADJACENCY_FULL_M)
+
+
+def gas_convenience_adjacency_penalty(
+    gas_nearest_m: float | None, convenience_nearest_m: float | None
+) -> float:
+    """Extra noise-corridor penalty (same units as the corridor raw signal,
+    higher = worse) from gas stations and convenience stores right next door,
+    using the nearest distance of each kind. 0.0 when neither is close."""
+    share = adjacency_share(gas_nearest_m) + adjacency_share(convenience_nearest_m)
+    return ADJACENCY_FULL_PENALTY * min(ADJACENCY_MAX_SHARE, share)
+
+
+def noise_corridor_goodness(row: dict) -> float | None:
+    """v2.1 Noise Corridor: -(corridor/facility signal, damped for side
+    streets, + gas / convenience adjacency penalty). None when the cell has no
+    corridor signal at all (the adjacency penalty alone never scores a cell)."""
+    base = row.get("emergency_corridor_facility_raw")
+    if base is None:
+        base = row.get("emergency_corridor_proxy_raw")
+    if base is None:
+        return None
+    damped = _apply_street_orientation_damping(float(base), row.get("street_orientation"))
+    penalty = gas_convenience_adjacency_penalty(
+        row.get("gas_station_nearest_m"), row.get("convenience_store_nearest_m")
+    )
+    return -(damped + penalty)
+
+
+def gas_convenience_goodness(row: dict) -> float | None:
+    """v2.1 Gas & Convenience (one positive factor): the generic 70% proximity
+    / 30% density blend over the UNION of gas stations and convenience stores
+    (nearest of either; counts within 500 m added). Approximates the
+    framework's k=2 nearest: two stations close together read as more
+    available than one."""
+    counts = [row.get("gas_station_count_500m"), row.get("convenience_store_count_500m")]
+    nearests = [
+        float(v)
+        for v in (row.get("gas_station_nearest_m"), row.get("convenience_store_nearest_m"))
+        if v is not None
+    ]
+    if all(c is None for c in counts) and not nearests:
+        return None
+    count = sum(float(c) for c in counts if c is not None)
+    nearest = min(nearests) if nearests else NEAR_DISTANCE_SENTINEL_M
+    return 0.7 * -nearest + 0.3 * count
+
+
+def shopping_goodness(row: dict) -> float | None:
+    """v2.1 Shopping: the stored proximity + variety signal (shopping_raw, 0-1)
+    plus a small anchor bonus from premium_retail_raw (Whole Foods / Starbucks /
+    Target). None when neither exists."""
+    base = row.get("shopping_raw")
+    anchor = row.get("premium_retail_raw")
+    if base is None and anchor is None:
+        return None
+    return (float(base) if base is not None else 0.0) + SHOPPING_ANCHOR_WEIGHT * (
+        float(anchor) if anchor is not None else 0.0
+    )
+
+
+# Trail access is the secondary half of Recreation (existing trail features).
+_TRAIL_SPEC = CategorySpec(
+    "_trail",
+    "positive",
+    count_column="running_trail_count_800m",
+    nearest_column="running_trail_nearest_m",
+    rating_column="strava_segment_popularity_raw",
+)
+
+
+CATEGORY_SPECS_V2: list[CategorySpec] = [
     CategorySpec(
         "grocery_score",
         "positive",
@@ -152,6 +264,52 @@ CATEGORY_SPECS: list[CategorySpec] = [
     ),
 ]
 
+_V2_BY_COLUMN = {s.score_column: s for s in CATEGORY_SPECS_V2}
+
+# v2.1 (weights_version 'v2.1-handtuned'): the 13 user-facing factors, none
+# hidden. Same min-max engine shape; premium_retail / gas_station /
+# convenience_store / trail_popularity are folded into Shopping, Gas &
+# Convenience, Noise Corridor and Recreation. `road_score` is Traffic.
+CATEGORY_SPECS_V2_1: list[CategorySpec] = [
+    _V2_BY_COLUMN["grocery_score"],
+    _V2_BY_COLUMN["gym_score"],
+    _V2_BY_COLUMN["cafe_score"],
+    _V2_BY_COLUMN["restaurant_score"],
+    _V2_BY_COLUMN["bar_score"],
+    CategorySpec("shopping_score", "positive", raw_fn=shopping_goodness),
+    CategorySpec("gas_convenience_score", "positive", raw_fn=gas_convenience_goodness),
+    _V2_BY_COLUMN["transit_score"],
+    _V2_BY_COLUMN["school_score"],
+    _V2_BY_COLUMN["road_score"],
+    CategorySpec(
+        "emergency_corridor_score", "negative", raw_fn=noise_corridor_goodness
+    ),
+    _V2_BY_COLUMN["airport_score"],
+    CategorySpec(
+        "recreation_score",
+        "positive",
+        single_column="recreation_raw",
+        secondary=_TRAIL_SPEC,
+        secondary_weight=0.25,
+    ),
+]
+
+# Every score column the `scores` table can hold for a category (v2 and v2.1);
+# the DB column whitelist and the area aggregation use this union.
+# (The v2 spec wins where both versions share a column, e.g. road_score.)
+CATEGORY_SPECS: list[CategorySpec] = [
+    *CATEGORY_SPECS_V2,
+    *(s for s in CATEGORY_SPECS_V2_1 if s.score_column not in _V2_BY_COLUMN),
+]
+
+# v2.1 columns that older rows hold under a legacy name: a v2 row's Shopping is
+# its premium_retail_score and its Recreation its trail_popularity_score. The API
+# reads `coalesce(new, legacy)` so one query serves rows of either version.
+LEGACY_FALLBACK_COLUMNS: dict[str, str] = {
+    "shopping_score": "premium_retail_score",
+    "recreation_score": "trail_popularity_score",
+}
+
 # Score columns of underlying metrics (counted in the composite, no UI toggle).
 UNDERLYING_SCORE_COLUMNS: frozenset[str] = frozenset(
     s.score_column for s in CATEGORY_SPECS if s.underlying
@@ -164,6 +322,7 @@ UNDERLYING_SCORE_COLUMNS: frozenset[str] = frozenset(
 # v2 data is ingested; select v2 via SCORING_WEIGHTS_VERSION.
 WEIGHTS_VERSION_V1 = "v1-handtuned"
 WEIGHTS_VERSION_V2 = "v2-handtuned"
+WEIGHTS_VERSION_V2_1 = "v2.1-handtuned"
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     # "Origin insight": grocery-type retailers are the strongest proxy for
@@ -204,6 +363,37 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 
+# v2.1 default relative weights (SCORING_FRAMEWORK.md section 2, accepted by the
+# owner 2026-10-04): factors used more often weigh more. Only the ratios matter;
+# the composite is normalized by the weight of the factors that have a score.
+V2_1_WEIGHTS: dict[str, float] = {
+    "grocery_score": 14.0,
+    "transit_score": 14.0,
+    "emergency_corridor_score": 12.0,  # Noise Corridor
+    "restaurant_score": 10.0,
+    "school_score": 10.0,
+    "gym_score": 9.0,
+    "cafe_score": 8.0,
+    "gas_convenience_score": 6.0,
+    "bar_score": 5.0,
+    "airport_score": 5.0,
+    "recreation_score": 5.0,
+    "shopping_score": 4.0,
+    "road_score": 4.0,  # Traffic
+}
+
+_SPECS_BY_VERSION: dict[str, tuple[list[CategorySpec], dict[str, float]]] = {
+    WEIGHTS_VERSION_V2: (CATEGORY_SPECS_V2, DEFAULT_WEIGHTS),
+    WEIGHTS_VERSION_V2_1: (CATEGORY_SPECS_V2_1, V2_1_WEIGHTS),
+}
+
+
+def specs_and_weights(weights_version: str) -> tuple[list[CategorySpec], dict[str, float]]:
+    """(category specs, default weights) the engine uses for a weights version.
+    v1 rows were computed by the same code as v2 (a subset of the columns)."""
+    return _SPECS_BY_VERSION.get(weights_version, _SPECS_BY_VERSION[WEIGHTS_VERSION_V2])
+
+
 def _apply_street_orientation_damping(value: float, street_orientation: str | None) -> float:
     """Emergency-corridor penalty is mitigated by street orientation
     (normalization.md): a side street sees less of the noise/traffic a
@@ -221,6 +411,8 @@ def compute_raw_goodness(row: dict, spec: CategorySpec) -> float | None:
     there's no data yet for this row/category. Deliberately excludes
     spec.rating_column even when present — see compute_rating_raw() and
     the module docstring for why that's normalized separately."""
+    if spec.raw_fn is not None:
+        return spec.raw_fn(row)
     if spec.single_column is not None:
         value = row.get(spec.single_column)
         if value is None and spec.fallback_single_column is not None:
@@ -269,10 +461,12 @@ def min_max_normalize(raw_by_id: dict[str, float]) -> dict[str, float]:
     return {k: (v - lo) / (hi - lo) * 100.0 for k, v in raw_by_id.items()}
 
 
-def all_score_columns() -> list[str]:
-    """Every per-category score column the engine can emit, plus the composite."""
-    cols = [spec.score_column for spec in CATEGORY_SPECS]
-    cols += [spec.proximity_score_column for spec in CATEGORY_SPECS if spec.proximity_score_column]
+def all_score_columns(weights_version: str = WEIGHTS_VERSION_V2) -> list[str]:
+    """Every per-category score column the engine emits for a weights version,
+    plus the composite."""
+    specs, _ = specs_and_weights(weights_version)
+    cols = [spec.score_column for spec in specs]
+    cols += [spec.proximity_score_column for spec in specs if spec.proximity_score_column]
     return [*cols, "composite_score"]
 
 
@@ -293,58 +487,78 @@ def compute_composite(
 RATING_BLEND_WEIGHT = 1 / 3  # default CategorySpec.rating_weight (trails)
 
 
-def score_metro_cohort(feature_rows: list[dict]) -> dict[str, dict]:
+def _spec_scores(
+    feature_rows: list[dict], spec: CategorySpec
+) -> tuple[dict[str, float], dict[str, float]]:
+    """({geo_entity_id: 0-100 category score}, {geo_entity_id: 0-100
+    proximity+density part before any rating blend}) for one spec over a
+    cohort, applying the rating blend and (v2.1) the secondary-signal blend.
+    Cells without data for the spec are absent."""
+    raw_by_id = {}
+    for row in feature_rows:
+        raw = compute_raw_goodness(row, spec)
+        if raw is not None:
+            raw_by_id[row["geo_entity_id"]] = raw
+    primary = min_max_normalize(raw_by_id)
+
+    rating_scores: dict[str, float] = {}
+    if spec.rating_column is not None:
+        rating_raw = {}
+        for row in feature_rows:
+            rating = compute_rating_raw(row, spec)
+            if rating is not None:
+                rating_raw[row["geo_entity_id"]] = rating
+        rating_scores = min_max_normalize(rating_raw)
+
+    scores: dict[str, float] = {}
+    for geo_id, pd_score in primary.items():
+        if spec.rating_column is None:
+            scores[geo_id] = pd_score
+            continue
+        rating_score = rating_scores.get(geo_id)
+        if rating_score is None:
+            if spec.missing_rating == "null":
+                continue
+            scores[geo_id] = pd_score
+        else:
+            scores[geo_id] = (1 - spec.rating_weight) * pd_score + spec.rating_weight * rating_score
+
+    if spec.secondary is not None:
+        secondary, _ = _spec_scores(feature_rows, spec.secondary)
+        w = spec.secondary_weight
+        for geo_id in set(scores) | set(secondary):
+            a, b = scores.get(geo_id), secondary.get(geo_id)
+            scores[geo_id] = b if a is None else a if b is None else (1 - w) * a + w * b
+    return scores, primary
+
+
+def score_metro_cohort(
+    feature_rows: list[dict], weights_version: str = WEIGHTS_VERSION_V2
+) -> dict[str, dict]:
     """feature_rows: feature_store rows (each a dict including geo_entity_id
     and the raw columns) for ONE metro_area cohort. Returns
     {geo_entity_id: {category_score_column: value, ..., 'composite_score': value}}.
+    `weights_version` picks the category specs and default weights (v2 or v2.1).
     """
-    normalized_by_category: dict[str, dict[str, float]] = {}
-    rating_normalized_by_category: dict[str, dict[str, float]] = {}
-
-    for spec in CATEGORY_SPECS:
-        raw_by_id = {}
-        for row in feature_rows:
-            raw = compute_raw_goodness(row, spec)
-            if raw is not None:
-                raw_by_id[row["geo_entity_id"]] = raw
-        normalized_by_category[spec.score_column] = min_max_normalize(raw_by_id)
-
-        if spec.rating_column is not None:
-            rating_raw_by_id = {}
-            for row in feature_rows:
-                rating = compute_rating_raw(row, spec)
-                if rating is not None:
-                    rating_raw_by_id[row["geo_entity_id"]] = rating
-            rating_normalized_by_category[spec.score_column] = min_max_normalize(rating_raw_by_id)
+    specs, weights = specs_and_weights(weights_version)
+    scored = {spec.score_column: _spec_scores(feature_rows, spec) for spec in specs}
 
     results: dict[str, dict] = {}
     for row in feature_rows:
         geo_id = row["geo_entity_id"]
         sub_scores = {}
         extras = {}
-        for spec in CATEGORY_SPECS:
-            pd_score = normalized_by_category[spec.score_column].get(geo_id)
-            if pd_score is None:
-                continue
-            if spec.proximity_score_column:
-                extras[spec.proximity_score_column] = pd_score
-            if spec.rating_column is None:
-                sub_scores[spec.score_column] = pd_score
-                continue
-            rating_score = rating_normalized_by_category.get(spec.score_column, {}).get(geo_id)
-            if rating_score is None:
-                if spec.missing_rating == "null":
-                    continue
-                sub_scores[spec.score_column] = pd_score
-            else:
-                sub_scores[spec.score_column] = (
-                    1 - spec.rating_weight
-                ) * pd_score + spec.rating_weight * rating_score
+        for spec in specs:
+            final, primary = scored[spec.score_column]
+            if spec.proximity_score_column and geo_id in primary:
+                extras[spec.proximity_score_column] = primary[geo_id]
+            if geo_id in final:
+                sub_scores[spec.score_column] = final[geo_id]
         if not sub_scores:
             continue
         results[geo_id] = {
             **sub_scores,
             **extras,
-            "composite_score": compute_composite(sub_scores),
+            "composite_score": compute_composite(sub_scores, weights),
         }
     return results

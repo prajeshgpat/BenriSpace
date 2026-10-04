@@ -29,15 +29,23 @@ NEAREST_COLUMNS: dict[str, tuple[str, ...]] = {
     "cafe": ("cafe_nearest_m",),
     "restaurant": ("restaurant_nearest_m",),
     "bar": ("bar_nearest_m",),
-    "gasStation": ("gas_station_nearest_m",),
-    "convenienceStore": ("convenience_store_nearest_m",),
+    "gasConvenience": ("gas_station_nearest_m", "convenience_store_nearest_m"),
     "transit": ("transit_nearest_m",),
     "school": ("school_nearest_m",),
-    "trailPopularity": ("running_trail_nearest_m",),
-    "premiumRetail": ("whole_foods_nearest_m", "starbucks_nearest_m", "target_nearest_m"),
+    "recreation": ("running_trail_nearest_m",),
+    "shopping": ("whole_foods_nearest_m", "starbucks_nearest_m", "target_nearest_m"),
     "emergencyCorridor": ("emergency_facility_nearest_m",),
 }
-FEATURE_STORE_NEAREST_COLUMNS = tuple(c for cols in NEAREST_COLUMNS.values() for c in cols)
+# v2.1 columns in feet (owner rule: new columns are imperial). Merged with the
+# metre columns above, so Shopping / Recreation use the nearest of old and new.
+NEAREST_FT_COLUMNS: dict[str, tuple[str, ...]] = {
+    "shopping": ("shopping_nearest_ft",),
+    "recreation": ("park_nearest_ft",),
+}
+FT_TO_M = 0.3048
+FEATURE_STORE_NEAREST_COLUMNS = tuple(
+    c for cols in (*NEAREST_COLUMNS.values(), *NEAREST_FT_COLUMNS.values()) for c in cols
+)
 
 
 def _snake_to_camel(name: str) -> str:
@@ -52,6 +60,11 @@ def nearest_m_by_factor(feature_row: dict | None) -> dict[str, float | None]:
     out: dict[str, float | None] = {}
     for factor, columns in NEAREST_COLUMNS.items():
         values = [float(row[c]) for c in columns if row.get(c) is not None]
+        values += [
+            float(row[c]) * FT_TO_M
+            for c in NEAREST_FT_COLUMNS.get(factor, ())
+            if row.get(c) is not None
+        ]
         out[factor] = min(values) if values else None
     return out
 
@@ -65,22 +78,22 @@ def nearest_mi_by_factor(feature_row: dict | None) -> dict[str, float | None]:
 
 # Human-facing names for each SubScores field (snake_case, matching the
 # Pydantic field names -- CamelModel handles the wire-format camelCase
-# separately).
+# separately). Lower case: they are used mid-sentence, and match the website's
+# pill names (Bars, Shopping, Recreation, Traffic, Gas & convenience, Noise corridor).
 FACTOR_LABELS: dict[str, str] = {
     "grocery": "grocery access",
     "gym": "gym access",
     "cafe": "cafe access",
     "restaurant": "restaurant access",
-    "bar": "bar and pub access",
-    "premium_retail": "access to premium retail (Whole Foods, Starbucks, Target)",
-    "gas_station": "distance from gas stations",
-    "convenience_store": "distance from convenience stores",
+    "bar": "bars",
+    "shopping": "shopping",
+    "gas_convenience": "gas & convenience",
     "transit": "transit access",
     "school": "school quality and proximity",
-    "road": "road and traffic conditions",
-    "emergency_corridor": "distance from the noise corridor",
+    "traffic": "traffic",
+    "emergency_corridor": "noise corridor",
     "airport": "airport drive time",
-    "trail_popularity": "access to popular running and walking trails",
+    "recreation": "recreation",
 }
 
 

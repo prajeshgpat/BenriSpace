@@ -16,6 +16,7 @@ import re
 from pydantic.alias_generators import to_camel
 
 from api.explain import FACTOR_LABELS
+from api.factors import FACTOR_COLUMNS
 from api.metro_stats import MetroStats, get_stats
 from api.places import places_for_factor
 from api.priorities import TOGGLEABLE_FACTORS, Priorities
@@ -31,7 +32,10 @@ MAX_BULLETS = 2
 PLACES_PER_FACTOR = 2
 PLACE_RADIUS_MI = 1.0
 # Selected factors for which named places exist (wire key -> places factor).
-PLACE_FACTORS = ("grocery", "gym", "cafe", "restaurant", "bar", "transit", "school")
+PLACE_FACTORS = (
+    "grocery", "gym", "cafe", "restaurant", "bar", "shopping", "recreation",
+    "gasConvenience", "transit", "school",
+)  # fmt: skip
 FILLER_PERCENTILE = 95
 
 SYSTEM = (
@@ -113,7 +117,7 @@ def build_evidence(
             "nearest": format_distance((nearest_m or {}).get(key)),
             "selected": key in selected,
         }
-        column = f"{field}_score"
+        column = FACTOR_COLUMNS[key]
         if stats and column in stats:
             item["percentile"] = stats[column].percentile(value)
             item["vsMetro"] = vs_metro_text(item["percentile"])

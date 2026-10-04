@@ -111,6 +111,40 @@ def test_premium_retail_merges_nearest_first_and_limits(make_client):
     assert [p["name"] for p in r.json()["places"]] == ["SB1", "T"]
 
 
+def test_v2_1_place_factors(make_client):
+    client = make_client(
+        {
+            "shopping": [row("Macy's", "shopping", 0.003, "Macy's")],
+            "park": [row("Bryant Park", "park", 0.002)],
+            "gas_station": [row("Shell", "gas_station", 0.004, "Shell")],
+            "convenience_store": [row("7-Eleven", "convenience_store", 0.001)],
+        }
+    )
+    base = {"lat": LAT, "lon": LON, "radiusMi": 2}
+    r = client.get("/v1/places", params={**base, "factor": "shopping"})
+    assert [(p["name"], p["category"]) for p in r.json()["places"]] == [("Macy's", "shopping")]
+    r = client.get("/v1/places", params={**base, "factor": "recreation"})
+    assert [(p["name"], p["category"]) for p in r.json()["places"]] == [("Bryant Park", "park")]
+    r = client.get("/v1/places", params={**base, "factor": "gasConvenience"})
+    assert [p["name"] for p in r.json()["places"]] == ["7-Eleven", "Shell"]  # merged, nearest first
+    assert r.json()["factor"] == "gasConvenience"
+
+
+def test_legacy_place_keys_keep_their_exact_meaning():
+    from api.places import FACTOR_CATEGORIES
+
+    assert FACTOR_CATEGORIES["gasStation"] == ("gas_station",)
+    assert FACTOR_CATEGORIES["convenienceStore"] == ("convenience_store",)
+    assert FACTOR_CATEGORIES["premiumRetail"] == ("whole_foods", "starbucks", "target")
+    assert FACTOR_CATEGORIES["shopping"] == ("shopping",)
+
+
+def test_place_categories_include_shopping_and_park():
+    from common.places import PLACE_CATEGORIES
+
+    assert {"shopping", "park"} <= set(PLACE_CATEGORIES)
+
+
 def test_radius_excludes_far_places(make_client):
     client = make_client({"bar": [row("Far", "bar", 0.05)]})  # ~3.5 mi
     r = client.get("/v1/places", params={"lat": LAT, "lon": LON, "factor": "bar"})

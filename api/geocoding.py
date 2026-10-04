@@ -21,14 +21,45 @@ Respecting Nominatim's usage policy
   never a loop over many addresses, so it stays well within policy.
 """
 
+import os
+
 import httpx
 
+LOCATIONIQ_SEARCH_URL = "https://us1.locationiq.com/v1/search"
+LOCATIONIQ_KEY_ENV = "LOCATIONIQ_API_KEY"
+# West, south, east, north of the covered metro (biases ambiguous matches).
+METRO_VIEWBOX = "-75.3,39.8,-71.7,42.1"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "BenriSpace/0.1 (Phase 1 MVP; contact: prajeshgpat@gmail.com)"
 
 
+def _locationiq_geocode(address: str, timeout: float) -> tuple[float, float] | None:
+    """LocationIQ forward search (the same key as autocomplete); None on any failure."""
+    key = os.environ.get(LOCATIONIQ_KEY_ENV, "").strip()
+    if not key:
+        return None
+    params = {
+        "key": key, "q": address, "format": "json", "limit": 1,
+        "countrycodes": "us", "viewbox": METRO_VIEWBOX,
+    }  # fmt: skip
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(LOCATIONIQ_SEARCH_URL, params=params)
+            resp.raise_for_status()
+            results = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(results, list) or not results:
+        return None
+    try:
+        return float(results[0]["lat"]), float(results[0]["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def geocode_address(address: str, *, timeout: float = 5.0) -> tuple[float, float] | None:
-    """Returns (lat, lon) for Nominatim's top match, or None if the address
+    """Returns (lat, lon) for the top match -- LocationIQ first when its key is
+    set (better street-address matching), then OSM Nominatim --  or None if the address
     doesn't resolve (or the request fails outright -- treated the same as
     "unresolvable" by callers, which return a 400 either way).
 
@@ -36,6 +67,9 @@ def geocode_address(address: str, *, timeout: float = 5.0) -> tuple[float, float
     it (geohash lookup, bbox fallback, response building, isochrone-circle
     math) is what's covered in tests/test_api.py.
     """
+    point = _locationiq_geocode(address, timeout)
+    if point is not None:
+        return point
     params = {"q": address, "format": "jsonv2", "limit": 1}
     headers = {"User-Agent": USER_AGENT}
     try:

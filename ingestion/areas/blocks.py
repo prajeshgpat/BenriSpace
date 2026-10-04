@@ -103,7 +103,12 @@ def carve_hard_roads(
         carved += 1
         rest = f.difference(lines.buffer(width_m))
         pieces = [rest] if rest.geom_type == "Polygon" else list(getattr(rest, "geoms", []))
-        out.extend(sorted((g for g in pieces if g.geom_type == "Polygon" and g.area > 300), key=lambda g: (round(g.centroid.x, 3), round(g.centroid.y, 3))))
+        out.extend(
+            sorted(
+                (g for g in pieces if g.geom_type == "Polygon" and g.area > 300),
+                key=lambda g: (round(g.centroid.x, 3), round(g.centroid.y, 3)),
+            )
+        )
     return out, carved
 
 
@@ -228,7 +233,9 @@ def build_blocks(
     stats["merged_small"] = merged
 
     blocks: list[Block] = []
-    order = sorted(group, key=lambda g: (round(kept[g].centroid.x, 3), round(kept[g].centroid.y, 3)))
+    order = sorted(
+        group, key=lambda g: (round(kept[g].centroid.x, 3), round(kept[g].centroid.y, 3))
+    )
     for bid, g in enumerate(order):
         members = sorted(group[g])
         geom = kept[members[0]] if len(members) == 1 else unary_union([kept[m] for m in members])

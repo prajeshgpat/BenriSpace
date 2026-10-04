@@ -19,10 +19,10 @@
 # values for that source, and the failed job still turns the run red.
 #
 # Inert until DATABASE_URL is set as a repo secret — see PHASES.md
-# "Blocking Phase 1 today". NJ_TRANSIT_API_KEY/USERNAME and
-# STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN are optional; gtfs_transit.py and
-# trails.py both degrade gracefully (log that one source as failed/skipped,
-# continue with the rest) when their credentials are absent.
+# "Blocking Phase 1 today". STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN are optional;
+# trails.py degrades gracefully when they are absent. NJ Transit's rail and bus
+# GTFS feeds are now open downloads, so NJ_TRANSIT_API_KEY/USERNAME are unused
+# (kept only so an old secret setup stays harmless).
 #
 # ingestion.trails' Strava enhancement is rate-limit-bound (~900 calls at
 # 90/15min) and can take up to ~150 minutes on its own when Strava creds
@@ -72,6 +72,8 @@ jobs:
           - ingestion.schools
           - ingestion.gtfs_transit
           - ingestion.osm_poi
+          - ingestion.osm_retail_parks # shopping + parks (migration 0009; v2.1 columns)
+          - ingestion.neighborhoods
           - ingestion.roads
           - ingestion.trails
     steps:

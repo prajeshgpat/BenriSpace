@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { FACTOR_KEYS, UNDERLYING_FACTOR_KEYS } from "@/lib/score/factors";
+import { FACTOR_KEYS } from "@/lib/score/factors";
 
 import {
   ALL_FACTORS,
@@ -55,20 +55,28 @@ describe("selection", () => {
     }
   });
 
-  it("keeps underlying metrics out of presets and selections", () => {
-    for (const preset of PRESETS) {
-      for (const key of UNDERLYING_FACTOR_KEYS) {
-        expect(preset.factors).not.toContain(key);
-      }
-    }
-    expect(createSelection([...FACTOR_KEYS, "premiumRetail"]).factors).toEqual(
-      FACTOR_KEYS,
+  it("uses the v1.4 keys in the presets", () => {
+    const byId = Object.fromEntries(PRESETS.map((p) => [p.id, p.factors]));
+    expect(byId.errands).toEqual(
+      expect.arrayContaining(["grocery", "restaurant", "cafe", "gym", "shopping", "transit"]),
     );
+    expect(byId.family).toEqual(
+      expect.arrayContaining(["school", "grocery", "recreation", "emergencyCorridor"]),
+    );
+    expect(byId.commuter).toEqual(
+      expect.arrayContaining(["transit", "airport", "gasConvenience", "traffic"]),
+    );
+  });
+
+  it("weights the Quiet preset on noise corridor and traffic, not gas & convenience", () => {
+    const quiet = PRESETS.find((p) => p.id === "quiet")!;
+    expect([...quiet.factors].sort()).toEqual(["emergencyCorridor", "traffic"]);
+    expect(quiet.factors).not.toContain("gasConvenience");
   });
 
   it("treats all toggleable factors as 'all selected'", () => {
     expect(isAllSelected(ALL_FACTORS)).toBe(true);
-    expect(ALL_FACTORS.factors).toHaveLength(12);
+    expect(ALL_FACTORS.factors).toHaveLength(13);
     expect(isAllSelected(toggleFactor(ALL_FACTORS, "bar"))).toBe(false);
   });
 
