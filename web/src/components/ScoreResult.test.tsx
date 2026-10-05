@@ -29,9 +29,8 @@ describe("ScoreHeader", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "350 5th Ave, New York, NY" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Scored for the area around 40.7492\u00b0 N, 73.9850\u00b0 W"),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Scored for the area around/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/40\.7492/)).not.toBeInTheDocument();
     expect(screen.queryByText("40.74920,-73.98500")).not.toBeInTheDocument();
   });
 
@@ -65,12 +64,11 @@ describe("ScoreHeader", () => {
   describe("area result", () => {
     const { area } = makeAreaScore();
 
-    it("labels the area and keeps the readable address heading, without size or averaging text", () => {
+    it("shows the readable address, never the street boundaries, without a neighborhood", () => {
       render(
         <ScoreHeader
           address="14A Rock Street, Jersey City, NJ"
-          readableAddress="14A Rock Street, Jersey City, NJ"
-          score={makeScore()}
+          score={makeScore({ neighborhood: null })}
           area={area}
         />,
       );
@@ -78,21 +76,11 @@ describe("ScoreHeader", () => {
       expect(
         screen.getByRole("heading", { level: 2, name: "14A Rock Street, Jersey City, NJ" }),
       ).toBeInTheDocument();
-      expect(
-        screen.getByText("Area bounded by Broadway, Canal St, Bowery and Houston St"),
-      ).toBeInTheDocument();
-      expect(screen.getByRole("article")).toHaveAccessibleDescription(
-        "Area bounded by Broadway, Canal St, Bowery and Houston St",
-      );
+      expect(screen.queryByText(/bounded by/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/Scored for the area around/)).not.toBeInTheDocument();
       expect(screen.queryByText(/About \d/)).not.toBeInTheDocument();
       expect(screen.queryByText(/grid square/)).not.toBeInTheDocument();
       expect(screen.queryByTestId("area-note")).not.toBeInTheDocument();
-    });
-
-    it("falls back to the usual location line when no roads are named", () => {
-      render(<ScoreHeader address="x" score={makeScore()} area={{ ...area, boundedBy: [] }} />);
-      expect(screen.getByText(/Scored for the area around/)).toBeInTheDocument();
     });
 
     it("explains the average in a tooltip on the score only for areas", () => {
@@ -108,7 +96,7 @@ describe("ScoreHeader", () => {
     });
   });
 
-  it("leads the subtitle with the neighborhood, then the street boundary", () => {
+  it("titles the result by neighborhood and city, with no subtitle", () => {
     const area = makeAreaScore().area;
     render(
       <ScoreHeader
@@ -118,8 +106,9 @@ describe("ScoreHeader", () => {
       />,
     );
     expect(
-      screen.getByText("Park Slope, Brooklyn · bounded by Bedford Ave and Nostrand Ave"),
+      screen.getByRole("heading", { level: 2, name: "Park Slope, Brooklyn" }),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Bedford/)).not.toBeInTheDocument();
   });
 });
 

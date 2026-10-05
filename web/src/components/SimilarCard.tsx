@@ -6,7 +6,6 @@ import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
 import type { PriorityQuery, SimilarDifference } from "@/lib/api/types";
 import type { Preview } from "@/lib/map/preview";
-import { boundaryFromLabel } from "@/lib/map/presentation";
 import { roundScore } from "@/lib/score/presentation";
 
 import { ShowMoreButton, useShowMore } from "./ShowMore";
@@ -82,12 +81,8 @@ export function SimilarCard({
       </div>
       <ul id={listId} className={styles.list} aria-label="Areas with a similar profile">
         {visible.map((area, index) => {
-          const boundary = boundaryFromLabel(area.areaLabel);
           const name =
             area.neighborhood ?? area.areaLabel ?? `Area to the ${area.direction}`;
-          // The street boundary is a subtitle only when a neighborhood is the title.
-          const subtitle =
-            area.neighborhood && boundary ? `Bounded by ${boundary}` : null;
           return (
             <li key={`${area.latitude},${area.longitude}`} className={styles.item}>
               <div className={styles.head}>
@@ -99,7 +94,6 @@ export function SimilarCard({
                   {roundScore(area.compositeScore)}
                 </span>
               </div>
-              {subtitle ? <p className={styles.boundary}>{subtitle}</p> : null}
               <p className={styles.meta}>
                 {area.distanceLabel} {area.direction} &middot;{" "}
                 {Math.round(area.similarity)}% similar
@@ -120,7 +114,6 @@ export function SimilarCard({
                     lat: area.latitude,
                     lon: area.longitude,
                     label: name,
-                    subtitle: subtitle ?? undefined,
                     kind: "similar",
                     summary: {
                       compositeScore: area.compositeScore,

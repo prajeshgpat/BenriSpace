@@ -19,7 +19,7 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await page.getByRole("combobox").first().fill("350 5th");
   await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
   await expect(page.getByTestId("composite-score")).toHaveText("77");
-  await expect(page.getByRole("heading", { name: "350 5th Ave, New York, NY" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Midtown, Manhattan" })).toBeVisible();
 
   await page
     .getByRole("region", { name: "Selected location" })
@@ -42,16 +42,18 @@ test("toggling a factor recolours the map and re-ranks best areas", async ({ pag
   const all = await value();
 
   // Groceries only: the west side wins; transit only: the east side does.
-  await page.getByRole("button", { name: "Select none" }).click();
+  const boxes = page.getByRole("checkbox", { checked: true });
+  while ((await boxes.count()) > 0) await boxes.first().uncheck();
   await page.getByRole("checkbox", { name: /^Groceries/ }).check();
-  await expect(page.getByText("1 of 13 on")).toBeVisible();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(1);
   await expect.poll(value).toBe("100");
   await expect(bestAreas.getByRole("listitem").first()).toContainText("Strongest: Groceries 100");
   await page.getByRole("checkbox", { name: /^Groceries/ }).uncheck();
   await page.getByRole("checkbox", { name: /^Public transit/ }).check();
   await expect(bestAreas.getByRole("listitem").first()).toContainText("Strongest: Public transit");
   // Everything on again: the two sides average out, so nothing scores 100.
-  await page.getByRole("button", { name: "Select all" }).click();
+  const off = page.getByRole("checkbox", { checked: false });
+  while ((await off.count()) > 0) await off.first().check();
   await expect.poll(value).not.toBe("100");
   expect(all).not.toBe("100");
 });
@@ -75,6 +77,21 @@ test("chat panel opens", async ({ page }) => {
   await mockApi(page, { feedback });
   await page.getByRole("button", { name: /^Yes/ }).click();
   await expect(page.getByText("Thanks, that helps us improve.")).toBeVisible();
+});
+
+test("chat docks beside the filters, which stay usable", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/app?chat=1");
+  const dock = page.getByRole("region", { name: "Ask BenriSpace" });
+  await expect(dock).toBeVisible();
+  await expect(page.getByLabel("Your question")).toBeFocused();
+  await expect(page.getByRole("heading", { name: "Factors" })).toBeVisible();
+  await page.getByRole("checkbox", { name: /Cafes/ }).click();
+  await expect(page.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
+  await page.getByLabel("Your question").press("Escape");
+  await expect(page.getByLabel("Your question")).toBeHidden();
+  await dock.getByRole("button", { name: "Expand" }).click();
+  await expect(page.getByLabel("Your question")).toBeVisible();
 });
 
 test("data sources page lists sources", async ({ page }) => {

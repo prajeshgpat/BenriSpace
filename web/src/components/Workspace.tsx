@@ -51,11 +51,7 @@ import {
   PLACE_ZOOM,
 } from "@/lib/map/url";
 import { bandLabel, roundScore } from "@/lib/score/presentation";
-import {
-  APP_PATH,
-  SITE_TITLE,
-  resultTitle,
-} from "@/lib/site";
+import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { BottomSheet } from "./BottomSheet";
@@ -68,6 +64,7 @@ import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { CompareDrawer } from "./CompareDrawer";
+import { ChatDock } from "./chat/ChatDock";
 import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
@@ -128,13 +125,22 @@ const SHEET_OFFSET: Record<SheetSnap, string> = {
 
 interface LayoutProps {
   panel: ReactNode;
+  /** Desktop only: pinned to the bottom of the side column. */
+  dock?: ReactNode;
   map: ReactNode;
   panelRef?: Ref<HTMLElement>;
   snap?: SheetSnap;
   onSnapChange?: (snap: SheetSnap) => void;
 }
 
-function Layout({ panel, map, panelRef, snap, onSnapChange }: LayoutProps) {
+function Layout({
+  panel,
+  dock,
+  map,
+  panelRef,
+  snap,
+  onSnapChange,
+}: LayoutProps) {
   const mobile = useIsMobile();
   const [localSnap, setLocalSnap] = useState<SheetSnap>("peek");
   const sheetSnap = snap ?? localSnap;
@@ -167,7 +173,8 @@ function Layout({ panel, map, panelRef, snap, onSnapChange }: LayoutProps) {
           aria-label="Search and map controls"
           tabIndex={-1}
         >
-          {content}
+          <div className={styles.panelScroll}>{content}</div>
+          {dock}
         </aside>
       )}
       <section className={styles.mapArea} aria-label="Map">
@@ -232,11 +239,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
-  // "Ask BenriSpace" replaces the result and filter cards while it is open.
+  // "Ask BenriSpace" opens beside the result and filter cards: a dock under
+  // the side column on desktop, a section under the search bar on phones.
   // `/app?chat=1` (the home page's "Ask BenriSpace") opens it on load; `ask=`
   // pre-fills the search box and the chat context without scoring anything.
   const [chatOpen, setChatOpen] = useState(() => params.get("chat") === "1");
-  const [askPrefill, setAskPrefill] = useState(() => params.get("ask")?.trim() ?? "");
+  const [askPrefill, setAskPrefill] = useState(
+    () => params.get("ask")?.trim() ?? "",
+  );
   // What is in the search box right now, submitted or not.
   const [typedText, setTypedText] = useState(askPrefill);
   const [typedKey, setTypedKey] = useState(placeKey);
@@ -266,7 +276,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const [sheetKey, setSheetKey] = useState(placeKey);
   if (sheetKey !== placeKey) {
     setSheetKey(placeKey);
-    setSnap(placeKey ? "half" : "peek");
+    // A conversation in progress keeps the sheet where it is.
+    if (!chatOpen) setSnap(placeKey ? "half" : "peek");
   }
   const [previewPlaceKey, setPreviewPlaceKey] = useState(placeKey);
   if (previewPlaceKey !== placeKey) {
@@ -533,7 +544,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       subtitle: result.why,
       kind: "best-move",
       summary:
-        result.score === undefined ? undefined : { compositeScore: result.score },
+        result.score === undefined
+          ? undefined
+          : { compositeScore: result.score },
     });
   }
 
@@ -541,7 +554,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     const lat = roundCoordinate(result.latitude);
     const lon = roundCoordinate(result.longitude);
     setPicked(null);
-    setChatOpen(false);
     navigate({ kind: "coordinates", lat, lon, label: result.label });
   }
 
@@ -607,6 +619,25 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
   });
 
+  const mobile = useIsMobile();
+  const chatProps = {
+    client,
+    context: {
+      ...(target && address
+        ? { address }
+        : typedText.trim()
+          ? { address: typedText.trim().slice(0, 300) }
+          : {}),
+      ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
+      ...(priorities.factors ? { factors: priorities.factors } : {}),
+      ...(priorities.weights ? { weights: priorities.weights } : {}),
+    },
+    place: { key: placeKey, label: target ? address : null },
+    onShowOnMap: showChatResult,
+    onScoreArea: scoreChatResult,
+    onClose: () => setChatOpen(false),
+  };
+
   const panel = (
     <>
       <div ref={searchRef} className={styles.search}>
@@ -655,26 +686,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         {announcement(state)}
       </p>
 
-      {chatOpen ? (
-        <ChatPanel
-          client={client}
-          context={{
-            ...(target && address
-              ? { address }
-              : typedText.trim()
-                ? { address: typedText.trim().slice(0, 300) }
-                : {}),
-            ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
-            ...(priorities.factors ? { factors: priorities.factors } : {}),
-            ...(priorities.weights ? { weights: priorities.weights } : {}),
-          }}
-          onShowOnMap={showChatResult}
-          onScoreArea={scoreChatResult}
-          onClose={() => setChatOpen(false)}
-        />
-      ) : null}
+      {chatOpen && mobile ? <ChatPanel {...chatProps} /> : null}
 
-      {target && !chatOpen ? (
+      {target ? (
         <section
           className={styles.result}
           data-state={state.status}
@@ -700,13 +714,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             {state.status === "success" ? (
               <ScoreHeader
                 address={readableAddress ?? state.address}
-                readableAddress={readableAddress}
                 score={state.score}
                 area={state.area}
                 compare={
                   currentPlace
                     ? {
-                        pinned: compare.places.some((p) => p.id === currentPlace.id),
+                        pinned: compare.places.some(
+                          (p) => p.id === currentPlace.id,
+                        ),
                         full: compare.full,
                         onToggle: () => compare.toggle(currentPlace),
                       }
@@ -718,59 +733,59 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </section>
       ) : null}
 
-      {chatOpen ? null : (
-        <div className={styles.controls}>
-          <FactorControls
-            selection={selection}
-            onChange={setSelection}
-            scores={state.status === "success" ? state.score.subScores : null}
-          />
-          {state.status === "success" ? (
-            <>
-              <ScoreSummary
-                score={state.score}
-                explanation={state.explanation}
-                client={client}
-                target={readableAddress ?? state.address}
-              />
-              <ImproveCard
-                coordinates={{
-                  lat: state.score.latitude,
-                  lon: state.score.longitude,
-                }}
-                client={client}
-                priorities={priorities}
-                onPreview={showPreview}
-              />
-              <SimilarCard
-                coordinates={{
-                  lat: state.score.latitude,
-                  lon: state.score.longitude,
-                }}
-                client={client}
-                priorities={priorities}
-                onPreview={showPreview}
-              />
-            </>
-          ) : null}
-          <BestAreas
-            status={top.status}
-            results={topResults}
-            error={top.error}
-            selectedFactors={selection.factors}
-            activeGeohash={activeTop?.geohash ?? null}
-            onSelect={selectTop}
-            onRetry={top.retry}
-            compare={{
-              isPinned: (r) =>
-                compare.places.some((p) => p.id === placeId(r.latitude, r.longitude)),
-              full: compare.full,
-              onToggle: (r) => compare.toggle(topPlace(r)),
-            }}
-            feedbackClient={client}
-          />
-        </div>
-      )}
+      <div className={styles.controls}>
+        <FactorControls
+          selection={selection}
+          onChange={setSelection}
+          scores={state.status === "success" ? state.score.subScores : null}
+        />
+        {state.status === "success" ? (
+          <>
+            <ScoreSummary
+              score={state.score}
+              explanation={state.explanation}
+              client={client}
+              target={readableAddress ?? state.address}
+            />
+            <ImproveCard
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
+              client={client}
+              priorities={priorities}
+              onPreview={showPreview}
+            />
+            <SimilarCard
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
+              client={client}
+              priorities={priorities}
+              onPreview={showPreview}
+            />
+          </>
+        ) : null}
+        <BestAreas
+          status={top.status}
+          results={topResults}
+          error={top.error}
+          selectedFactors={selection.factors}
+          activeGeohash={activeTop?.geohash ?? null}
+          onSelect={selectTop}
+          onRetry={top.retry}
+          compare={{
+            isPinned: (r) =>
+              compare.places.some(
+                (p) => p.id === placeId(r.latitude, r.longitude),
+              ),
+            full: compare.full,
+            onToggle: (r) => compare.toggle(topPlace(r)),
+          }}
+          feedbackClient={client}
+        />
+      </div>
       <p className="sr-only" role="status">
         {mapStatus}
       </p>
@@ -869,6 +884,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     <Layout
       panelRef={panelRef}
       panel={panel}
+      dock={chatOpen && !mobile ? <ChatDock {...chatProps} /> : null}
       map={map}
       snap={snap}
       onSnapChange={setSnap}

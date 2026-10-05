@@ -48,6 +48,18 @@
   outline: none;
 }
 
+/* The desktop column scrolls here, so the chat dock under it stays put. */
+.panelScroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 0;
+  padding: 1.25rem 1rem 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .credits {
   margin: auto -1rem 0;
 }
@@ -214,9 +226,8 @@
     order: 1;
     width: clamp(23.75rem, 30vw, 27.5rem);
     max-height: none;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 1.25rem 1rem 0;
+    overflow: hidden;
+    padding: 0;
     border-right: 1px solid var(--border);
     border-radius: 0;
     box-shadow: none;

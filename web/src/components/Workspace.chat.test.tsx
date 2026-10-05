@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useMemo, useSyncExternalStore } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,7 +96,7 @@ beforeEach(() => {
 });
 
 describe("Workspace: Ask BenriSpace", () => {
-  it("opens the chat in place of the result cards, with the current place as context", async () => {
+  it("opens the chat in a dock beside the results, with live place and filter context", async () => {
     const user = userEvent.setup();
     const { chat } = setup();
     await screen.findByTestId("composite-score");
@@ -104,8 +104,9 @@ describe("Workspace: Ask BenriSpace", () => {
     await user.click(screen.getByRole("button", { name: "Ask BenriSpace" }));
 
     expect(screen.getByRole("region", { name: "Ask BenriSpace" })).toBeInTheDocument();
-    expect(screen.queryByTestId("composite-score")).not.toBeInTheDocument();
+    expect(screen.getByTestId("composite-score")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Address" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Your question" })).toHaveFocus();
 
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "best nearby?{Enter}");
     await screen.findByText("Darien looks best.");
@@ -115,7 +116,17 @@ describe("Workspace: Ask BenriSpace", () => {
       longitude: -73.9857,
     });
 
-    await user.click(screen.getByRole("button", { name: "Back to results" }));
+    // Changing the place while chatting is noted and used by the next question.
+    act(() => {
+      window.history.pushState(null, "", "/app?lat=40.67&lon=-73.98&address=Park+Slope");
+    });
+    expect(await screen.findByText(/^Now looking at/)).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "and now?{Enter}");
+    await waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
+    expect(chat.mock.calls[1][1]).toMatchObject({ latitude: 40.67, longitude: -73.98 });
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "Ask BenriSpace" })).not.toBeInTheDocument();
     expect(screen.getByTestId("composite-score")).toBeInTheDocument();
   });
 
@@ -133,7 +144,7 @@ describe("Workspace: Ask BenriSpace", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
   });
 
-  it("Score this area selects the place and returns to the results", async () => {
+  it("Score this area selects the place and keeps the chat open", async () => {
     const user = userEvent.setup();
     setup();
     await screen.findByTestId("composite-score");
@@ -144,7 +155,7 @@ describe("Workspace: Ask BenriSpace", () => {
 
     expect(window.history.pushState).toHaveBeenCalled();
     expect(navigation.search).toContain("lat=41.07");
-    expect(screen.queryByRole("region", { name: "Ask BenriSpace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Ask BenriSpace" })).toBeInTheDocument();
   });
 
   it("sends the typed, unsubmitted search text as the chat address when nothing is scored", async () => {
