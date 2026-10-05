@@ -2,8 +2,8 @@
 
 How a location's 0-100 score is computed. Two parts:
 
-- **Part A: what is shipped.** The models in production and built: `v1-handtuned`,
-  `v2-handtuned` (live) and `v2.1-handtuned` (built, cutover pending).
+- **Part A: what is shipped.** The models built: `v2-handtuned` and `v2.1-handtuned`
+  (served). `v1-handtuned` was retired and its rows deleted.
 - **Part B: the v3 framework (planned).** `v3-timeaccess`, framework v1.4 with the
   owner's decisions. Nothing in Part B is serving yet, except the default weights
   and factor set, which v2.1 already uses. Section numbers inside Part B refer to
@@ -18,9 +18,11 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md),
 
 ## A1. Status
 
+Stored scores are whole points: sub-scores are `smallint` (0-100) and the composite is `real` with one decimal (migration 0017), which is what every reader displays anyway.
+
 | Version | `weights_version` | Factors | State |
 | --- | --- | --- | --- |
-| v1 | `v1-handtuned` | 11 | history; rows kept for rollback |
+| v1 | `v1-handtuned` | 11 | retired; rows deleted from the database |
 | v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | **live in production** (cutover 2026-10-03, 64,320 rows) |
 | v2.1 | `v2.1-handtuned` | 13, all user-facing pills | built; migration 0009 applied; full ingestion in progress; cutover pending owner approval |
 
@@ -60,7 +62,7 @@ flows into `scores` already means "higher is better":
 | transit stop count and closeness | Positive | as-is |
 | school count, rating, closeness | Positive | as-is (see A4) |
 | running trail count and closeness, Strava popularity | Positive | as-is (see A5) |
-| premium retail (Whole Foods, Starbucks, Target) | Positive | one `premium_retail_raw` bonus built at ingestion from the three `*_nearest_m` columns |
+| premium retail (Whole Foods, Starbucks, Target) | Positive | one `premium_retail_raw` bonus built at ingestion from the three `*_nearest_ft` columns |
 | airport drive time | Positive | invert (lower time is better) |
 | gas station / convenience store count (v2) | Negative | invert before normalizing |
 | congestion proxy | Negative | invert before normalizing |

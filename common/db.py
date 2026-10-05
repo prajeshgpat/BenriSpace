@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from common.config import DATABASE_URL
+from common.feature_columns import LEGACY_BY_NEW, to_db_fields
 from scoring.engine import CATEGORY_SPECS, CATEGORY_SPECS_V2_1, LEGACY_FALLBACK_COLUMNS
 
 # feature_store columns typed `jsonb` in schema.sql -- values for these
@@ -26,9 +27,10 @@ from scoring.engine import CATEGORY_SPECS, CATEGORY_SPECS_V2_1, LEGACY_FALLBACK_
 # JSON -- `{` starts an object, not an array).
 FEATURE_STORE_JSON_COLUMNS = {"transit_agencies"}
 
-# feature_store columns an ingestion job is allowed to write. Used to
-# validate upsert_feature_store() calls so a typo'd column name fails at
-# call time, not as a silent no-op.
+# feature_store keys an ingestion job is allowed to write. Used to validate
+# upsert_feature_store() calls so a typo'd column name fails at call time, not as a silent
+# no-op. Distances and counts are listed under their original metric keys; the database
+# columns are the imperial names in common/feature_columns.py (which is also accepted).
 FEATURE_STORE_COLUMNS = {
     "grocery_count_500m",
     "grocery_nearest_m",
@@ -268,11 +270,12 @@ def upsert_feature_store(conn: psycopg.Connection, geo_entity_id: str, fields: d
     """Updates only the given columns for one geo_entity_id, inserting the
     row first if it doesn't exist yet. Unknown column names raise —
     catches typos instead of silently dropping data."""
-    unknown = set(fields) - FEATURE_STORE_COLUMNS
+    unknown = set(fields) - FEATURE_STORE_COLUMNS - set(LEGACY_BY_NEW)
     if unknown:
         raise ValueError(f"Unknown feature_store columns: {unknown}")
     if not fields:
         return
+    fields = to_db_fields(fields)  # metric keys -> imperial columns (migration 0020)
 
     columns = list(fields)
     values = [

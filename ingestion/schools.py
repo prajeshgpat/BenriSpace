@@ -178,6 +178,28 @@ def compute_cell_aggregate(
     }
 
 
+def compute_cell_aggregates_many(cells: list[dict], schools: list[SchoolRecord]) -> list[dict]:
+    """Batched compute_cell_aggregate() via scipy cKDTree (ingestion/spatial.py). Counts
+    are identical; the nearest distance is the true nearest school (the bucket scan only
+    looked in a 3x3 block, ~1.7 km, and reported None beyond it). Needs the `ingestion`
+    extra."""
+    import numpy as np
+
+    from ingestion.spatial import PointIndex
+
+    index = PointIndex([s.lat for s in schools], [s.lon for s in schools])
+    clats = np.array([c["latitude"] for c in cells], dtype=float)
+    clons = np.array([c["longitude"] for c in cells], dtype=float)
+    counts, nearest = index.nearest_and_count(clats, clons, SCHOOL_RADIUS_M)
+    return [
+        {
+            "school_count_1600m": int(counts[i]),
+            "school_nearest_m": None if np.isnan(nearest[i]) else round(float(nearest[i]), 1),
+        }
+        for i in range(len(cells))
+    ]
+
+
 def district_fields(district, ratings: dict[str, float | None], source: str) -> dict:
     """Rating columns for a cell given its (possibly None) district and the
     already state-normalised ratings. Always returns every column so a rerun
@@ -204,9 +226,13 @@ def run() -> None:
 
     with get_connection() as conn, ingestion_job("schools") as ctx:
         rows_updated = 0
-        for entity in iter_geo_entities(conn):
+        cells = list(iter_geo_entities(conn))
+        try:
+            aggregates = compute_cell_aggregates_many(cells, all_schools)
+        except ImportError:  # scipy not installed: fall back to the bucket scan
+            aggregates = [compute_cell_aggregate(c["latitude"], c["longitude"], index) for c in cells]
+        for entity, fields in zip(cells, aggregates, strict=True):
             lat, lon = entity["latitude"], entity["longitude"]
-            fields = compute_cell_aggregate(lat, lon, index)
             fields.update(district_fields(districts.assign(lat, lon), ratings, source))
             upsert_feature_store(conn, entity["id"], fields)
             rows_updated += 1

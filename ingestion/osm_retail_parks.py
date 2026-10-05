@@ -438,6 +438,75 @@ def park_features(cell_lat: float, cell_lon: float, index: GridIndex) -> dict:
     }
 
 
+BIG_PARK_HALF_DIAGONAL_M = 5000.0  # larger rectangles are scanned directly, not via the tree
+
+
+def park_features_many(cells: list[dict], parks: list[tuple]) -> list[dict]:
+    """Batched park_features() via scipy cKDTree (ingestion/spatial.py); exact.
+
+    Parks are rectangles, so the tree indexes their centres: a rectangle's distance is at
+    least its centre distance minus its half-diagonal, hence every rectangle within radius R
+    of a cell has its centre within R + the largest half-diagonal. R is the larger of the
+    count radius and the cell's nearest-centre distance (an upper bound on the nearest
+    rectangle). The few huge rectangles skip the tree and are checked against every cell."""
+    import numpy as np
+
+    from ingestion.spatial import PointIndex, haversine_m_np
+
+    if not parks:
+        return [park_features(c["latitude"], c["longitude"], GridIndex()) for c in cells]
+    clats = np.array([c["latitude"] for c in cells], dtype=float)
+    clons = np.array([c["longitude"] for c in cells], dtype=float)
+    rect = np.array([p[:4] for p in parks], dtype=float)  # min_lat, min_lon, max_lat, max_lon
+    sizes = np.array([p[4] for p in parks], dtype=float)
+    centre_lat, centre_lon = (rect[:, 0] + rect[:, 2]) / 2, (rect[:, 1] + rect[:, 3]) / 2
+    half = haversine_m_np(rect[:, 0], rect[:, 1], rect[:, 2], rect[:, 3]) / 2
+    big = half > BIG_PARK_HALF_DIAGONAL_M
+    small = np.flatnonzero(~big)
+    big_idx = np.flatnonzero(big)
+
+    def rect_dist_ft(cl, co, k):
+        lat = np.clip(cl, rect[k, 0], rect[k, 2])
+        lon = np.clip(co, rect[k, 1], rect[k, 3])
+        return haversine_m_np(cl, co, lat, lon) * FT_PER_M
+
+    n = len(cells)
+    nearest = np.full(n, np.inf)
+    count = np.zeros(n, dtype=np.int64)
+    largest = np.full(n, -np.inf)
+
+    def accumulate(ci, k):
+        d = rect_dist_ft(clats[ci], clons[ci], k)
+        np.minimum.at(nearest, ci, d)
+        np.add.at(count, ci, d <= COUNT_RADIUS_FT)
+        near_big = d <= LARGEST_PARK_RADIUS_FT
+        np.maximum.at(largest, ci[near_big], sizes[k][near_big])
+
+    if len(small):
+        index = PointIndex(centre_lat[small], centre_lon[small])
+        reach = float(half[small].max())
+        radii = np.maximum(COUNT_RADIUS_FT / FT_PER_M, index.nearest_distance(clats, clons)) + reach
+        ci, pi = index.candidates(clats, clons, radii)
+        accumulate(ci, small[pi])
+    for k in big_idx:  # each huge rectangle against all cells
+        accumulate(np.arange(n), np.full(n, k))
+    out = []
+    for i in range(n):
+        near = float(nearest[i])
+        big_size = float(largest[i])
+        out.append(
+            {
+                "park_count_1mi": int(count[i]),
+                "park_nearest_ft": near,
+                "park_largest_sq_ft_half_mi": big_size if big_size > -np.inf else None,
+                "recreation_raw": recreation_raw(
+                    near, big_size if big_size > -np.inf else None
+                ),
+            }
+        )
+    return out
+
+
 def compute_cell_features(
     cell_lat: float, cell_lon: float, shop_index: GridIndex, park_index: GridIndex
 ) -> dict:
@@ -490,12 +559,14 @@ def run() -> None:
                 shop_rows = [
                     shop_features(c["latitude"], c["longitude"], shop_index) for c in cells
                 ]
-            for cell, shop_row in zip(cells, shop_rows, strict=True):
-                upsert_feature_store(
-                    conn,
-                    cell["id"],
-                    {**shop_row, **park_features(cell["latitude"], cell["longitude"], park_index)},
-                )
+            try:
+                park_rows = park_features_many(cells, parks)
+            except ImportError:
+                park_rows = [
+                    park_features(c["latitude"], c["longitude"], park_index) for c in cells
+                ]
+            for cell, shop_row, park_row in zip(cells, shop_rows, park_rows, strict=True):
+                upsert_feature_store(conn, cell["id"], {**shop_row, **park_row})
                 rows_written += 1
             conn.commit()
             ctx.rows_affected = rows_written

@@ -19,7 +19,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
-| `GET /similar` | Well-separated areas with a similar factor profile (pgvector) | built, needs migration 0007 |
+| `GET /similar` | Well-separated areas with a similar factor profile | built |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
@@ -173,7 +173,7 @@ curl "https://api.benrispace.com/v1/score?lat=40.7546&lon=-73.985"
 
 ### Units: feet and miles
 
-Everything user-facing is in feet and miles: distances in text, `nearestMi`, `minSeparationMi`, the cell sizes above. Internally the data and the scoring stay metric (the `*_500m` / `*_nearest_m` columns and radii), so a "within 500 m" count is described to users as about 0.3 mi. Distances in prose follow one rule: under 0.1 mi they are feet rounded to the nearest 50 (`450 ft`), otherwise miles to one decimal (`0.4 mi`).
+Everything user-facing is in feet and miles: distances in text, `nearestMi`, `minSeparationMi`, the cell sizes above. The feature_store columns are imperial too (`*_nearest_ft`, `*_count_1600ft`, `*_count_half_mi`, `*_count_1mi`; migrations 0020 / 0021). The scoring code still computes in metres internally: `common/feature_columns.py` converts at the database boundary, so a "within 500 m" count (stored as `*_count_1600ft`) is described to users as about 0.3 mi. Distances in prose follow one rule: under 0.1 mi they are feet rounded to the nearest 50 (`450 ft`), otherwise miles to one decimal (`0.4 mi`).
 
 ### `school`
 
@@ -717,11 +717,11 @@ Errors:
 
 ## `GET /similar`
 
-Areas elsewhere in the same metro with a similar factor profile. Each scored cell has a 14-dimension vector (one z-scored sub-score per factor, a missing school score counts as average), stored in pgvector. The nearest vectors are found in the database, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+Areas elsewhere in the same metro with a similar factor profile. Cells are compared on their 13 factor scores, z-scored with the metro's mean and standard deviation (a missing score counts as average). The nearest cells are found in one SQL scan of the target's metro, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
 
-With `factors`, the closest 200 vectors are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the stored vectors, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
+With `factors`, the closest 200 cells are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the SQL distance, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
 
-Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404. Neighbours come from pgvector's HNSW index (`hnsw.ef_search` sized to the pool, iterative scan where available); with migration `0011_perf.sql` the embeddings job also stores each cell's top 20 neighbours in `similar_cells`, which answer unfiltered requests directly when they yield enough spread-out results.
+Needs only the `scores` rows (no embedding column, vector index or extra job; migration 0016 drops the old ones). The distance is `sqrt(sum of squared z-score differences)` over the 13 factors, computed in SQL on the stored whole-point scores; the scan covers one metro (about 25,000 rows) and takes tens of milliseconds.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -768,7 +768,7 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `k` outside 1..10, `minSeparationMi` outside 0..10, or an invalid `factors`/`weights` |
-| 404 | `not_found` | The cell under the point has no embedding (or no score) yet |
+| 404 | `not_found` | The cell under the point has no score yet |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ---

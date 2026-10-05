@@ -397,9 +397,9 @@ def test_improve_names_better_area_and_tip(monkeypatch):
 
 
 def test_similar_results_have_neighborhood(monkeypatch):
-    from scoring.embeddings import EMBEDDING_COLUMNS
+    from scoring.similarity import SIMILARITY_COLUMNS
 
-    base = {c: 50.0 for c in EMBEDDING_COLUMNS}
+    base = {c: 50.0 for c in SIMILARITY_COLUMNS}
     cand = {**base, "geohash": "dr5ru9", "latitude": 40.9, "longitude": -73.9, "dist": 1.0,
             "composite_score": 70.0}  # fmt: skip
     monkeypatch.setattr(main, "get_connection", lambda: FakeConn())

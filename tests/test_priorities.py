@@ -12,7 +12,7 @@ from api.mapdata import InvalidMapRequest
 from api.metro_stats import ColumnStats, get_stats
 from api.priorities import TOGGLEABLE_FACTORS, parse_priorities
 from api.schemas import SubScores
-from scoring.embeddings import EMBEDDING_COLUMNS
+from scoring.similarity import SIMILARITY_COLUMNS
 from tests.test_ai_explain import client  # (fixture reused from the AI explanation tests)
 from tests.test_api_area import CLICK
 from tests.test_api_improve import LAT, LON, OWN, aggregate, cell, miles_lat
@@ -148,12 +148,12 @@ def sim(monkeypatch):
 
 def test_similar_reranks_by_selected_factors_and_threshold_six(sim):
     state, client = sim
-    stats = {c: ColumnStats(50.0, 10.0, tuple(range(101))) for c in EMBEDDING_COLUMNS}
+    stats = {c: ColumnStats(50.0, 10.0, tuple(range(101))) for c in SIMILARITY_COLUMNS}
     state["stats"] = stats
     state["cands"] = [
-        # Nearest on the full embedding but very different on transit.
+        # Nearest on the full profile but very different on transit.
         cand(miles_lat(2.0), 0.5, transit=90.0),
-        # Farther on the full embedding, identical on transit/cafe, differs only on gym (unselected).
+        # Farther on the full profile, identical on transit/cafe, differs only on gym (unselected).
         cand(miles_lat(4.0), 3.0, gym=80.0, cafe=57.0),
     ]
     body = client.get(
@@ -162,14 +162,14 @@ def test_similar_reranks_by_selected_factors_and_threshold_six(sim):
     assert state["limit"] == 200  # widest pool when re-ranking
     assert body["priorities"] == ["cafe", "transit"]
     first, second = body["results"]
-    assert first["distanceLabel"] == "4.0 mi"  # re-ranked ahead of the full-embedding winner
+    assert first["distanceLabel"] == "4.0 mi"  # re-ranked ahead of the full-profile winner
     # cafe +7 passes the new threshold of 6; unselected gym (+30) is not reported.
     assert [d["factor"] for d in first["differences"]] == ["cafe"]
     assert first["summary"] == "7 points better for cafes."
     assert second["differences"][0]["factor"] == "transit"
 
 
-def test_similar_without_factors_keeps_embedding_order(sim):
+def test_similar_without_factors_keeps_distance_order(sim):
     state, client = sim
     state["cands"] = [cand(miles_lat(2.0), 0.5, transit=90.0), cand(miles_lat(4.0), 3.0)]
     body = client.get("/v1/similar", params={"lat": LAT, "lon": LON, "k": 2}).json()
@@ -188,9 +188,9 @@ def test_rerank_uses_z_scores_and_missing_scores_are_average():
         pri,
         stats,
     )
-    # z = 0.5 and 3.0 -> weighted by 14/1 for a single factor
+    # z = 0.5 and 3.0 -> weighted by 13/1 for a single factor
     assert [c["school_score"] for c in out] == [55.0, 80.0]
-    assert out[0]["dist"] == pytest.approx((14 * 0.25) ** 0.5)
+    assert out[0]["dist"] == pytest.approx((13 * 0.25) ** 0.5)
 
 
 def test_differences_threshold_is_six():

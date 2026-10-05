@@ -107,7 +107,7 @@ jobs:
     if: ${{ !cancelled() && needs.grid.result == 'success' }}
     runs-on: ubuntu-latest
     env:
-      # Written next to the v1 rows (unique per geo_entity + version); the API
+      # Written next to older versions' rows (unique per geo_entity + version); the API
       # keeps serving whichever version its SCORING_WEIGHTS_VERSION names.
       SCORING_WEIGHTS_VERSION: v2.1-handtuned
     steps:
@@ -117,4 +117,5 @@ jobs:
           python-version: "3.11"
       - run: pip install -e .
       - run: python -m scoring.run
-      - run: python -m scoring.embeddings
+      # Persist the compact score file (/v1/map/scores) so cold API requests skip the rebuild.
+      - run: python -m api.scorefile

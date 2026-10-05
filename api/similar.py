@@ -1,29 +1,29 @@
-"""GET /v1/similar: areas with a similar factor profile, found with pgvector.
+"""GET /v1/similar: areas with a similar factor profile.
 
-Each scored cell has a 14-dim z-scored embedding (scoring/embeddings.py). The
-nearest neighbours by L2 distance, spread out geographically, are returned with
-the factors on which they differ most. With `factors` the over-fetched pool is
-re-ranked on the selected factors only (z-scores from api/metro_stats.py, which
-match scoring/embeddings.py). Distances shown are imperial.
+Cells are compared on their 13 factor scores, z-scored per metro (scoring/similarity.py,
+constants from api/metro_stats.py). The distance is computed in SQL over the stored
+sub-scores of the target's metro (one indexed scan of ~25k rows, tens of milliseconds), so
+no embedding column or vector index is stored. The nearest neighbours by L2 distance,
+spread out geographically, are returned with the factors on which they differ most. With
+`factors` the over-fetched pool is re-ranked on the selected factors only. Distances shown
+are imperial.
 """
 
 import math
 
-import psycopg
-
 from api.areas import bounded_by_text, pick_area, usable_areas
 from api.factors import FACTOR_COLUMNS
 from api.lookup import neighborhood_map
-from api.metro_stats import MetroStats
+from api.metro_stats import MetroStats, get_stats
 from api.priorities import Priorities
 from common.db import get_area_candidates
 from common.geo import haversine_m
 from common.places import compass
 from common.units import M_PER_MI, format_distance
-from scoring.embeddings import EMBEDDING_COLUMNS, EMBEDDING_DIM, zscore
 from scoring.engine import LEGACY_FALLBACK_COLUMNS
+from scoring.similarity import SIMILARITY_DIM, zscore
 
-# L2 distance (in z-score units, 14 dims) at which similarity reaches 0. Two
+# L2 distance (in z-score units, 13 dims) at which similarity reaches 0. Two
 # unrelated cells sit roughly 5 apart, so 6.0 spreads 0..100 usefully.
 SIMILARITY_MAX_DIST = 6.0
 DIFF_MIN_POINTS = 6
@@ -61,18 +61,17 @@ def _select_expr(column: str) -> str:
     return f"coalesce(s.{column}, s.{legacy}) as {column}" if legacy else f"s.{column}"
 
 
-# The 13 factor scores (v2 rows read Shopping / Recreation through their legacy
-# columns) plus whatever legacy embedding columns are not factor columns.
-_SCORE_SELECT = ", ".join(
-    [
-        *(_select_expr(c) for c in FACTOR_SCORE_COLUMNS),
-        *(f"s.{c}" for c in EMBEDDING_COLUMNS if c not in FACTOR_SCORE_COLUMNS),
-    ]
-)
+def _value_expr(column: str, alias: str = "s") -> str:
+    legacy = LEGACY_FALLBACK_COLUMNS.get(column)
+    return f"coalesce({alias}.{column}, {alias}.{legacy})" if legacy else f"{alias}.{column}"
+
+
+# The 13 factor scores (v2 rows read Shopping / Recreation through their legacy columns).
+_SCORE_SELECT = ", ".join(_select_expr(c) for c in FACTOR_SCORE_COLUMNS)
 
 
 def overfetch_limit(k: int, wide: bool = False) -> int:
-    """Candidates pulled by full-embedding distance; re-ranking by a factor
+    """Candidates pulled by full-profile distance; re-ranking by a factor
     subset needs the widest pool."""
     return OVERFETCH_MAX if wide else min(k * OVERFETCH_FACTOR, OVERFETCH_MAX)
 
@@ -120,12 +119,12 @@ def rerank(
     target: dict, candidates: list[dict], priorities: Priorities, stats: MetroStats | None
 ) -> list[dict]:
     """Candidates re-ordered by weighted Euclidean distance over only the
-    selected factors, on the same z-scores the embedding uses (stats are the
+    selected factors, on the same z-scores as the SQL distance (stats are the
     metro's mean/std, a missing score counts as average). Weights are scaled to
-    sum to 14 so `dist` stays comparable with the full-embedding distance that
+    sum to 13 so `dist` stays comparable with the full-profile distance that
     `similarity()` is calibrated on. Returns copies with `dist` replaced."""
     spec = priorities.spec
-    scale = EMBEDDING_DIM / sum(spec.weights[f] for f in spec.factors)
+    scale = SIMILARITY_DIM / sum(spec.weights[f] for f in spec.factors)
     dims = []
     for factor, column in zip(spec.factors, priorities.columns, strict=True):
         st = (stats or {}).get(column)
@@ -155,7 +154,7 @@ def summary(diffs: list[dict]) -> str:
 def spread_out(
     lat: float, lon: float, candidates: list[dict], k: int, min_separation_mi: float
 ) -> list[dict]:
-    """Walk candidates (nearest in embedding space first), keeping those at
+    """Walk candidates (nearest in factor space first), keeping those at
     least min_separation_mi from the point and from every kept result."""
     min_m = min_separation_mi * M_PER_MI
     chosen: list[dict] = []
@@ -172,86 +171,55 @@ def spread_out(
 
 
 def fetch_target(conn, geo_entity_id: str, weights_version: str) -> dict | None:
-    """The cell's score row if it has an embedding, else None (also None when
-    migration 0007 has not been applied)."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                select s.composite_score, {_SCORE_SELECT}
-                from scores s
-                where s.geo_entity_id = %s and s.weights_version = %s
-                  and s.embedding is not null
-                """,
-                (geo_entity_id, weights_version),
-            )
-            return cur.fetchone()
-    except psycopg.errors.UndefinedColumn:
-        conn.rollback()
-        return None
+    """The cell's factor scores, or None when it has no score row for the version."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select s.composite_score, {_SCORE_SELECT}
+            from scores s
+            where s.geo_entity_id = %s and s.weights_version = %s
+            """,
+            (geo_entity_id, weights_version),
+        )
+        return cur.fetchone()
 
 
-# Nearest cells by L2 distance through pgvector's HNSW index (migration 0007): the
-# target vector comes from an InitPlan so the planner keeps the index scan, and the
-# inner LIMIT bounds the scan. The pool is wider than `limit` because z-scores are
-# per metro, so some index hits belong to another metro and are dropped by the join.
-NEIGHBOURS_SQL = f"""
-select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT}, s.dist
-from (
-    select *, embedding <-> (
-               select embedding from scores where geo_entity_id = %(id)s and weights_version = %(v)s
-           ) as dist
-    from scores
-    where weights_version = %(v)s and embedding is not null and geo_entity_id <> %(id)s
-    order by embedding <-> (
-               select embedding from scores where geo_entity_id = %(id)s and weights_version = %(v)s
-           )
-    limit %(pool)s
-) s
+def _dims(stats: MetroStats | None) -> list[tuple[str, float, float]]:
+    """(column, mean, std) per dimension; a typical spread stands in for missing stats."""
+    out = []
+    for column in FACTOR_SCORE_COLUMNS:
+        st = (stats or {}).get(column)
+        out.append((column, st.mean, st.std) if st else (column, 50.0, FALLBACK_STD))
+    return out
+
+
+def build_neighbours_sql(stats: MetroStats | None) -> str:
+    """Nearest cells of the target's metro by L2 distance over per-metro z-scores.
+
+    The means and stds are inlined as numeric literals (they come from our own aggregate
+    query, never from the request). A zero-variance column contributes nothing, and a NULL
+    score counts as the metro average, as in scoring.similarity.zscore."""
+    terms = []
+    for column, mean, std in _dims(stats):
+        if not std > 0:
+            continue
+        cell = f"coalesce(({_value_expr(column)} - {mean:.6f}) / {std:.6f}, 0)"
+        goal = f"coalesce(({_value_expr(column, 't')} - {mean:.6f}) / {std:.6f}, 0)"
+        terms.append(f"power({cell} - {goal}, 2)")
+    distance = "sqrt(" + (" + ".join(terms) or "0") + ")"
+    return f"""
+with t as (
+    select * from scores where geo_entity_id = %(id)s and weights_version = %(v)s
+)
+select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
+       {distance} as dist
+from scores s
 join geo_entities ge on ge.id = s.geo_entity_id
-where ge.metro_area = %(metro)s
-order by s.dist
+cross join t
+where s.weights_version = %(v)s and ge.metro_area = %(metro)s and s.geo_entity_id <> %(id)s
+order by dist
 limit %(limit)s
 """
-
-# Precomputed top-20 neighbours (similar_cells, migration 0011; scoring/embeddings.py).
-PRECOMPUTED_SQL = f"""
-select ge.geohash, ge.latitude, ge.longitude, s.composite_score, {_SCORE_SELECT},
-       sc.distance as dist
-from similar_cells sc
-join geo_entities ge on ge.id = sc.neighbor_id
-join scores s on s.geo_entity_id = sc.neighbor_id and s.weights_version = sc.weights_version
-where sc.geo_entity_id = %s and sc.weights_version = %s
-order by sc.rank
-"""
-
-PRECOMPUTED_MAX = 20
-POOL_FACTOR = 3
-POOL_MAX = 900
-
-
-def _tune_hnsw(conn, pool: int) -> None:
-    """Sizes the HNSW candidate list to the pool (default 40 would return too few
-    rows once filtered) and turns on iterative scans where pgvector 0.8+ has them.
-    Transaction-local; an older pgvector without the setting is left alone."""
-    with conn.cursor() as cur:
-        cur.execute("select set_config('hnsw.ef_search', %s, true)", (str(min(max(pool, 40), 1000)),))
-        cur.execute("select current_setting('hnsw.iterative_scan', true) as v")
-        row = cur.fetchone()
-        if row and row["v"] is not None:
-            cur.execute("select set_config('hnsw.iterative_scan', 'relaxed_order', true)")
-
-
-def fetch_precomputed(conn, geo_entity_id: str, weights_version: str) -> list[dict]:
-    """The cell's precomputed neighbours, nearest first; [] when none are stored
-    or migration 0011 has not been applied."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(PRECOMPUTED_SQL, (geo_entity_id, weights_version))
-            return list(cur)
-    except psycopg.errors.UndefinedTable:
-        conn.rollback()
-        return []
 
 
 def fetch_neighbours(
@@ -260,25 +228,17 @@ def fetch_neighbours(
     weights_version: str,
     metro_area: str,
     limit: int,
-    spread: tuple[float, float, int, float] | None = None,
+    stats: MetroStats | None = None,
 ) -> list[dict]:
-    """Up to `limit` nearest cells in embedding space. When `limit` fits the
-    precomputed list and `spread` = (lat, lon, k, min_separation_mi) shows those
-    neighbours still yield k spread-out results, the lookup is used; otherwise
-    the HNSW index answers the query."""
-    if spread is not None and limit <= PRECOMPUTED_MAX:
-        pre = fetch_precomputed(conn, geo_entity_id, weights_version)
-        lat, lon, k, min_sep = spread
-        if pre and len(spread_out(lat, lon, pre, k, min_sep)) >= k:
-            return pre[:limit]
-    pool = min(limit * POOL_FACTOR, POOL_MAX)
-    _tune_hnsw(conn, pool)
+    """Up to `limit` cells of the metro nearest to the target in factor space, nearest
+    first. `stats` are the metro's z-score constants (loaded when not given)."""
+    if stats is None:
+        stats = get_stats(conn, weights_version, metro_area)
     with conn.cursor() as cur:
         cur.execute(
-            NEIGHBOURS_SQL,
-            {"id": geo_entity_id, "v": weights_version, "metro": metro_area,
-             "pool": pool, "limit": limit},
-        )  # fmt: skip
+            build_neighbours_sql(stats),
+            {"id": geo_entity_id, "v": weights_version, "metro": metro_area, "limit": limit},
+        )
         return list(cur)
 
 

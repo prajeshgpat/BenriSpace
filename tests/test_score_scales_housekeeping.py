@@ -1,4 +1,4 @@
-"""scoring/run.py write_scales, migration 0013 shape and scripts/delete_v1_scores.py."""
+"""scoring/run.py write_scales, migration 0013 shape and scripts/delete_scores.py."""
 
 import importlib.util
 from pathlib import Path
@@ -73,12 +73,12 @@ def test_migration_0013_is_additive_idempotent_and_mirrored():
         assert f"    {col} " in body
 
 
-# --- scripts/delete_v1_scores.py -------------------------------------------------------
+# --- scripts/delete_scores.py -------------------------------------------------------
 
 
 def load_script():
     spec = importlib.util.spec_from_file_location(
-        "delete_v1_scores", ROOT / "scripts" / "delete_v1_scores.py"
+        "delete_scores", ROOT / "scripts" / "delete_scores.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -104,6 +104,10 @@ class DelCur:
             self.row = {"n": self.conn.remaining}
         elif "pg_database_size" in low:
             self.row = {"db": "445 MB", "scores": "171 MB"}
+        elif low.startswith("select to_regclass"):
+            self.row = {"t": params[0] if params[0] in self.conn.tables else None}
+        elif low.startswith("delete from score_"):
+            self.conn.side_deletes.append((sql, params))
         elif low.startswith("delete"):
             take = min(self.conn.remaining, params[1])
             self.conn.remaining -= take
@@ -118,6 +122,7 @@ class DelCur:
 class DelConn:
     def __init__(self, remaining):
         self.remaining, self.statements, self.commits = remaining, [], 0
+        self.tables, self.side_deletes = {"score_scales"}, []
 
     def __enter__(self):
         return self
@@ -148,37 +153,50 @@ def script(monkeypatch):
 
 
 def deletes(conn):
-    return [s for s in conn.statements if s[0].lower().startswith("delete")]
+    return [
+        s
+        for s in conn.statements
+        if s[0].lower().startswith("delete") and "from scores" in s[0].lower()
+    ]
 
 
 def test_default_is_a_dry_run(script, capsys):
-    assert script.main([]) == 0
+    assert script.main(["--version", "v2-handtuned"]) == 0
     assert deletes(script.conns[0]) == []
     out = capsys.readouterr().out
-    assert "12,000 v1-handtuned rows" in out and "445 MB" in out and "Dry run" in out
+    assert "12,000 v2-handtuned rows" in out and "445 MB" in out and "Dry run" in out
 
 
 def test_yes_deletes_in_batches_and_reports(script, capsys):
-    assert script.main(["--yes", "--batch-size", "5000"]) == 0
+    assert script.main(["--version", "v2-handtuned", "--yes", "--batch-size", "5000"]) == 0
     conn = script.conns[0]
-    assert [p for _, p in deletes(conn)] == [("v1-handtuned", 5000)] * 4  # 5000, 5000, 2000, 0
-    assert conn.remaining == 0 and conn.commits == 4
+    assert [p for _, p in deletes(conn)] == [("v2-handtuned", 5000)] * 4  # 5000, 5000, 2000, 0
+    assert conn.remaining == 0 and conn.commits == 5  # 4 batches + score_scales
     out = capsys.readouterr().out
     assert "before" in out and "after" in out and "Deleted 12,000 rows" in out
 
 
-def test_only_v1_is_ever_targeted(script):
-    script.main(["--yes"])
-    for sql, params in deletes(script.conns[0]):
-        assert params[0] == "v1-handtuned"
+def test_only_the_named_version_is_ever_targeted(script):
+    script.main(["--version", "v2-handtuned", "--yes"])
+    conn = script.conns[0]
+    for sql, params in deletes(conn):
+        assert params[0] == "v2-handtuned"
         assert "weights_version = %s" in sql
+    # score_scales exists in the fake, score_files does not (migration not applied)
+    assert [(s.split()[2], p) for s, p in conn.side_deletes] == [
+        ("score_scales", ("v2-handtuned",))
+    ]
 
 
-def test_refuses_when_v1_is_the_served_version(script, monkeypatch):
-    monkeypatch.setattr(script, "SCORING_WEIGHTS_VERSION", "v1-handtuned")
-    assert script.main(["--yes"]) == 2
+def test_refuses_the_served_version(script):
+    assert script.main(["--version", "v2.1-handtuned", "--yes"]) == 2
     assert script.conns == []
 
 
+def test_requires_a_version(script):
+    with pytest.raises(SystemExit):
+        script.main(["--yes"])
+
+
 def test_rejects_bad_batch_size(script):
-    assert script.main(["--yes", "--batch-size", "0"]) == 2
+    assert script.main(["--version", "v2-handtuned", "--yes", "--batch-size", "0"]) == 2
