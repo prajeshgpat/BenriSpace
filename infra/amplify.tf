@@ -56,6 +56,10 @@ resource "aws_amplify_app" "web" {
   environment_variables = {
     AMPLIFY_MONOREPO_APP_ROOT = "web"
     NEXT_PUBLIC_API_BASE_URL  = "https://${local.api_domain}/v1"
+    # Score clicks at the exact point and its road-bounded area, not the grid square.
+    NEXT_PUBLIC_SCORE_PRECISION = "point"
+    # Score file, area scores and map tiles from Cloudflare R2 (manifest.json there).
+    NEXT_PUBLIC_STATIC_URL = "https://${var.static_domain}"
   }
 
   # Node is pinned here rather than inherited from the build image default.

@@ -127,3 +127,9 @@ variable "budget_alert_email" {
     error_message = "budget_alert_email must be a valid email address."
   }
 }
+
+variable "static_domain" {
+  description = "Cloudflare R2 custom domain serving the static score files and map tiles."
+  type        = string
+  default     = "tiles.benrispace.com"
+}
