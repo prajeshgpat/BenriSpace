@@ -350,3 +350,7 @@ create table if not exists areas_slim (
 );
 
 create index if not exists areas_slim_geom_idx on areas_slim using gist (geom);
+
+-- Per-category nearest-neighbour search for point scoring (migration 0015, not yet applied).
+create extension if not exists btree_gist;
+create index if not exists places_category_geom_gist on places using gist (category, geom);

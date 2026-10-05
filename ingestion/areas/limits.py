@@ -55,3 +55,30 @@ def configure(
         "target_tile_mi": TARGET_TILE_MI,
         "min_sliver_sq_mi": MIN_SLIVER_SQ_MI,
     }
+
+
+# --- density-adaptive caps (road-hierarchy build) ------------------------------------
+# (min people / sq mi, cap in sq mi): denser places get smaller areas.
+DENSITY_CAPS: tuple[tuple[float, float], ...] = (
+    (20_000.0, 0.1),
+    (10_000.0, 0.2),
+    (5_000.0, 0.35),
+    (2_000.0, 0.6),
+    (0.0, 1.0),
+)
+HIER_MAX_AREA_SQ_MI = 1.0  # largest cap in the table (sparse places, parks, estates)
+EXTENT_PER_SQRT_SQ_MI = 2.5  # extent cap (mi) = this * sqrt(cap sq mi)
+MERGE_MIN_SHARED_M = 15.0  # pieces merge only along >= this much shared road boundary
+
+
+def cap_for_density(density: float | None) -> float:
+    """Area cap in sq mi for a local density in people / sq mi (None/unknown = sparse)."""
+    d = density or 0.0
+    for lo, cap in DENSITY_CAPS:
+        if d >= lo:
+            return cap
+    return DENSITY_CAPS[-1][1]
+
+
+def extent_cap_mi(cap_sq_mi: float) -> float:
+    return EXTENT_PER_SQRT_SQ_MI * cap_sq_mi**0.5

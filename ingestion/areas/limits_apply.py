@@ -97,7 +97,9 @@ def _shared_length(a: Polygon, b: Polygon) -> float:
     return b.boundary.intersection(a.buffer(0.05)).length
 
 
-def merge_slivers(polys: list[Polygon], proj: Projector, max_rounds: int = 6) -> list[Polygon]:
+def merge_slivers(
+    polys: list[Polygon], proj: Projector, max_rounds: int = 6, ok=None
+) -> list[Polygon]:
     """Merges each sliver into the neighbour sharing the longest boundary when
     the union is one polygon within the caps. Slivers with no taker stay."""
     cur = list(polys)
@@ -127,7 +129,9 @@ def merge_slivers(polys: list[Polygon], proj: Projector, max_rounds: int = 6) ->
                 merged = shapely.unary_union([cur[i], cur[k]])
                 if merged.geom_type != "Polygon":
                     merged = merged.buffer(0.01).buffer(-0.01)
-                if merged.geom_type != "Polygon" or not within_caps(merged, proj):
+                if merged.geom_type != "Polygon" or not (
+                    ok(merged) if ok else within_caps(merged, proj)
+                ):
                     continue
                 replaced[k] = merged
                 gone.add(i)

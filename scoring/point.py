@@ -187,42 +187,51 @@ def build_live_sql(n_points: int, anchor: frozenset[str] = DEFAULT_ANCHOR) -> st
             {cats}
         ),
         pts as (
-            select p.i, 'pt' as kind, p.lon, p.lat from p
+            select p.i, 'pt' as kind, p.lon, p.lat, p.geohash from p
             union all
-            select p.i, 'ctr', ge.longitude::float8, ge.latitude::float8
+            -- one centroid measurement per distinct cell (samples often share a cell),
+            -- fanned out to every point of that cell by the final select
+            select min(p.i), 'ctr', ge.longitude::float8, ge.latitude::float8, p.geohash
             from p join geo_entities ge on ge.geohash = p.geohash
             where abs(ge.longitude - p.lon) > 1e-9 or abs(ge.latitude - p.lat) > 1e-9
-        )
-        select j.i, j.kind, j.category, cnt.n, nn.ds, nn.lats, nn.lons
-        from (
-            select pts.i, pts.kind, pts.lon, pts.lat, cats.category, cats.radius_m
-            from pts join cats on pts.kind = 'pt' or cats.anchored
-        ) j
-        cross join lateral (select st_setsrid(st_makepoint(j.lon, j.lat), 4326) as pt) q
-        cross join lateral (
-            select count(*)::int as n
-            from places pl
-            where pl.category = j.category
-              and pl.geom && st_makeenvelope(
-                    j.lon - j.radius_m / (111320.0 * cos(radians(j.lat))),
-                    j.lat - j.radius_m / 111320.0,
-                    j.lon + j.radius_m / (111320.0 * cos(radians(j.lat))),
-                    j.lat + j.radius_m / 111320.0, 4326)
-              and st_distancesphere(pl.geom, q.pt) <= j.radius_m
-        ) cnt
-        cross join lateral (
-            select array_agg(k.d order by k.d) as ds,
-                   array_agg(k.lat order by k.d) as lats,
-                   array_agg(k.lon order by k.d) as lons
+            group by p.geohash, ge.longitude, ge.latitude
+        ),
+        r as (
+            select j.i, j.kind, j.geohash, j.category, cnt.n, nn.ds, nn.lats, nn.lons
             from (
-                select st_distancesphere(pl.geom, q.pt) as d,
-                       pl.latitude::float8 as lat, pl.longitude::float8 as lon
+                select pts.i, pts.kind, pts.lon, pts.lat, pts.geohash, cats.category, cats.radius_m
+                from pts join cats on pts.kind = 'pt' or cats.anchored
+            ) j
+            cross join lateral (select st_setsrid(st_makepoint(j.lon, j.lat), 4326) as pt) q
+            cross join lateral (
+                select count(*)::int as n
                 from places pl
                 where pl.category = j.category
-                order by pl.geom <-> q.pt
-                limit {KNN_K}
-            ) k
-        ) nn
+                  and pl.geom && st_makeenvelope(
+                        j.lon - j.radius_m / (111320.0 * cos(radians(j.lat))),
+                        j.lat - j.radius_m / 111320.0,
+                        j.lon + j.radius_m / (111320.0 * cos(radians(j.lat))),
+                        j.lat + j.radius_m / 111320.0, 4326)
+                  and st_distancesphere(pl.geom, q.pt) <= j.radius_m
+            ) cnt
+            cross join lateral (
+                select array_agg(k.d order by k.d) as ds,
+                       array_agg(k.lat order by k.d) as lats,
+                       array_agg(k.lon order by k.d) as lons
+                from (
+                    select st_distancesphere(pl.geom, q.pt) as d,
+                           pl.latitude::float8 as lat, pl.longitude::float8 as lon
+                    from places pl
+                    where pl.category = j.category
+                    order by pl.geom <-> q.pt
+                    limit {KNN_K}
+                ) k
+            ) nn
+        )
+        select r.i, r.kind, r.category, r.n, r.ds, r.lats, r.lons from r where r.kind = 'pt'
+        union all
+        select p.i, 'ctr', r.category, r.n, r.ds, r.lats, r.lons
+        from r join p on p.geohash = r.geohash where r.kind = 'ctr'
     """
 
 

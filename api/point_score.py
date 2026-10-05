@@ -167,6 +167,12 @@ def _nearest_cell(conn, lat: float, lon: float) -> dict | None:
     return _fetch_cells(conn, [near["geohash"]]).get(near["geohash"])
 
 
+def fetch_cell(conn, lat: float, lon: float, geohash: str) -> dict | None:
+    """The cell (geo_entities + feature_store row) under a point: exact geohash6, else the
+    nearest cell (the same fallback as GET /v1/score)."""
+    return _fetch_cells(conn, [geohash]).get(geohash) or _nearest_cell(conn, lat, lon)
+
+
 # --- scoring -----------------------------------------------------------------------
 
 
@@ -176,7 +182,19 @@ def score_points(
     weights_version: str,
     anchor: frozenset[str] = DEFAULT_ANCHOR,
 ) -> list[PointResult]:
-    """Scores each (lat, lon) at its exact position. Raises PointScoringError when a
+    return score_points_cells(conn, points, weights_version, anchor)[0]
+
+
+def score_points_cells(
+    conn,
+    points: list[tuple[float, float]],
+    weights_version: str,
+    anchor: frozenset[str] = DEFAULT_ANCHOR,
+    extra_geohashes: tuple[str, ...] = (),
+) -> tuple[list[PointResult], dict[str, dict]]:
+    """score_points, plus the cell rows (geo_entities + feature_store) of every sample
+    point's geohash and of `extra_geohashes`, fetched by the SAME cell query (no extra
+    round trip). Scores each (lat, lon) at its exact position. Raises PointScoringError when a
     point has no containing/nearby cell, the version is unsupported or anything else
     prevents it (the caller then serves the grid score)."""
     if weights_version not in SUPPORTED_VERSIONS:
@@ -187,7 +205,7 @@ def score_points(
 
     try:
         with conn.cursor() as cell_cur, conn.cursor() as live_cur:
-            cell_cur.execute(_cell_query(True), (sorted(set(geohashes)),))
+            cell_cur.execute(_cell_query(True), (sorted({*geohashes, *extra_geohashes}),))
             execute_live(live_cur, live_points, anchor)
             cells = {r["geohash"]: r for r in cell_cur.fetchall()}
             live = read_live(live_cur)
@@ -217,7 +235,7 @@ def score_points(
     done = time.perf_counter()
     for r in results:
         r.timings_ms = {"query": (t_query - t0) * 1000, "total": (done - t0) * 1000}
-    return results
+    return results, cells
 
 
 # --- responses -----------------------------------------------------------------------

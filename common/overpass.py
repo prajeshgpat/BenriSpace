@@ -16,13 +16,14 @@ against the actual public Overpass instance, not hypothetical:
    a different problem) ever sees it.
 """
 
+import os
 import sys
 import time
 from collections.abc import Callable
 
 import httpx
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_URL = os.environ.get("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 HTTP_HEADERS = {"User-Agent": "BenriSpace-ingestion/1.0 (contact: prajeshgpat@gmail.com)"}
 
 DEFAULT_RETRY_AFTER_S = 60.0

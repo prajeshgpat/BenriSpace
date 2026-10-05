@@ -59,6 +59,10 @@ def _query(conn, lat: float, lon: float) -> dict | None:
     return None if row is None else row_to_area(row)
 
 
+def has_own_database() -> bool:
+    return bool(os.environ.get(AREAS_DATABASE_URL_ENV, "").strip())
+
+
 def find_area(conn, lat: float, lon: float) -> dict | None:
     """Smallest containing area, else the nearest within 40 m, else None. Uses the
     AREAS_DATABASE_URL database when set, otherwise the caller's connection."""

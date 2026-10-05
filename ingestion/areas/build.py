@@ -73,11 +73,18 @@ def build_numbered(
     bbox: tuple[float, float, float, float],
     geohashes: frozenset[str] | None = None,
     include_rail: bool = False,
+    subdivider_factory=None,
 ) -> tuple[Numbered, Projector]:
     proj = projector_for(bbox)
     roads, coast = parse_hard(data, proj, include_rail)
-    faces = build_faces(roads, coast, frame_for(bbox, proj), FaceParams(proj, geohashes=geohashes))
-    return number_faces(faces), proj
+    sub = subdivider_factory(proj) if subdivider_factory else None
+    faces = build_faces(
+        roads, coast, frame_for(bbox, proj), FaceParams(proj, geohashes=geohashes, subdivider=sub)
+    )
+    numbered = number_faces(faces)
+    if sub is not None:
+        build_numbered.last_stats = dict(sub.stats)
+    return numbered, proj
 
 
 # ------------------------------------------------------------------ metrics
@@ -286,6 +293,51 @@ def _labeler(mode: str):
     return lambda lat, lon: label_point(lat, lon, index)
 
 
+_FIELD: list = [None]
+
+
+def _hierarchy_factory(args):
+    from ingestion.areas.density_cells import DensityField, load_cells
+    from ingestion.areas.hierarchy import Hierarchy
+
+    gh, dens = load_cells(refresh=args.density_refresh)
+    print(f"{len(gh)} density cells ({int((~np.isnan(dens)).sum())} with density)")
+
+    def make(proj):
+        _FIELD[0] = DensityField(gh, dens, proj)
+        return Hierarchy(proj, _FIELD[0], args.cache_dir, allow_network=args.allow_network)
+
+    return make
+
+
+def density_class_metrics(numbered: Numbered, proj: Projector, field) -> dict:
+    """Size distribution per density class (the class of the area's own density)."""
+    if field is None or not numbered:
+        return {}
+    geoms = [_to_m(f.geometry, proj) for _, f in numbered]
+    dens = field.of_many(geoms)
+    out: dict = {}
+    for lo, cap in limits.DENSITY_CAPS:
+        sel = [i for i, d in enumerate(dens) if limits.cap_for_density(d) == cap]
+        if not sel:
+            continue
+        a = np.array([numbered[i][1].area_sq_m / SQ_M_PER_SQ_MI for i in sel])
+        q = np.quantile(a, [0.1, 0.5, 0.9])
+        out[f">={int(lo)}/sqmi cap {cap}"] = {
+            "n": len(sel),
+            "p10": round(float(q[0]), 3),
+            "median": round(float(q[1]), 3),
+            "p90": round(float(q[2]), 3),
+            "max": round(float(a.max()), 3),
+            "share_over_cap_pct": round(100.0 * float((a > cap * 1.005).mean()), 2),
+            "mean_pct_of_cap": round(100.0 * float(a.mean()) / cap, 1),
+        }
+    cut = sum(1 for _, f in numbered if f.stats.get("tile_cut"))
+    out["tile_cut_pieces"] = cut
+    out["fully_road_bounded_pct"] = round(100.0 * (1 - cut / len(numbered)), 2)
+    return out
+
+
 def _write_slim(numbered: Numbered, args) -> dict:
     import psycopg
     from psycopg.rows import dict_row
@@ -330,6 +382,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="--write-slim labels: 'cells' = label of the grid cell under the area's point "
         "(read-only query on DATABASE_URL), falling back to the cached Census towns",
     )
+    ap.add_argument(
+        "--road-hierarchy",
+        action="store_true",
+        help="subdivide over-cap hard-road faces along tertiary then residential roads with "
+        "density-adaptive caps (limits.DENSITY_CAPS) instead of straight tile cuts",
+    )
+    ap.add_argument("--density-refresh", action="store_true", help="re-read densities (read-only)")
+    ap.add_argument("--bbox", help="south,west,north,east: build only this frame (testing)")
     ap.add_argument("--source", choices=["sample", "region"], default="sample")
     ap.add_argument("--allow-network", action="store_true", help="permit Overpass fetches")
     ap.add_argument("--include-rail", action="store_true", help="rails as walls (default off)")
@@ -368,13 +428,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         street_m = [q for q in street_points(data, proj) if frame.contains(Point(*q))]
         water = parse_layers(data, bbox).water
     else:
-        bbox = region_bbox()
+        bbox = tuple(float(x) for x in args.bbox.split(",")) if args.bbox else region_bbox()
         data = fetch_region(
-            bbox, args.cache_dir, allow_network=args.allow_network, include_rail=args.include_rail
+            region_bbox(),
+            args.cache_dir,
+            allow_network=args.allow_network,
+            include_rail=args.include_rail,
         )
         street_m = None
-    numbered, proj = build_numbered(data, bbox, geohashes, args.include_rail)
+    factory = None
+    if args.road_hierarchy:
+        factory = _hierarchy_factory(args)
+    numbered, proj = build_numbered(data, bbox, geohashes, args.include_rail, factory)
     metrics = compute_metrics(numbered, proj, time.monotonic() - t0, street_m, water)
+    if args.road_hierarchy:
+        metrics["hierarchy"] = dict(getattr(build_numbered, "last_stats", {}))
+        metrics["by_density_class"] = density_class_metrics(numbered, proj, _FIELD[0])
     if street_m is not None:
         street_ll = [proj.inv(x, y) for x, y in street_m]
 

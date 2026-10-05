@@ -30,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import point_score, scorefile, slim_areas, sources
+from api import area_cache, point_score, scorefile, slim_areas, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
@@ -491,6 +491,8 @@ def _area_at_point_precision(lat: float, lon: float):
     """The area's score as the equal-weight mean of up to 5 sample points inside
     the polygon (scoring.point.sample_points), each scored on demand. Returns the
     AreaScoreResponse, or an error JSONResponse for an unknown area."""
+    if slim_areas.enabled():
+        return _slim_area_at_point_precision(lat, lon)
     with get_connection() as conn:
         resolved = _resolve_area(lat, lon, with_aggregate=False, open_conn=conn)
         if isinstance(resolved, JSONResponse):
@@ -502,6 +504,58 @@ def _area_at_point_precision(lat: float, lon: float):
     built = build_area_response(
         area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
     )
+    return built.model_copy(update={"precision": "point"})
+
+
+def _slim_area_at_point_precision(lat: float, lon: float):
+    """areas_slim path with caches (api/area_cache.py) and the fewest round trips:
+    area lookup (AREAS_DATABASE_URL, or the main DB), then ONE statement pipeline that
+    scores every sample point AND fetches the click cell (geo_entity + feature row)."""
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+    not_found = _error(404, "area_not_found", "No road-bounded area found for this location.")
+    geohash = geohash_encode(lat, lon, precision=6)
+
+    area = area_cache.POINT_AREA.get(area_cache.point_key(lat, lon))
+    aggregate = cell = None
+    with contextlib.ExitStack() as stack:
+        conn = None
+
+        def main_conn():
+            nonlocal conn
+            if conn is None:
+                conn = stack.enter_context(get_connection())
+            return conn
+
+        if area is None:
+            if slim_areas.has_own_database():
+                area = slim_areas.find_area(None, lat, lon)
+            else:
+                area = slim_areas.find_area(main_conn(), lat, lon)
+            if area is None:
+                return not_found
+            area_cache.POINT_AREA.put(area_cache.point_key(lat, lon), area)
+        skey = area_cache.scores_key(area["id"], SCORING_WEIGHTS_VERSION)
+        aggregate = area_cache.AREA_SCORES.get(skey)
+        cell = area_cache.CELLS.get(geohash)
+        if aggregate is None:
+            samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+            results, cells = point_score.score_points_cells(
+                main_conn(), samples, SCORING_WEIGHTS_VERSION, extra_geohashes=(geohash,)
+            )
+            aggregate = area_cache.AREA_SCORES.put(
+                skey, point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+            )
+            if cell is None and geohash in cells:
+                cell = area_cache.CELLS.put(geohash, cells[geohash])
+        if aggregate.get("composite_score") is None:
+            return not_found
+        if cell is None:  # scores were cached but the click cell was not
+            cell = point_score.fetch_cell(main_conn(), lat, lon, geohash)
+            if cell is None:
+                return not_found
+            area_cache.CELLS.put(geohash, cell)
+    built = build_area_response(area, aggregate, cell, lat, lon, cell, SCORING_WEIGHTS_VERSION)
     return built.model_copy(update={"precision": "point"})
 
 
