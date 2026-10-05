@@ -277,7 +277,12 @@ class Subdivider:
                 leaves.extend(self._no_roads(p, a, d, pid))
                 continue
             a2, d2, _ = self._info(sub)
-            leaves.extend(Leaf(q, qa, qd * qa, pid) for q, qa, qd in zip(sub, a2, d2, strict=True))
+            for q, qa, qd in zip(sub, a2, d2, strict=True):
+                if qa > limits.HIER_MAX_AREA_SQ_MI * SQ_M * _SAFETY:
+                    # roads closed only small loops: the remainder has no useful roads
+                    leaves.extend(self._no_roads(q, qa, qd, pid))
+                else:
+                    leaves.append(Leaf(q, qa, qd * qa, pid))
         return leaves
 
     def _no_roads(self, p: Polygon, area: float, dens: float, pid: int) -> list[Leaf]:
@@ -362,6 +367,7 @@ class Hierarchy:
         self.stats: dict = {}
         self.named: list[RoadEdge] = []
         self.tile_cut_pts: list[Point] = []
+        self._cut_tree: STRtree | None = None
         self._cos0 = math.cos(math.radians(proj.lat0))
 
     def area_scale(self, p: BaseGeometry) -> float:
@@ -409,9 +415,10 @@ class Hierarchy:
             d = float(self.field.of_many([g])[0])
             cap = limits.cap_for_density(d)
             x0, y0, x1, y1 = g.bounds
+            # a sliver may push its neighbour slightly past the cap (+ MIN_SLIVER_SQ_MI)
             return (
-                g.area * self.area_scale(g) <= cap * SQ_M * _SAFETY
-                and max(x1 - x0, y1 - y0) <= limits.extent_cap_mi(cap) * limits.M_PER_MI * _SAFETY
+                g.area * self.area_scale(g) <= (cap + limits.MIN_SLIVER_SQ_MI) * SQ_M * _SAFETY
+                and max(x1 - x0, y1 - y0) <= limits.extent_cap_mi(cap) * limits.M_PER_MI * 1.1
             )
 
         before = len(out)
@@ -425,4 +432,8 @@ class Hierarchy:
         return len(region.query(box(x0, y0, x1, y1), predicate="intersects")) > 0
 
     def is_tile_cut(self, poly_m: BaseGeometry) -> bool:
-        return any(poly_m.contains(p) for p in self.tile_cut_pts)
+        if not self.tile_cut_pts:
+            return False
+        if self._cut_tree is None:
+            self._cut_tree = STRtree(self.tile_cut_pts)
+        return len(self._cut_tree.query(poly_m, predicate="contains")) > 0

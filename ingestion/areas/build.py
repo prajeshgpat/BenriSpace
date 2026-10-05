@@ -325,6 +325,9 @@ def density_class_metrics(numbered: Numbered, proj: Projector, field) -> dict:
         q = np.quantile(a, [0.1, 0.5, 0.9])
         out[f">={int(lo)}/sqmi cap {cap}"] = {
             "n": len(sel),
+            "tile_cut_pct": round(
+                100.0 * sum(1 for i in sel if numbered[i][1].stats.get("tile_cut")) / len(sel), 1
+            ),
             "p10": round(float(q[0]), 3),
             "median": round(float(q[1]), 3),
             "p90": round(float(q[2]), 3),

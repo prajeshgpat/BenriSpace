@@ -42,7 +42,7 @@ BUSY_WAIT_S = 120.0
 def build_query(tile: Bbox) -> str:
     s, w, n, e = tile
     return (
-        f"[out:json][timeout:{QUERY_TIMEOUT_S}][maxsize:2147483648];\n"
+        f"[out:json][timeout:{QUERY_TIMEOUT_S}];\n"
         f'way["highway"~"^({LOWER_REGEX})$"][!"tunnel"][!"bridge"]["area"!="yes"]'
         f"({s},{w},{n},{e});\nout geom;\n"
     )
