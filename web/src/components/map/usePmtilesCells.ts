@@ -262,9 +262,20 @@ export function usePmtilesCells({
     const enter = setPointer("pointer");
     const leave = setPointer("");
 
+    // isStyleLoaded() stays false while basemap tiles are still loading, long after
+    // style.load has fired, so try now and retry when the map next goes idle.
+    const tryBuild = () => {
+      if (cancelled) return;
+      try {
+        build();
+      } catch {
+        map.once("idle", tryBuild);
+      }
+    };
+
     void ensureProtocol().then(() => {
       if (cancelled) return;
-      if (map.isStyleLoaded()) build();
+      tryBuild();
       map.on("style.load", build);
       map.on("error", onError);
       map.on("click", FILL.cells, onClick);
@@ -275,6 +286,7 @@ export function usePmtilesCells({
     return () => {
       cancelled = true;
       try {
+        map.off("idle", tryBuild);
         map.off("style.load", build);
         map.off("error", onError);
         map.off("click", FILL.cells, onClick);
