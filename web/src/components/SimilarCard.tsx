@@ -2,9 +2,10 @@
 
 import { useId, memo } from "react";
 
+import { useAreaScores } from "@/hooks/useStaticData";
 import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
-import type { PriorityQuery, SimilarDifference } from "@/lib/api/types";
+import type { PriorityQuery, SimilarDifference, SubScores } from "@/lib/api/types";
 import type { Preview } from "@/lib/map/preview";
 import { roundScore } from "@/lib/score/presentation";
 
@@ -17,6 +18,8 @@ export interface SimilarCardProps {
   coordinates: { lat: number; lon: number } | null;
   client: Pick<ApiClient, "getSimilar"> & Partial<Pick<ApiClient, "sendFeedback">>;
   priorities?: PriorityQuery;
+  /** The place's own scores; with the static area file they let the browser find similar areas. */
+  source?: { subScores: SubScores; areaId?: number | null };
   onPreview: (preview: Preview) => void;
 }
 
@@ -44,9 +47,15 @@ function SimilarCardImpl({
   coordinates,
   client,
   priorities,
+  source,
   onPreview,
 }: SimilarCardProps) {
-  const { status, data, updating } = useSimilar(coordinates, client, priorities);
+  const areas = useAreaScores();
+  const { status, data, updating } = useSimilar(coordinates, client, priorities, {
+    areas,
+    subScores: source?.subScores ?? null,
+    areaId: source?.areaId,
+  });
   const listId = useId();
   const results = (data?.results ?? []).slice(0, MAX_ROWS);
   const { visible, hidden, open, toggle } = useShowMore(results);

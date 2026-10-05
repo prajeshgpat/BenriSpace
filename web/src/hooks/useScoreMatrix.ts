@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 
 import type { ApiClient } from "@/lib/api/client";
+import { STATIC_URL } from "@/lib/config";
+import { loadStaticPiece } from "@/lib/static/manifest";
 import { decodeScoreMatrix, type ScoreMatrix } from "@/lib/scores/matrix";
 
 export type ScoreMatrixState =
@@ -12,15 +14,24 @@ export type ScoreMatrixState =
 
 const cache = new WeakMap<object, Promise<ScoreMatrix>>();
 
-/** One download per client for the life of the page; a failure is not cached. */
+/**
+ * One download per client for the life of the page; a failure is not cached.
+ * With a static origin the score file comes from there; if that is absent,
+ * unreachable or undecodable the API serves it instead.
+ */
 export function loadScoreMatrix(
   client: Pick<ApiClient, "getMapScores">,
+  staticBase: string | undefined = STATIC_URL,
 ): Promise<ScoreMatrix> {
   const known = cache.get(client);
   if (known) return known;
-  const loading = Promise.resolve()
-    .then(() => client.getMapScores())
-    .then(decodeScoreMatrix);
+  const loading = loadStaticPiece(staticBase, "scores", decodeScoreMatrix).then(
+    (fromStatic) =>
+      fromStatic ??
+      Promise.resolve()
+        .then(() => client.getMapScores())
+        .then(decodeScoreMatrix),
+  );
   cache.set(client, loading);
   loading.catch(() => cache.delete(client));
   return loading;

@@ -24,6 +24,11 @@ export default defineConfig({
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 240_000,
-    env: { NEXT_PUBLIC_API_BASE_URL: "https://api.e2e.test/v1", NEXT_TELEMETRY_DISABLED: "1" },
+    env: {
+      NEXT_PUBLIC_API_BASE_URL: "https://api.e2e.test/v1",
+      // A dead host: the static-files path must fall back to the API silently.
+      NEXT_PUBLIC_STATIC_URL: "https://static.e2e.test",
+      NEXT_TELEMETRY_DISABLED: "1",
+    },
   },
 });

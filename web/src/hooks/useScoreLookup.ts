@@ -35,6 +35,8 @@ export type LookupState =
       score: Score;
       /** The secondary-road polygon behind the score; null for a plain grid-square score. */
       area: AreaInfo | null;
+      /** The area's id, which keys the static area-score file. */
+      areaId?: number | null;
       explanation: ExplanationState;
     }
   | { status: "error"; address: string; error: ApiError };
@@ -118,6 +120,7 @@ export function useScoreLookup(
             address,
             score: result.score,
             area: result.area,
+            areaId: result.areaId,
             explanation: text.trim()
               ? { status: "ready", text, explanationSource: "rules" }
               : { status: "unavailable" },

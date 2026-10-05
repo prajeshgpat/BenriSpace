@@ -957,6 +957,8 @@ def decode(blob):
 | 304 | | `If-None-Match` matches the current `ETag` |
 | 404 | `not_found` | Unknown `version`, or no scores for the served version |
 
+**Static copy (client note).** The web app can read this same file, byte for byte, from R2 when `NEXT_PUBLIC_STATIC_URL` is set: `manifest.json` (`{"format":1,"weightsVersion","generatedAt","scores":{"path","bytes","sha256"},"areaScores":{...},"tiles":{...}}`, paths relative to the manifest, any piece optional) names a content-hashed `scores/<version>.<sha12>.bin`, served with `Content-Encoding: gzip`. Any failure falls back to this endpoint. A sibling `areas/...bin` (format 1, `kind: "areaScores"`) holds each area's sub-scores (the same numbers `GET /area?precision=point` returns, keyed by the `areaId` of `/area` and the `id` of the tiles' `areas` layer) for instant area clicks and local `/similar`; the web app falls back to `/area` and `/similar` when it is absent.
+
 ---
 
 ## `GET /sources`

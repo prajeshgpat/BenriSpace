@@ -33,7 +33,9 @@ import {
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
 import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
-import { API_BASE_URL, CHAT_STREAM_URL, PMTILES_URL } from "@/lib/config";
+import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
+import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
+import { provisionalArea } from "@/lib/static/provisional";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
   YOUR_LOCATION_LABEL,
@@ -313,7 +315,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // The vector-tile grid is opt-in (NEXT_PUBLIC_PMTILES_URL); a tile error
   // switches back to GeoJSON cells for the rest of the visit.
   const [tilesFailed, setTilesFailed] = useState(false);
-  const tilesOn = Boolean(PMTILES_URL) && !tilesFailed;
+  const tilesOn = Boolean(useTilesUrl()) && !tilesFailed;
   const { noFactors, cells, top, features, range, topResults, weights, tileCells } =
     useMapData({
       client,
@@ -330,6 +332,21 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   );
 
   const { state, retry } = useScoreLookup(target, client, priorities);
+
+  // A map click that landed in a known area shows that area's static scores
+  // while `/area` loads; the API's answer replaces them.
+  const areaScores = useAreaScores();
+  const [areaHint, setAreaHint] = useState<{ key: string; areaId: number } | null>(null);
+  const provisional = useMemo(
+    () =>
+      state.status === "loading" &&
+      areaScores &&
+      areaHint &&
+      areaHint.key === placeKey
+        ? provisionalArea(areaScores, areaHint.areaId, selection.factors, weights)
+        : null,
+    [state.status, areaScores, areaHint, placeKey, selection.factors, weights],
+  );
   const compare = useCompare();
   // Fetch the chat code once the page is idle, so "Ask Benri" opens at once.
   useEffect(() => {
@@ -383,6 +400,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         ? { lat: successScore.latitude, lon: successScore.longitude }
         : null,
     [successScore],
+  );
+
+  const successAreaId = state.status === "success" ? state.areaId : undefined;
+  const similarSource = useMemo(
+    () => (successScore ? { subScores: successScore.subScores, areaId: successAreaId } : undefined),
+    [successScore, successAreaId],
   );
 
   const point: LatLon | null =
@@ -533,7 +556,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     panelRef.current?.focus({ preventScroll: true });
   }
 
-  function selectCell(cell: { geohash: string; lat: number; lon: number }) {
+  function selectCell(cell: { geohash: string; lat: number; lon: number; areaId?: number }) {
     const lat = roundCoordinate(cell.lat);
     const lon = roundCoordinate(cell.lon);
     const next: ScoreTarget = {
@@ -544,6 +567,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "cell", geohash: cell.geohash, key: targetKey(next) });
+    setAreaHint(
+      cell.areaId === undefined ? null : { key: targetKey(next), areaId: cell.areaId },
+    );
     navigate(next);
   }
 
@@ -758,7 +784,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           {/* Fixed-height slot: loading, success and error share it, so the
               filters below never move when a result arrives. */}
           <div className={styles.headerSlot}>
-            {state.status === "loading" ? <ResultSkeleton /> : null}
+            {state.status === "loading" && !provisional ? <ResultSkeleton /> : null}
+            {state.status === "loading" && provisional ? (
+              <div aria-busy="true" data-testid="provisional-score">
+                <ScoreHeader
+                  address={readableAddress ?? state.address}
+                  score={provisional}
+                />
+              </div>
+            ) : null}
             {state.status === "error" ? (
               <ErrorNotice
                 address={state.address}
@@ -792,7 +826,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         <FactorControls
           selection={selection}
           onChange={setSelection}
-          scores={state.status === "success" ? state.score.subScores : null}
+          scores={
+            state.status === "success"
+              ? state.score.subScores
+              : (provisional?.subScores ?? null)
+          }
         />
         {state.status === "success" ? (
           <>
@@ -820,6 +858,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
               client={client}
               priorities={priorities}
+              source={similarSource}
               onPreview={onPreview}
             />
           </>

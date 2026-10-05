@@ -4,6 +4,7 @@ import {
   BASEMAP_ORIGIN,
   resolveApiBaseUrl,
   resolveChatStreamUrl,
+  resolveStaticUrl,
   resolveTilesUrl,
 } from "./src/lib/config";
 
@@ -11,10 +12,14 @@ const apiOrigin = new URL(
   resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL),
 ).origin;
 
-// Optional extra origins: the streaming chat endpoint and the PMTiles bucket.
+// Optional extra origins: the streaming chat endpoint, the PMTiles bucket and
+// the static-files origin (manifest, score files and, via the manifest, tiles).
+// PMTiles and its parser run on fetch() (connect-src) and the existing blob
+// worker, so no img/worker entry is needed.
 const extraConnectOrigins = [
   resolveChatStreamUrl(process.env.NEXT_PUBLIC_CHAT_STREAM_URL),
   resolveTilesUrl(process.env.NEXT_PUBLIC_PMTILES_URL),
+  resolveStaticUrl(process.env.NEXT_PUBLIC_STATIC_URL),
 ].flatMap((value) => (value ? [new URL(value).origin] : []));
 
 // Statically prerendered pages cannot carry a per-request nonce, so scripts
