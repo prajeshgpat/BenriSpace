@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -32,6 +33,7 @@ import numpy as np
 from shapely.geometry import Point, box, mapping
 
 from common.coverage import BOUNDING_BOXES
+from ingestion.areas import limits
 from ingestion.areas.faces import Face, FaceParams, _to_m, build_faces, number_faces
 from ingestion.areas.hard_source import (
     fetch_region,
@@ -39,12 +41,7 @@ from ingestion.areas.hard_source import (
     region_bbox,
     street_points,
 )
-from ingestion.areas.limits import (
-    M_PER_MI,
-    MAX_AREA_SQ_MI,
-    MAX_EXTENT_M,
-    MIN_SLIVER_SQ_MI,
-)
+from ingestion.areas.limits import M_PER_MI
 from ingestion.areas.osm_source import SAMPLE_BBOX, Projector, cache_path, parse_layers
 
 SQ_M_PER_SQ_MI = 2_589_988.11
@@ -106,13 +103,17 @@ def compute_metrics(
             )
         }
         m["total_area_sq_mi"] = round(float(areas_mi.sum()), 3)
-        m["share_over_max_area_pct"] = round(100.0 * float((areas_mi > MAX_AREA_SQ_MI).mean()), 3)
-        m["share_under_sliver_pct"] = round(100.0 * float((areas_mi < MIN_SLIVER_SQ_MI).mean()), 2)
+        m["share_over_max_area_pct"] = round(
+            100.0 * float((areas_mi > limits.MAX_AREA_SQ_MI).mean()), 3
+        )
+        m["share_under_sliver_pct"] = round(
+            100.0 * float((areas_mi < limits.MIN_SLIVER_SQ_MI).mean()), 2
+        )
         ext = [f.extent_m for _, f in numbered if f.extent_m is not None]
         if ext:
             m["max_extent_mi"] = round(max(ext) / M_PER_MI, 3)
             m["share_over_max_extent_pct"] = round(
-                100.0 * sum(e > MAX_EXTENT_M for e in ext) / len(ext), 3
+                100.0 * sum(e > limits.MAX_EXTENT_M for e in ext) / len(ext), 3
             )
     metric_geoms = [_to_m(f.geometry, proj) for _, f in numbered]
     if street_pts and metric_geoms:
@@ -243,10 +244,61 @@ def _backfill_area_geom(conn) -> None:
         conn.commit()
     except Exception as exc:  # noqa: BLE001 - optional column, never fail the rebuild
         conn.rollback()
-        print(f"areas.geom not filled ({type(exc).__name__}); apply migration 0012.", file=sys.stderr)
+        print(
+            f"areas.geom not filled ({type(exc).__name__}); apply migration 0012.", file=sys.stderr
+        )
 
 
 # ---------------------------------------------------------------------- CLI
+
+
+def _env_float(name: str, cli: float | None) -> float | None:
+    """CLI flag wins, then the env var, else None (keep the default)."""
+    if cli is not None:
+        return cli
+    raw = os.environ.get(name, "").strip()
+    return float(raw) if raw else None
+
+
+def _labeler(mode: str):
+    """lat, lon -> neighbourhood label for slim areas, from cached data only."""
+    if mode == "none":
+        return lambda lat, lon: None
+    from ingestion.neighborhoods import label_point, load_town_index
+
+    index = load_town_index()
+    cell_labels: dict[str, str] = {}
+    if mode == "cells":
+        from common.db import get_connection
+        from common.geo import encode
+
+        with get_connection() as conn, conn.cursor() as cur:  # read-only
+            cur.execute(
+                "select geohash, neighborhood from geo_entities where neighborhood is not null"
+            )
+            cell_labels = {r["geohash"]: r["neighborhood"] for r in cur}
+        print(f"{len(cell_labels)} labelled grid cells (read-only)")
+
+        def by_cell(lat: float, lon: float) -> str | None:
+            return cell_labels.get(encode(lat, lon, precision=6)) or label_point(lat, lon, index)
+
+        return by_cell
+    return lambda lat, lon: label_point(lat, lon, index)
+
+
+def _write_slim(numbered: Numbered, args) -> dict:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from ingestion.areas import slim
+
+    url = slim.areas_database_url()
+    labels = slim.label_faces(numbered, _labeler(args.neighborhoods))
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        written = slim.write_areas_slim(conn, numbered, args.build_version, metro_of, labels)
+        written["sizes"] = slim.table_sizes(conn)
+    written["labelled"] = sum(1 for v in labels.values() if v)
+    return written
 
 
 def _load_sample(cache_dir: Path) -> dict:
@@ -262,6 +314,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="default: files only, no DB")
     mode.add_argument("--write", action="store_true", help="replace areas + area_cells (1 txn)")
+    mode.add_argument(
+        "--write-slim",
+        action="store_true",
+        help="replace areas_slim in the DB named by $AREAS_DATABASE_URL (never DATABASE_URL)",
+    )
+    ap.add_argument("--max-area-sq-mi", type=float, help="cap on one area (default 0.8)")
+    ap.add_argument("--max-extent-mi", type=float, help="cap on the longest side (default 1.4)")
+    ap.add_argument("--target-tile-mi", type=float, help="tile grid side for cuts (default 0.75)")
+    ap.add_argument("--min-sliver-sq-mi", type=float, help="merge smaller faces (default 0.02)")
+    ap.add_argument(
+        "--neighborhoods",
+        choices=["cells", "towns", "none"],
+        default="cells",
+        help="--write-slim labels: 'cells' = label of the grid cell under the area's point "
+        "(read-only query on DATABASE_URL), falling back to the cached Census towns",
+    )
     ap.add_argument("--source", choices=["sample", "region"], default="sample")
     ap.add_argument("--allow-network", action="store_true", help="permit Overpass fetches")
     ap.add_argument("--include-rail", action="store_true", help="rails as walls (default off)")
@@ -270,8 +338,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--build-version", default=DEFAULT_BUILD_VERSION)
     args = ap.parse_args(argv)
 
-    if args.write and args.source != "region":
-        ap.error("--write requires --source region")
+    if (args.write or args.write_slim) and args.source != "region":
+        ap.error("--write / --write-slim require --source region")
+    caps = limits.configure(
+        max_area_sq_mi=_env_float("AREAS_MAX_AREA_SQ_MI", args.max_area_sq_mi),
+        max_extent_mi=_env_float("AREAS_MAX_EXTENT_MI", args.max_extent_mi),
+        target_tile_mi=_env_float("AREAS_TARGET_TILE_MI", args.target_tile_mi),
+        min_sliver_sq_mi=_env_float("AREAS_MIN_SLIVER_SQ_MI", args.min_sliver_sq_mi),
+    )
+    print(f"size caps: {caps}")
 
     t0 = time.monotonic()
     geohashes = None
@@ -281,6 +356,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         with get_connection() as conn:
             geohashes = read_geohashes(conn)
         print(f"{len(geohashes)} geohashes in geo_entities")
+    elif args.write_slim:
+        geohashes = frozenset()  # slim areas keep no grid-cell overlaps
 
     street_ll = water = None
     if args.source == "sample":
@@ -306,6 +383,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         with get_connection() as conn:
             metrics["written"] = write_areas(conn, numbered, args.build_version)
+    elif args.write_slim:
+        metrics["written"] = _write_slim(numbered, args)
     else:
         args.out_dir.mkdir(parents=True, exist_ok=True)
         (args.out_dir / "areas.geojson").write_text(json.dumps(to_geojson(numbered)))

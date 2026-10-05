@@ -22,13 +22,8 @@ from shapely.geometry import Polygon, box
 from shapely.geometry.base import BaseGeometry
 from shapely.strtree import STRtree
 
+from ingestion.areas import limits
 from ingestion.areas.faces import _to_ll, _to_m, local_projector
-from ingestion.areas.limits import (
-    MAX_AREA_M2,
-    MAX_EXTENT_M,
-    MIN_SLIVER_M2,
-    TARGET_TILE_M,
-)
 from ingestion.areas.osm_source import Projector
 
 _SAFETY = 0.998  # headroom for the later 5-decimal snapping of coordinates
@@ -49,7 +44,7 @@ def measure(geom: BaseGeometry, proj: Projector) -> tuple[float, float]:
 
 def within_caps(geom: BaseGeometry, proj: Projector) -> bool:
     area, extent = measure(geom, proj)
-    return area <= MAX_AREA_M2 * _SAFETY and extent <= MAX_EXTENT_M * _SAFETY
+    return area <= limits.MAX_AREA_M2 * _SAFETY and extent <= limits.MAX_EXTENT_M * _SAFETY
 
 
 def _polys(g: BaseGeometry) -> list[Polygon]:
@@ -85,8 +80,8 @@ def split_oversized(poly: Polygon, proj: Projector, _depth: int = 0) -> list[Pol
     if within_caps(poly, proj) or _depth >= _MAX_DEPTH:
         return [poly]
     x0, y0, x1, y1 = poly.bounds
-    nx = max(1, round((x1 - x0) / TARGET_TILE_M))
-    ny = max(1, round((y1 - y0) / TARGET_TILE_M))
+    nx = max(1, round((x1 - x0) / limits.TARGET_TILE_M))
+    ny = max(1, round((y1 - y0) / limits.TARGET_TILE_M))
     if nx == 1 and ny == 1:  # compact but over the area cap: halve the longer side
         nx, ny = (2, 1) if (x1 - x0) >= (y1 - y0) else (1, 2)
     pieces = _cut(poly, nx, ny)
@@ -109,7 +104,7 @@ def merge_slivers(polys: list[Polygon], proj: Projector, max_rounds: int = 6) ->
     for _ in range(max_rounds):
         areas = [measure(p, proj)[0] for p in cur]
         slivers = sorted(
-            (i for i, a in enumerate(areas) if a < MIN_SLIVER_M2), key=lambda i: areas[i]
+            (i for i, a in enumerate(areas) if a < limits.MIN_SLIVER_M2), key=lambda i: areas[i]
         )
         if not slivers:
             break

@@ -30,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import point_score, scorefile, sources
+from api import point_score, scorefile, slim_areas, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
@@ -97,10 +97,13 @@ from api.suggest import suggest as suggest_addresses
 from api.triangulate import anchor_to_circle, rank_candidates
 from api.triangulate_sql import combined_bbox, get_scored_candidates_in_box
 from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
+
+# Requests reuse one pooled connection per process (common.db.api_connection); the name
+# stays `get_connection` so tests can keep patching it.
+from common.db import api_connection as get_connection
 from common.db import (
     get_area_aggregate,
     get_area_candidates,
-    get_connection,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
     get_geo_entity_by_id,
@@ -421,11 +424,21 @@ def _resolve_area(lat: float, lon: float, with_aggregate: bool = True, open_conn
     with (
         contextlib.nullcontext(open_conn) if open_conn is not None else get_connection()
     ) as conn:
-        area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
+        use_slim = slim_areas.enabled()  # AREAS_TABLE=areas_slim: no stored cell scores
+        if use_slim:
+            area = slim_areas.find_area(conn, lat, lon)
+        else:
+            area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
         if area is None:
             return not_found()
         aggregate = None
-        if with_aggregate:
+        if with_aggregate and use_slim:
+            samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+            results = point_score.score_points(conn, samples, SCORING_WEIGHTS_VERSION)
+            aggregate = point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+            if aggregate.get("composite_score") is None:
+                return not_found()
+        elif with_aggregate:
             aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
             if aggregate is None:
                 return not_found()
@@ -455,7 +468,7 @@ def get_area(
     lon: float = Query(ge=-180, le=180, description="Longitude."),
     precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
-    if precision == "point":
+    if precision == "point" or slim_areas.enabled():
         try:
             point_response = _area_at_point_precision(lat, lon)
             if isinstance(point_response, JSONResponse):

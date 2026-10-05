@@ -334,3 +334,19 @@ create table if not exists score_scales (
     computed_at     timestamptz      not null default now(),
     primary key (weights_version, metro_area, factor, component)
 );
+
+-- Compact small road-bounded areas (migration 0014, not yet applied). Geometry only, no
+-- jsonb copy and no area_cells; scored by on-demand point sampling.
+create table if not exists areas_slim (
+    id            integer primary key,
+    build_version text,
+    metro_area    text,
+    geom          geometry(MultiPolygon, 4326) not null,
+    area_sq_mi    real,
+    extent_mi     real,
+    compactness   real,
+    bounded_by    text[],
+    neighborhood  text
+);
+
+create index if not exists areas_slim_geom_idx on areas_slim using gist (geom);
