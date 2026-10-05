@@ -3,7 +3,6 @@ import type { AreaInfo, Score } from "@/lib/api/types";
 import {
   SCORE_MAX,
   bandLabel,
-  describeScoredLocation,
   roundScore,
 } from "@/lib/score/presentation";
 
@@ -18,53 +17,29 @@ import styles from "./ScoreResult.module.css";
 
 interface ScoreHeaderProps {
   address: string;
-  /** A street address looked up for a clicked point, shown instead of coordinates. */
-  readableAddress?: string | null;
-  score: Score;
+  /** A provisional score from the static file carries only these. */
+  score: Pick<Score, "compositeScore" | "neighborhood"> & Partial<Pick<Score, "precision">>;
   /** Present when the score is for a secondary-road area rather than a grid square. */
   area?: AreaInfo | null;
   /** Pin this place for the compare view. */
   compare?: { pinned: boolean; full: boolean; onToggle: () => void };
 }
 
-/** "Area bounded by Broadway, Canal St and Bowery"; null when no roads are named. */
-export function areaLabel(boundedBy: readonly string[]): string | null {
-  const roads = roadList(boundedBy);
-  return roads === null ? null : `Area bounded by ${roads}`;
-}
-
-function roadList(boundedBy: readonly string[]): string | null {
-  if (boundedBy.length === 0) return null;
-  const head = boundedBy.slice(0, -1);
-  return head.length === 0
-    ? boundedBy[0]
-    : `${head.join(", ")} and ${boundedBy[boundedBy.length - 1]}`;
-}
-
 /** Compact header: address, composite score and the copy-link action. */
 export function ScoreHeader({
   address,
-  readableAddress = null,
   score,
   area = null,
   compare,
 }: ScoreHeaderProps) {
   const neighborhood = score.neighborhood?.trim() || null;
-  const roads = area ? roadList(area.boundedBy) : null;
-  const baseSubtitle = roads
-    ? neighborhood
-      ? `${neighborhood} · bounded by ${roads}`
-      : `Area bounded by ${roads}`
-    : null;
-  const located = describeScoredLocation(score, readableAddress);
-  const subtitle =
-    baseSubtitle ?? (neighborhood ? `${neighborhood} · ${located}` : located);
+  // Never street boundaries or coordinates: the neighborhood, else the address.
+  const title = neighborhood ?? address;
 
   return (
     <article
       className={styles.card}
       aria-labelledby="result-heading"
-      aria-describedby="result-subtitle"
     >
       <ScoreRing
         value={score.compositeScore}
@@ -75,16 +50,16 @@ export function ScoreHeader({
           Convenience score &middot; {bandLabel(score.compositeScore)}
         </p>
         <h2 id="result-heading" className={styles.address}>
-          {address}
+          {title}
         </h2>
-        <p id="result-subtitle" className={styles.location} title={subtitle}>
-          {subtitle}
-        </p>
+        {score.precision === "point" ? (
+          <p className={styles.precisionNote}>Exact-point score</p>
+        ) : null}
         <div className={styles.actions}>
           <CopyLinkButton />
           {compare ? (
             <CompareButton
-              name={address}
+              name={title}
               pinned={compare.pinned}
               full={compare.full}
               onToggle={compare.onToggle}

@@ -1,12 +1,12 @@
 "use client";
 
-import { useId } from "react";
+import { useId, memo } from "react";
 
+import { useAreaScores } from "@/hooks/useStaticData";
 import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
-import type { PriorityQuery, SimilarDifference } from "@/lib/api/types";
+import type { PriorityQuery, SimilarDifference, SubScores } from "@/lib/api/types";
 import type { Preview } from "@/lib/map/preview";
-import { boundaryFromLabel } from "@/lib/map/presentation";
 import { roundScore } from "@/lib/score/presentation";
 
 import { ShowMoreButton, useShowMore } from "./ShowMore";
@@ -18,6 +18,8 @@ export interface SimilarCardProps {
   coordinates: { lat: number; lon: number } | null;
   client: Pick<ApiClient, "getSimilar"> & Partial<Pick<ApiClient, "sendFeedback">>;
   priorities?: PriorityQuery;
+  /** The place's own scores; with the static area file they let the browser find similar areas. */
+  source?: { subScores: SubScores; areaId?: number | null };
   onPreview: (preview: Preview) => void;
 }
 
@@ -41,13 +43,19 @@ function Chip({ difference }: { difference: SimilarDifference }) {
   );
 }
 
-export function SimilarCard({
+function SimilarCardImpl({
   coordinates,
   client,
   priorities,
+  source,
   onPreview,
 }: SimilarCardProps) {
-  const { status, data, updating } = useSimilar(coordinates, client, priorities);
+  const areas = useAreaScores();
+  const { status, data, updating } = useSimilar(coordinates, client, priorities, {
+    areas,
+    subScores: source?.subScores ?? null,
+    areaId: source?.areaId,
+  });
   const listId = useId();
   const results = (data?.results ?? []).slice(0, MAX_ROWS);
   const { visible, hidden, open, toggle } = useShowMore(results);
@@ -82,12 +90,8 @@ export function SimilarCard({
       </div>
       <ul id={listId} className={styles.list} aria-label="Areas with a similar profile">
         {visible.map((area, index) => {
-          const boundary = boundaryFromLabel(area.areaLabel);
           const name =
             area.neighborhood ?? area.areaLabel ?? `Area to the ${area.direction}`;
-          // The street boundary is a subtitle only when a neighborhood is the title.
-          const subtitle =
-            area.neighborhood && boundary ? `Bounded by ${boundary}` : null;
           return (
             <li key={`${area.latitude},${area.longitude}`} className={styles.item}>
               <div className={styles.head}>
@@ -99,7 +103,6 @@ export function SimilarCard({
                   {roundScore(area.compositeScore)}
                 </span>
               </div>
-              {subtitle ? <p className={styles.boundary}>{subtitle}</p> : null}
               <p className={styles.meta}>
                 {area.distanceLabel} {area.direction} &middot;{" "}
                 {Math.round(area.similarity)}% similar
@@ -120,7 +123,6 @@ export function SimilarCard({
                     lat: area.latitude,
                     lon: area.longitude,
                     label: name,
-                    subtitle: subtitle ?? undefined,
                     kind: "similar",
                     summary: {
                       compositeScore: area.compositeScore,
@@ -144,3 +146,6 @@ export function SimilarCard({
     </section>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const SimilarCard = memo(SimilarCardImpl);

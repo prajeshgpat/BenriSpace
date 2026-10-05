@@ -4,7 +4,7 @@
 
 *Benri* (便利) means "convenient". BenriSpace scores any address in the New York metro area (NYC, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County, CT) on how convenient daily life is there, and shows where the convenient places are on a map. The idea: your 10-minute radius dictates your life, so see what is around any address.
 
-**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask BenriSpace" chat is in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask Benri" chat is in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features (shipped today)
 
@@ -13,7 +13,7 @@
 - **Best areas** ranked for your factors, with numbered map markers (hover or focus one for its name and score), presets (Daily errands, Family, Commuter, Quiet) and importance sliders.
 - **AI summary** of a score (Claude Haiku 4.5, grounded in that area's data only, capped at about $5/month, with a rule-based fallback).
 - **Improve this area:** which nearby additions would lift weak factors, with named places.
-- **Similar areas** found with pgvector embeddings.
+- **Similar areas** found by comparing per-metro z-scored factor profiles in SQL.
 - **Multi-stop planning** (`/v1/optimize`): near work, Trader Joe's and Planet Fitness at once, ranked by weekly travel time (openrouteservice refinement).
 - **Address search** with autocomplete (LocationIQ, Photon fallback), "use my current location", readable addresses for clicked points, shareable URLs, light and dark themes, and a phone bottom-sheet layout. Distances are in feet and miles.
 - **Public API**, no key needed today: [docs/api.md](docs/api.md).
@@ -28,13 +28,13 @@ Scores are precomputed in batch, so the API is a thin read layer.
 
 1. **Ingestion** pulls OpenStreetMap (Overpass), GTFS feeds (MTA, LIRR, Metro-North, PATH, NJ Transit) plus OSM transit stops, NCES school locations and EDFacts district ratings, and airports onto a geohash6 grid (64,320 cells). A manual job builds the road-bounded areas.
 2. **Scoring** normalizes each factor within its metro area and combines them with weights; `null` is never 0.
-3. **Serving:** FastAPI on AWS Lambda behind API Gateway reads scores from Postgres (Supabase, with pgvector); the Next.js site runs on AWS Amplify. All infrastructure is Terraform; deploys use GitHub Actions with OIDC.
+3. **Serving:** FastAPI on AWS Lambda behind API Gateway reads scores from Postgres (Supabase, with PostGIS); the Next.js site runs on AWS Amplify. All infrastructure is Terraform; deploys use GitHub Actions with OIDC.
 
 | Area | Stack |
 |---|---|
 | Frontend | Next.js 15, React 19, TypeScript, MapLibre GL |
 | API | Python 3.12, FastAPI, Mangum, OpenAPI contract in `contracts/` |
-| Data | Postgres (Supabase), psycopg 3, pgvector |
+| Data | Postgres (Supabase), psycopg 3, PostGIS |
 | AI | Anthropic Haiku 4.5 via `common/llm.py` |
 | Infra | Terraform, AWS Lambda / API Gateway / Amplify / SSM / ACM, Cloudflare DNS |
 | CI/CD | GitHub Actions (tests, Terraform checks, OIDC deploy, weekly ingestion) |
@@ -52,7 +52,7 @@ Scores are precomputed in batch, so the API is a thin read layer.
 |---|---|
 | `web/` | Next.js app (pages, components, generated API types, vitest tests) |
 | `api/` | FastAPI routes, explanations, chat, optimizer, Lambda handler |
-| `scoring/` | Scoring engine (`engine.py`), runner, similarity embeddings |
+| `scoring/` | Scoring engine (`engine.py`), runner, scales, point scoring, similarity helpers |
 | `ingestion/` | One module per data source, plus `areas/` (polygon builder) and `neighborhoods.py` |
 | `common/` | Shared DB layer, Overpass client, LLM client, geo and unit helpers |
 | `contracts/` | `openapi.yaml`, `schema.sql`, numbered `migrations/` |
@@ -77,6 +77,9 @@ uvicorn api.main:app --port 8000
 # Road-bounded areas for click-to-polygon (manual, not in the weekly workflow)
 python -m ingestion.areas.build --source region --write --allow-network
 
+# Optional: vector tiles for the map (Docker; see docs/ARCHITECTURE.md "Vector tiles")
+python scripts/build_tiles.py --out build/tiles
+
 # Frontend (in another terminal)
 cd web
 cp .env.example .env.local      # points at http://localhost:8000/v1
@@ -84,6 +87,8 @@ npm install
 npm run dev                     # http://localhost:3000
 npm run check                   # lint + typecheck + tests + build
 ```
+
+Optional web build flags (off by default): `NEXT_PUBLIC_PMTILES_URL` draws the cell grid from a PMTiles file, and `NEXT_PUBLIC_CHAT_STREAM_URL` streams chat progress from a Lambda function URL. Both are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Ingestion queries public OpenStreetMap servers, so a full run takes about 45 minutes and should be used sparingly. The weekly GitHub Actions workflow runs the grid, then the sources one at a time, then scoring. Without a `LOCATIONIQ_API_KEY`, address autocomplete uses Photon only.
 

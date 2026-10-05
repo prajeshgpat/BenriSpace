@@ -21,23 +21,26 @@ the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
 """
 
 import contextlib
+import logging
+from typing import Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from api import scorefile, sources
+from api import area_cache, point_score, scorefile, slim_areas, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
     bounded_by_text,
     build_area_response,
     pick_area,
+    point_in_polygon,
     usable_areas,
 )
-from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat
+from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat, stream_chat
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.feedback import FeedbackRequest, record_feedback
 from api.geocoding import geocode_address
@@ -76,6 +79,8 @@ from api.schemas import (
     Error,
     ExplanationResponse,
     ImproveResponse,
+    IsochroneResponse,
+    IsochroneShape,
     MapCellsResponse,
     MapTopResponse,
     PlacesResponse,
@@ -91,13 +96,16 @@ from api.schemas import (
 from api.similar import build_similar, fetch_neighbours, fetch_target, overfetch_limit
 from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses
-from api.triangulate import anchor_to_circle, rank_candidates
-from api.triangulate_sql import combined_bbox, get_scored_candidates_in_box
+from api.triangulate import anchor_cells, cells_box, rank_in_cells, shape_for
+from api.triangulate_sql import get_scored_candidates_in_box
 from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
+
+# Requests reuse one pooled connection per process (common.db.api_connection); the name
+# stays `get_connection` so tests can keep patching it.
+from common.db import api_connection as get_connection
 from common.db import (
     get_area_aggregate,
     get_area_candidates,
-    get_connection,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
     get_geo_entity_by_id,
@@ -107,6 +115,16 @@ from common.db import (
 )
 from common.geo import encode as geohash_encode
 from common.units import mi_to_km
+from scoring.point import sample_points
+
+log = logging.getLogger(__name__)
+
+PRECISION_DOC = (
+    "grid (default): the stored score of the grid cell containing the location. "
+    "point: scored on demand at the exact location (an area: the mean of sample points "
+    "inside it) from live place queries; falls back to grid on any error. "
+    "The response's `precision` says which was served."
+)
 
 FACTORS_DOC = (
     "Comma-separated factor keys the user cares about (same keys as /map/top). "
@@ -172,6 +190,7 @@ def get_score(
     ),
     lat: float | None = Query(default=None),
     lon: float | None = Query(default=None),
+    precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
     if address and (lat is not None or lon is not None):
         return _error(400, "invalid_request", "Provide either address or lat/lon, not both.")
@@ -183,6 +202,14 @@ def get_score(
         if geocoded is None:
             return _error(400, "unresolvable_address", f"Could not geocode address: {address!r}")
         lat, lon = geocoded
+
+    if precision == "point":
+        try:
+            with get_connection() as conn:
+                result = point_score.score_points(conn, [(lat, lon)], SCORING_WEIGHTS_VERSION)[0]
+            return point_score.point_score_response(result, SCORING_WEIGHTS_VERSION)
+        except Exception:  # any failure serves the grid score instead
+            log.warning("point scoring failed; serving grid", exc_info=True)
 
     # geohash6, same precision/convention as ingestion/grid.py's grid build.
     geohash = geohash_encode(lat, lon, precision=6)
@@ -274,7 +301,9 @@ def get_score_explanation(
     responses={400: {"model": Error}},
 )
 def triangulate(body: TriangulateRequest):
-    circles = []
+    from api import isochrone
+
+    points = []
     for anchor in body.anchors:
         latlon = _resolve_anchor_latlon(anchor)
         if latlon is None:
@@ -283,21 +312,24 @@ def triangulate(body: TriangulateRequest):
                 "invalid_anchor",
                 f"Anchor {anchor.label!r} needs a resolvable address or lat/lon.",
             )
-        lat, lon = latlon
-        # Phase 1 straight-line-circle placeholder, see api/triangulate.py.
-        circles.append(anchor_to_circle(lat, lon, anchor.max_travel_minutes, anchor.mode))
+        points.append((anchor, *latlon))
 
     with get_connection() as conn:
-        # Bounding-box prefilter: only cells near the circles leave the DB;
-        # rank_candidates still does the exact haversine test.
-        candidates = get_scored_candidates_in_box(
-            conn, combined_bbox(circles, body.combine_mode), SCORING_WEIGHTS_VERSION
+        per_anchor = []
+        for anchor, lat, lon in points:
+            cells, mins, method = anchor_cells(
+                conn, lat, lon, anchor.mode, anchor.max_travel_minutes
+            )
+            per_anchor.append((anchor, lat, lon, cells, mins, method))
+        combined = isochrone.combine([p[3] for p in per_anchor], body.combine_mode)
+        box = cells_box(combined)
+        candidates = (
+            get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
         )
 
     for c in candidates:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-
-    ranked = rank_candidates(candidates, circles, combine_mode=body.combine_mode, limit=body.limit)
+    ranked = rank_in_cells(candidates, combined, body.limit)
 
     results = [
         RankedAddress(
@@ -309,7 +341,45 @@ def triangulate(body: TriangulateRequest):
         )
         for r in ranked
     ]
-    return TriangulateResponse(results=results)
+    shapes = [
+        IsochroneShape(**shape_for(cells, a.label, a.mode, mins, method, lat))
+        for a, lat, lon, cells, mins, method in per_anchor
+    ]
+    mid_lat = sum(p[1] for p in points) / len(points)
+    combined_shape = IsochroneShape(
+        **shape_for(
+            combined,
+            None,
+            body.anchors[0].mode,
+            min(s.minutes for s in shapes),
+            "network" if all(s.method == "network" for s in shapes) else "estimate",
+            mid_lat,
+        )
+    )
+    return TriangulateResponse(results=results, isochrones=shapes, combined=combined_shape)
+
+
+@app.get(
+    "/v1/isochrone",
+    response_model=IsochroneResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}},
+)
+def get_isochrone(
+    lat: float = Query(ge=-90, le=90),
+    lon: float = Query(ge=-180, le=180),
+    mode: Literal["walk", "drive", "transit"] = "drive",
+    minutes: int | None = Query(default=None, ge=1, le=120),
+    response: Response = None,
+):
+    """Area reachable from a point within `minutes`, from the precomputed cell graph."""
+    with get_connection() as conn:
+        cells, mins, method = anchor_cells(conn, lat, lon, mode, minutes)
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return IsochroneResponse(
+        latitude=lat,
+        longitude=lon,
+        isochrone=IsochroneShape(**shape_for(cells, None, mode, mins, method, lat)),
+    )
 
 
 CACHE_CONTROL_5_MIN = "public, max-age=300"
@@ -385,22 +455,38 @@ def get_places(
     return PlacesResponse(factor=factor, radius_mi=radius_mi, places=places)
 
 
-def _resolve_area(lat: float, lon: float):
+def _resolve_area(lat: float, lon: float, with_aggregate: bool = True, open_conn=None):
     """Shared by /v1/area and /v1/area/explanation. Returns an error
-    JSONResponse, or (area, aggregate, geo_entity, feature_row)."""
+    JSONResponse, or (area, aggregate, geo_entity, feature_row). With
+    with_aggregate=False the stored grid aggregate is not fetched (aggregate is None).
+    Pass `open_conn` to reuse an open connection."""
     if not in_coverage(lat, lon):
         return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
 
     def not_found() -> JSONResponse:
         return _error(404, "area_not_found", "No road-bounded area found for this location.")
 
-    with get_connection() as conn:
-        area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
+    with (
+        contextlib.nullcontext(open_conn) if open_conn is not None else get_connection()
+    ) as conn:
+        use_slim = slim_areas.enabled()  # AREAS_TABLE=areas_slim: no stored cell scores
+        if use_slim:
+            area = slim_areas.find_area(conn, lat, lon)
+        else:
+            area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
         if area is None:
             return not_found()
-        aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
-        if aggregate is None:
-            return not_found()
+        aggregate = None
+        if with_aggregate and use_slim:
+            samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+            results = point_score.score_points(conn, samples, SCORING_WEIGHTS_VERSION)
+            aggregate = point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+            if aggregate.get("composite_score") is None:
+                return not_found()
+        elif with_aggregate:
+            aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
+            if aggregate is None:
+                return not_found()
         # The grid cell under the click supplies geoEntityId, school district
         # and nearest distances (same lookup as /score?lat&lon).
         geo_entity = get_geo_entity_by_geohash(conn, geohash_encode(lat, lon, precision=6))
@@ -425,7 +511,17 @@ def get_area(
     response: Response,
     lat: float = Query(ge=-90, le=90, description="Latitude."),
     lon: float = Query(ge=-180, le=180, description="Longitude."),
+    precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
+    if precision == "point" or slim_areas.enabled():
+        try:
+            point_response = _area_at_point_precision(lat, lon)
+            if isinstance(point_response, JSONResponse):
+                return point_response
+            response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+            return point_response
+        except Exception:  # any failure serves the grid aggregate instead
+            log.warning("point area scoring failed; serving grid", exc_info=True)
     resolved = _resolve_area(lat, lon)
     if isinstance(resolved, JSONResponse):
         return resolved
@@ -434,6 +530,78 @@ def get_area(
     return build_area_response(
         area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
     )
+
+
+def _area_at_point_precision(lat: float, lon: float):
+    """The area's score as the equal-weight mean of up to 5 sample points inside
+    the polygon (scoring.point.sample_points), each scored on demand. Returns the
+    AreaScoreResponse, or an error JSONResponse for an unknown area."""
+    if slim_areas.enabled():
+        return _slim_area_at_point_precision(lat, lon)
+    with get_connection() as conn:
+        resolved = _resolve_area(lat, lon, with_aggregate=False, open_conn=conn)
+        if isinstance(resolved, JSONResponse):
+            return resolved
+        area, _, geo_entity, feature_row = resolved
+        samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+        results = point_score.score_points(conn, samples, SCORING_WEIGHTS_VERSION)
+    aggregate = point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+    built = build_area_response(
+        area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
+    )
+    return built.model_copy(update={"precision": "point"})
+
+
+def _slim_area_at_point_precision(lat: float, lon: float):
+    """areas_slim path with caches (api/area_cache.py) and the fewest round trips:
+    area lookup (AREAS_DATABASE_URL, or the main DB), then ONE statement pipeline that
+    scores every sample point AND fetches the click cell (geo_entity + feature row)."""
+    if not in_coverage(lat, lon):
+        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
+    not_found = _error(404, "area_not_found", "No road-bounded area found for this location.")
+    geohash = geohash_encode(lat, lon, precision=6)
+
+    area = area_cache.POINT_AREA.get(area_cache.point_key(lat, lon))
+    aggregate = cell = None
+    with contextlib.ExitStack() as stack:
+        conn = None
+
+        def main_conn():
+            nonlocal conn
+            if conn is None:
+                conn = stack.enter_context(get_connection())
+            return conn
+
+        if area is None:
+            if slim_areas.has_own_database():
+                area = slim_areas.find_area(None, lat, lon)
+            else:
+                area = slim_areas.find_area(main_conn(), lat, lon)
+            if area is None:
+                return not_found
+            area_cache.POINT_AREA.put(area_cache.point_key(lat, lon), area)
+        skey = area_cache.scores_key(area["id"], SCORING_WEIGHTS_VERSION)
+        aggregate = area_cache.AREA_SCORES.get(skey)
+        cell = area_cache.CELLS.get(geohash)
+        if aggregate is None:
+            samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+            results, cells = point_score.score_points_cells(
+                main_conn(), samples, SCORING_WEIGHTS_VERSION, extra_geohashes=(geohash,)
+            )
+            aggregate = area_cache.AREA_SCORES.put(
+                skey, point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+            )
+            if cell is None and geohash in cells:
+                cell = area_cache.CELLS.put(geohash, cells[geohash])
+        if aggregate.get("composite_score") is None:
+            return not_found
+        if cell is None:  # scores were cached but the click cell was not
+            cell = point_score.fetch_cell(main_conn(), lat, lon, geohash)
+            if cell is None:
+                return not_found
+            area_cache.CELLS.put(geohash, cell)
+    built = build_area_response(area, aggregate, cell, lat, lon, cell, SCORING_WEIGHTS_VERSION)
+    return built.model_copy(update={"precision": "point"})
 
 
 @app.get(
@@ -555,7 +723,7 @@ def get_similar(
     factors: str | None = Query(default=None, description=FACTORS_DOC),
     weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
-    """Areas with a similar factor profile (pgvector), spread out geographically."""
+    """Areas with a similar factor profile, spread out geographically."""
     try:
         priorities = parse_priorities(factors, weights)
     except InvalidMapRequest as exc:
@@ -582,7 +750,6 @@ def get_similar(
             SCORING_WEIGHTS_VERSION,
             geo_entity["metro_area"],
             overfetch_limit(k, wide=priorities.explicit),
-            spread=None if priorities.explicit else (lat, lon, k, min_separation_mi),
         )
         stats = (
             get_stats(conn, SCORING_WEIGHTS_VERSION, geo_entity["metro_area"])
@@ -686,7 +853,7 @@ def post_optimize(body: OptimizeRequest):
     responses={400: {"model": Error}, 429: {"model": Error}, 503: {"model": Error}},
 )
 def post_chat(body: ChatRequest, request: Request):
-    """Ask BenriSpace: a tool-using assistant grounded in our own data."""
+    """Ask Benri: a tool-using assistant grounded in our own data."""
     try:
         return handle_chat(
             body,
@@ -695,6 +862,24 @@ def post_chat(body: ChatRequest, request: Request):
         )
     except ChatHttpError as exc:
         return _error(exc.status, exc.code, exc.message)
+
+
+@app.post(
+    "/v1/chat/stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}, "description": "Server-sent events."}},
+)
+def post_chat_stream(body: ChatRequest, request: Request):
+    """POST /v1/chat as server-sent events: `status` frames, then one `reply` or `error`."""
+    return StreamingResponse(
+        stream_chat(
+            body,
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get(

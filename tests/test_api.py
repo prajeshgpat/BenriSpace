@@ -119,6 +119,20 @@ def test_build_score_response_shape_and_camelcase_serialization():
     assert dumped["compositeScore"] == 72.5
     assert dumped["weightsVersion"] == "v1-handtuned"
     assert dumped["subScores"]["gasConvenience"] == 90.0
+    assert dumped["travelMode"] is None
+
+
+def test_build_score_response_travel_mode_from_density_row():
+    geo_entity = {"id": uuid4(), "latitude": 40.74, "longitude": -73.92}
+    score_row = {
+        "composite_score": 90.0,
+        "weights_version": "v2.1-handtuned",
+        "computed_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+    walk = build_score_response(geo_entity, score_row, {"travel_mode": "walk"})
+    assert walk.model_dump(by_alias=True)["travelMode"] == "walk"
+    odd = build_score_response(geo_entity, score_row, {"travel_mode": "bike"})
+    assert odd.travel_mode is None
 
 
 def test_build_score_response_falls_back_to_latlon_when_no_formatted_address():

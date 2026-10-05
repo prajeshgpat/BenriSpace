@@ -58,6 +58,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/isochrone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Area reachable from a point within N minutes by walking, driving or rail, from the precomputed road-network cell graph. */
+        get: operations["getIsochrone"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/triangulate": {
         parameters: {
             query?: never;
@@ -95,6 +112,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The same chat as /chat, delivered as server-sent events.
+         * @description Takes the same body as `/chat`. The response is `text/event-stream`: `status` frames (`{text, tool?}`) while the assistant works, then exactly one `reply` frame (the `/chat` JSON body) or one `error` frame (`{status, code, message}` using the codes of `/chat`). The reply text is sent whole after grounding validation, never as unvalidated tokens. A malformed body is rejected with a plain 400 before the stream starts. Behind API Gateway the frames arrive together at the end; true streaming needs a Lambda function URL (docs/ARCHITECTURE.md, Chat streaming).
+         */
+        post: operations["chatStream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat": {
         parameters: {
             query?: never;
@@ -105,7 +142,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+         * Ask Benri, a tool-using chat assistant grounded in our own data.
          * @description The client keeps the conversation and sends it each time; only the last 6 messages (each cut to 2,000 characters) are used. The assistant can only call read-only tools (geocode, area_score, nearby_places, improve, similar, search_areas, optimize_location). `results` is built from tool output, not by the model; `reply` is checked against the tool output and replaced by a deterministic summary (`limited: true`) when it cannot be grounded. Each visitor gets 15 messages a day.
          */
         post: operations["chat"];
@@ -362,6 +399,17 @@ export interface components {
             school?: components["schemas"]["SchoolInfo"];
             /** @description Human neighborhood name such as "Park Slope, Brooklyn" or "Montclair, NJ" (OpenStreetMap place nodes); null until the neighborhoods job has run or when nothing is nearby. For an area, the area's own label, else the representative cell's. */
             neighborhood?: string | null;
+            /**
+             * @description `point` when scored on demand at the exact location (`?precision=point`), `grid` when it is the stored score of the containing cell.
+             * @default grid
+             * @enum {string}
+             */
+            precision: "grid" | "point";
+            /**
+             * @description How people here usually get around, from population density: `walk` at 10,000 or more people per square mile, otherwise `drive`. Null when the density is unknown. Clients use it to pick a default travel mode.
+             * @enum {string|null}
+             */
+            travelMode?: "walk" | "drive" | null;
         };
         /** @description A `ScoreResponse` for a road-bounded area. `geoEntityId` is the representative grid cell (the one under the clicked point); `latitude`/`longitude` echo the clicked point; `address` is the area's label ("Area bounded by ..."). */
         AreaScoreResponse: components["schemas"]["ScoreResponse"] & {
@@ -438,8 +486,31 @@ export interface components {
             longitude: number;
             compositeScore: number;
         };
+        /** @description A reachable area. `method` is `network` when computed from the precomputed road-network cell graph (resolution one 0.58 x 0.38 mi cell) and `estimate` when the area has no routing data yet and a straight-line circle was used. */
+        IsochroneShape: {
+            label?: string | null;
+            /** @enum {string} */
+            mode: "drive" | "transit" | "walk";
+            minutes: number;
+            /** @enum {string} */
+            method: "network" | "estimate";
+            cellCount: number;
+            areaSqMi: number;
+            /** @description GeoJSON MultiPolygon, coordinates [lon, lat]. */
+            geometry?: Record<string, never> | null;
+        };
+        IsochroneResponse: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            isochrone: components["schemas"]["IsochroneShape"];
+        };
         TriangulateResponse: {
             results: components["schemas"]["RankedAddress"][];
+            /** @description One reachable area per anchor, in request order. */
+            isochrones?: components["schemas"]["IsochroneShape"][];
+            combined?: components["schemas"]["IsochroneShape"];
         };
         OptimizeAnchor: {
             /** @enum {string} */
@@ -768,6 +839,8 @@ export interface operations {
             query: {
                 lat: number;
                 lon: number;
+                /** @description `grid` (default) returns the stored score of the containing grid cell. `point` scores the exact location on demand (an area: the mean of up to five sample points inside it) from live place queries and the metro's factor scales, and falls back to `grid` on any error. The response's `precision` says which was served. */
+                precision?: "grid" | "point";
             };
             header?: never;
             path?: never;
@@ -820,6 +893,8 @@ export interface operations {
                 address?: string;
                 lat?: number;
                 lon?: number;
+                /** @description `grid` (default) returns the stored score of the containing grid cell. `point` scores the exact location on demand (an area: the mean of up to five sample points inside it) from live place queries and the metro's factor scales, and falls back to `grid` on any error. The response's `precision` says which was served. */
+                precision?: "grid" | "point";
             };
             header?: never;
             path?: never;
@@ -902,6 +977,41 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    getIsochrone: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                mode?: "walk" | "drive" | "transit";
+                /** @description Time budget, 1-120 (capped per mode, walk 45, drive 90, transit 120). Default 15 / 30 / 45. */
+                minutes?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The reachable area as a GeoJSON MultiPolygon. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IsochroneResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     triangulate: {
         parameters: {
             query?: never;
@@ -981,6 +1091,39 @@ export interface operations {
                 };
             };
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    chatStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description A server-sent event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     chat: {

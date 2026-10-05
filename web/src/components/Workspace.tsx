@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,6 +16,7 @@ import {
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useCompare } from "@/hooks/useCompare";
+import { useLatest } from "@/hooks/useLatest";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
@@ -31,7 +33,10 @@ import {
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
 import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
-import { API_BASE_URL } from "@/lib/config";
+import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
+import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
+import { provisionalArea } from "@/lib/static/provisional";
+import { round1, subScoresComposite } from "@/lib/scores/matrix";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
   YOUR_LOCATION_LABEL,
@@ -51,11 +56,7 @@ import {
   PLACE_ZOOM,
 } from "@/lib/map/url";
 import { bandLabel, roundScore } from "@/lib/score/presentation";
-import {
-  APP_PATH,
-  SITE_TITLE,
-  resultTitle,
-} from "@/lib/site";
+import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { BottomSheet } from "./BottomSheet";
@@ -65,10 +66,9 @@ import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
+import { ReachCard } from "./ReachCard";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
-import { CompareDrawer } from "./CompareDrawer";
-import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
 import { FactorControls } from "./map/FactorControls";
@@ -85,7 +85,33 @@ const MapCanvas = dynamic(
   { ssr: false, loading: () => <MapPlaceholder /> },
 );
 
-const defaultClient = createApiClient({ baseUrl: API_BASE_URL });
+// Chat and the compare table are opened on demand, so their code is fetched
+// on first use instead of with the first paint.
+const ChatPanel = dynamic(
+  () => import("./chat/ChatPanel").then((module) => module.ChatPanel),
+  { ssr: false },
+);
+const CompareDrawer = dynamic(
+  () => import("./CompareDrawer").then((module) => module.CompareDrawer),
+  { ssr: false },
+);
+
+const defaultClient = createApiClient({
+  baseUrl: API_BASE_URL,
+  chatStreamUrl: CHAT_STREAM_URL,
+});
+
+function topPlace(r: MapTopResult): ComparePlace {
+  return {
+    id: placeId(r.latitude, r.longitude),
+    label: areaTitle(r),
+    neighborhood: r.neighborhood?.trim() || null,
+    score: r.score,
+    subScores: r.subScores,
+    lat: r.latitude,
+    lon: r.longitude,
+  };
+}
 
 /** Zoom for an entry of the best-areas list: a few neighbourhoods across. */
 const AREA_ZOOM = 12;
@@ -134,7 +160,13 @@ interface LayoutProps {
   onSnapChange?: (snap: SheetSnap) => void;
 }
 
-function Layout({ panel, map, panelRef, snap, onSnapChange }: LayoutProps) {
+function Layout({
+  panel,
+  map,
+  panelRef,
+  snap,
+  onSnapChange,
+}: LayoutProps) {
   const mobile = useIsMobile();
   const [localSnap, setLocalSnap] = useState<SheetSnap>("peek");
   const sheetSnap = snap ?? localSnap;
@@ -167,7 +199,7 @@ function Layout({ panel, map, panelRef, snap, onSnapChange }: LayoutProps) {
           aria-label="Search and map controls"
           tabIndex={-1}
         >
-          {content}
+          <div className={styles.panelScroll}>{content}</div>
         </aside>
       )}
       <section className={styles.mapArea} aria-label="Map">
@@ -203,14 +235,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const rawAddress = params.get(ADDRESS_PARAM);
   const { target: urlTarget, error: urlError } = resolveTarget(params);
   const [picked, setPicked] = useState<Picked | null>(null);
-  // The URL only carries lat/lon, so a best-areas pick is re-marked as
-  // cell-based here; a shared link or reload resolves the area instead.
-  const target: ScoreTarget | null =
-    urlTarget?.kind === "coordinates" &&
-    picked?.kind === "top" &&
-    picked.key === targetKey(urlTarget)
-      ? { ...urlTarget, precision: "cell" }
-      : urlTarget;
+  // Every selection resolves the road-bounded area, like a map click.
+  const target: ScoreTarget | null = urlTarget;
   // A clicked point is labelled with coordinates until its street address is looked up.
   const readableAddress = useReverseGeocode(
     needsReadableAddress(target) ? { lat: target.lat, lon: target.lon } : null,
@@ -232,8 +258,24 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
-  // "Ask BenriSpace" replaces the result and filter cards while it is open.
-  const [chatOpen, setChatOpen] = useState(false);
+  // The reachable-area polygon from the ReachCard, drawn on the map.
+  const [reachGeometry, setReachGeometry] = useState<AreaGeometry | null>(null);
+  // "Ask Benri" expands in place where its button sits (side panel and phone
+  // sheet alike), with its own scrolling log. `/app?chat=1` (the home page's
+  // "Ask Benri") opens it on load; `ask=`
+  // pre-fills the search box and the chat context without scoring anything.
+  const [chatOpen, setChatOpen] = useState(() => params.get("chat") === "1");
+  const [askPrefill, setAskPrefill] = useState(
+    () => params.get("ask")?.trim() ?? "",
+  );
+  // What is in the search box right now, submitted or not.
+  const [typedText, setTypedText] = useState(askPrefill);
+  const [typedKey, setTypedKey] = useState(placeKey);
+  if (typedKey !== placeKey) {
+    setTypedKey(placeKey);
+    setTypedText("");
+    setAskPrefill("");
+  }
 
   const [start] = useState(() => {
     const view = initialView(initial);
@@ -249,11 +291,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
   // Phones show the panel as a bottom sheet: collapsed until there is a place
   // to show, and back to collapsed when it is closed.
-  const [snap, setSnap] = useState<SheetSnap>(initial.target ? "half" : "peek");
+  const [snap, setSnap] = useState<SheetSnap>(
+    chatOpen ? "full" : initial.target ? "half" : "peek",
+  );
   const [sheetKey, setSheetKey] = useState(placeKey);
   if (sheetKey !== placeKey) {
     setSheetKey(placeKey);
-    setSnap(placeKey ? "half" : "peek");
+    // A conversation in progress keeps the sheet where it is.
+    if (!chatOpen) setSnap(placeKey ? "half" : "peek");
   }
   const [previewPlaceKey, setPreviewPlaceKey] = useState(placeKey);
   if (previewPlaceKey !== placeKey) {
@@ -268,19 +313,61 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const searchRef = useRef<HTMLDivElement>(null);
   const flownKey = useRef<string | null>(start.key);
 
-  const { noFactors, cells, top, features, range, topResults, weights } =
+  // The vector-tile grid is opt-in (NEXT_PUBLIC_PMTILES_URL); a tile error
+  // switches back to GeoJSON cells for the rest of the visit.
+  const [tilesFailed, setTilesFailed] = useState(false);
+  const tilesOn = Boolean(useTilesUrl()) && !tilesFailed;
+  const areaScores = useAreaScores();
+  const { noFactors, cells, top, features, range, topResults, weights, tileCells } =
     useMapData({
       client,
       selection,
       viewport,
       topViewport,
+      tiles: tilesOn,
+      areaScores,
     });
   // The same selection the map sends, so every card talks about the factors
   // the colours are drawn from.
-  const priorities = priorityQuery(selection, weights);
+  const priorities = useMemo(
+    () => priorityQuery(selection, weights),
+    [selection, weights],
+  );
 
-  const { state, retry } = useScoreLookup(target, client, priorities);
+  const { state: lookup, retry } = useScoreLookup(target, client, priorities);
+  // The overall score is normalised to the selected factors and weights, with
+  // the same arithmetic as the map colours and the best-areas list.
+  const state: LookupState = useMemo(() => {
+    if (lookup.status !== "success") return lookup;
+    const composite = subScoresComposite(lookup.score.subScores, selection.factors, weights);
+    if (composite === null) return lookup;
+    return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
+  }, [lookup, selection.factors, weights]);
+
+  // A map click that landed in a known area shows that area's static scores
+  // while `/area` loads; the API's answer replaces them.
+  const [areaHint, setAreaHint] = useState<{ key: string; areaId: number } | null>(null);
+  const provisional = useMemo(
+    () =>
+      state.status === "loading" &&
+      areaScores &&
+      areaHint &&
+      areaHint.key === placeKey
+        ? provisionalArea(areaScores, areaHint.areaId, selection.factors, weights)
+        : null,
+    [state.status, areaScores, areaHint, placeKey, selection.factors, weights],
+  );
   const compare = useCompare();
+  // Fetch the chat code once the page is idle, so "Ask Benri" opens at once.
+  useEffect(() => {
+    const warm = () => void import("./chat/ChatPanel").catch(() => {});
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = window.setTimeout(warm, 2000);
+    return () => window.clearTimeout(handle);
+  }, []);
   const currentPlace: ComparePlace | null =
     state.status === "success"
       ? {
@@ -293,15 +380,43 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           lon: state.score.longitude,
         }
       : null;
-  const topPlace = (r: MapTopResult): ComparePlace => ({
-    id: placeId(r.latitude, r.longitude),
-    label: areaTitle(r),
-    neighborhood: r.neighborhood?.trim() || null,
-    score: r.score,
-    subScores: r.subScores,
-    lat: r.latitude,
-    lon: r.longitude,
-  });
+
+  // Stable handlers and props, so the memoized panels below skip the renders
+  // that map panning causes.
+  const showPreviewRef = useLatest(showPreview);
+  const selectTopRef = useLatest(selectTop);
+  const onPreview = useCallback(
+    (next: Preview) => showPreviewRef.current(next),
+    [showPreviewRef],
+  );
+  const onSelectTop = useCallback(
+    (result: MapTopResult) => selectTopRef.current(result),
+    [selectTopRef],
+  );
+  const { places: pinned, full: compareFull, toggle: toggleCompare } = compare;
+  const topCompare = useMemo(
+    () => ({
+      isPinned: (r: MapTopResult) =>
+        pinned.some((p) => p.id === placeId(r.latitude, r.longitude)),
+      full: compareFull,
+      onToggle: (r: MapTopResult) => toggleCompare(topPlace(r)),
+    }),
+    [pinned, compareFull, toggleCompare],
+  );
+  const successScore = state.status === "success" ? state.score : null;
+  const scoreCoordinates = useMemo(
+    () =>
+      successScore
+        ? { lat: successScore.latitude, lon: successScore.longitude }
+        : null,
+    [successScore],
+  );
+
+  const successAreaId = state.status === "success" ? state.areaId : undefined;
+  const similarSource = useMemo(
+    () => (successScore ? { subScores: successScore.subScores, areaId: successAreaId } : undefined),
+    [successScore, successAreaId],
+  );
 
   const point: LatLon | null =
     target?.kind === "coordinates"
@@ -451,7 +566,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     panelRef.current?.focus({ preventScroll: true });
   }
 
-  function selectCell(cell: { geohash: string; lat: number; lon: number }) {
+  function selectCell(cell: { geohash: string; lat: number; lon: number; areaId?: number }) {
     const lat = roundCoordinate(cell.lat);
     const lon = roundCoordinate(cell.lon);
     const next: ScoreTarget = {
@@ -462,6 +577,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "cell", geohash: cell.geohash, key: targetKey(next) });
+    setAreaHint(
+      cell.areaId === undefined ? null : { key: targetKey(next), areaId: cell.areaId },
+    );
     navigate(next);
   }
 
@@ -520,7 +638,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       subtitle: result.why,
       kind: "best-move",
       summary:
-        result.score === undefined ? undefined : { compositeScore: result.score },
+        result.score === undefined
+          ? undefined
+          : { compositeScore: result.score },
     });
   }
 
@@ -528,7 +648,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     const lat = roundCoordinate(result.latitude);
     const lon = roundCoordinate(result.longitude);
     setPicked(null);
-    setChatOpen(false);
     navigate({ kind: "coordinates", lat, lon, label: result.label });
   }
 
@@ -542,11 +661,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       lat: result.latitude,
       lon: result.longitude,
       label: areaTitle(result),
-      // The ranked square is the unit the list is scored on; stay cell-based.
-      precision: "cell",
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "top", geohash: result.geohash, key: targetKey(next) });
+    setAreaHint(
+      result.areaId === undefined ? null : { key: targetKey(next), areaId: result.areaId },
+    );
     setFlyRequest({
       lat: result.latitude,
       lon: result.longitude,
@@ -594,11 +714,30 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
   });
 
+  const chatProps = {
+    client,
+    context: {
+      ...(target && address
+        ? { address }
+        : typedText.trim()
+          ? { address: typedText.trim().slice(0, 300) }
+          : {}),
+      ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
+      ...(priorities.factors ? { factors: priorities.factors } : {}),
+      ...(priorities.weights ? { weights: priorities.weights } : {}),
+    },
+    place: { key: placeKey, label: target ? address : null },
+    onShowOnMap: showChatResult,
+    onScoreArea: scoreChatResult,
+    onClose: () => setChatOpen(false),
+  };
+
   const panel = (
     <>
       <div ref={searchRef} className={styles.search}>
         <AddressSearch
-          initialValue={rawAddress ?? address ?? ""}
+          initialValue={rawAddress ?? address ?? askPrefill}
+          onTextChange={setTypedText}
           initialError={urlError}
           onSearch={handleSearch}
           onSelectSuggestion={handleSelectSuggestion}
@@ -629,7 +768,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
       {chatOpen ? null : (
         <button type="button" className={styles.ask} onClick={openChat}>
-          Ask BenriSpace
+          Ask Benri
         </button>
       )}
 
@@ -641,22 +780,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         {announcement(state)}
       </p>
 
-      {chatOpen ? (
-        <ChatPanel
-          client={client}
-          context={{
-            ...(target && address ? { address } : {}),
-            ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
-            ...(priorities.factors ? { factors: priorities.factors } : {}),
-            ...(priorities.weights ? { weights: priorities.weights } : {}),
-          }}
-          onShowOnMap={showChatResult}
-          onScoreArea={scoreChatResult}
-          onClose={() => setChatOpen(false)}
-        />
-      ) : null}
+      {chatOpen ? <ChatPanel {...chatProps} /> : null}
 
-      {target && !chatOpen ? (
+      {target ? (
         <section
           className={styles.result}
           data-state={state.status}
@@ -671,7 +797,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           {/* Fixed-height slot: loading, success and error share it, so the
               filters below never move when a result arrives. */}
           <div className={styles.headerSlot}>
-            {state.status === "loading" ? <ResultSkeleton /> : null}
+            {state.status === "loading" && !provisional ? <ResultSkeleton /> : null}
+            {state.status === "loading" && provisional ? (
+              <div aria-busy="true" data-testid="provisional-score">
+                <ScoreHeader
+                  address={readableAddress ?? state.address}
+                  score={provisional}
+                />
+              </div>
+            ) : null}
             {state.status === "error" ? (
               <ErrorNotice
                 address={state.address}
@@ -682,13 +816,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             {state.status === "success" ? (
               <ScoreHeader
                 address={readableAddress ?? state.address}
-                readableAddress={readableAddress}
                 score={state.score}
                 area={state.area}
                 compare={
                   currentPlace
                     ? {
-                        pinned: compare.places.some((p) => p.id === currentPlace.id),
+                        pinned: compare.places.some(
+                          (p) => p.id === currentPlace.id,
+                        ),
                         full: compare.full,
                         onToggle: () => compare.toggle(currentPlace),
                       }
@@ -700,67 +835,70 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </section>
       ) : null}
 
-      {chatOpen ? null : (
-        <div className={styles.controls}>
-          <FactorControls
-            selection={selection}
-            onChange={setSelection}
-            scores={state.status === "success" ? state.score.subScores : null}
-          />
-          {state.status === "success" ? (
-            <>
-              <ScoreSummary
-                score={state.score}
-                explanation={state.explanation}
-                client={client}
-                target={readableAddress ?? state.address}
-              />
-              <ImproveCard
-                coordinates={{
-                  lat: state.score.latitude,
-                  lon: state.score.longitude,
-                }}
-                client={client}
-                priorities={priorities}
-                onPreview={showPreview}
-              />
-              <SimilarCard
-                coordinates={{
-                  lat: state.score.latitude,
-                  lon: state.score.longitude,
-                }}
-                client={client}
-                priorities={priorities}
-                onPreview={showPreview}
-              />
-            </>
-          ) : null}
-          <BestAreas
-            status={top.status}
-            results={topResults}
-            error={top.error}
-            selectedFactors={selection.factors}
-            activeGeohash={activeTop?.geohash ?? null}
-            onSelect={selectTop}
-            onRetry={top.retry}
-            compare={{
-              isPinned: (r) =>
-                compare.places.some((p) => p.id === placeId(r.latitude, r.longitude)),
-              full: compare.full,
-              onToggle: (r) => compare.toggle(topPlace(r)),
-            }}
-            feedbackClient={client}
-          />
-        </div>
-      )}
+      <div className={styles.controls}>
+        <FactorControls
+          selection={selection}
+          onChange={setSelection}
+          scores={
+            state.status === "success"
+              ? state.score.subScores
+              : (provisional?.subScores ?? null)
+          }
+        />
+        {state.status === "success" ? (
+          <>
+            <ScoreSummary
+              score={state.score}
+              explanation={state.explanation}
+              client={client}
+              target={readableAddress ?? state.address}
+            />
+            <ImproveCard
+              coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
+              client={client}
+              priorities={priorities}
+              onPreview={onPreview}
+            />
+            <ReachCard
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
+              travelMode={state.score.travelMode}
+              client={client}
+              onReach={setReachGeometry}
+            />
+            <SimilarCard
+              coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
+              client={client}
+              priorities={priorities}
+              source={similarSource}
+              onPreview={onPreview}
+            />
+          </>
+        ) : null}
+        <BestAreas
+          status={top.status}
+          results={topResults}
+          error={top.error}
+          selectedFactors={selection.factors}
+          activeGeohash={activeTop?.geohash ?? null}
+          onSelect={onSelectTop}
+          onRetry={top.retry}
+          compare={topCompare}
+          feedbackClient={client}
+        />
+      </div>
       <p className="sr-only" role="status">
         {mapStatus}
       </p>
-      <CompareDrawer
-        places={compare.places}
-        onRemove={compare.remove}
-        onClear={compare.clear}
-      />
+      {compare.places.length > 0 ? (
+        <CompareDrawer
+          places={compare.places}
+          onRemove={compare.remove}
+          onClear={compare.clear}
+        />
+      ) : null}
     </>
   );
 
@@ -781,11 +919,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           markers={markers}
           activeMarkerId={activeTop?.geohash ?? null}
           highlightGeohash={highlightGeohash}
+          tileCells={tilesOn ? tileCells : null}
+          onTilesFailed={() => setTilesFailed(true)}
           areaGeometry={
             state.status === "success" ? (state.area?.geometry ?? null) : null
           }
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
+          reachGeometry={reachGeometry}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}

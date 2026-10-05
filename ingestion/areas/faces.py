@@ -66,6 +66,8 @@ class FaceParams:
     enforce_size_limits: bool = True  # split > 0.8 sq mi / 1.4 mi faces, merge slivers
     # None = every grid cell the face overlaps; else only these geohashes.
     geohashes: frozenset[str] | None = None
+    # hierarchy.Hierarchy: road-hierarchy subdivision instead of the tile-grid cuts.
+    subdivider: object | None = None
 
 
 @dataclass
@@ -296,9 +298,6 @@ def build_faces(
         raw, land = arrange(ground + kept)
         edges = ground + kept
 
-    named = [e for e in edges if e.name]
-    tree = STRtree([e.geom for e in named]) if named else None
-
     kept: list[Polygon] = []
     for f, is_land in zip(raw, land, strict=True):
         if not is_land:
@@ -311,8 +310,17 @@ def build_faces(
 
     from ingestion.areas.limits_apply import compactness, enforce_limits
 
+    if p.subdivider is not None:
+        pieces = p.subdivider.run(kept)
+    else:
+        pieces = enforce_limits(kept, p.projector) if p.enforce_size_limits else kept
+    named = [e for e in edges if e.name]
+    if p.subdivider is not None:
+        named += p.subdivider.named
+    tree = STRtree([e.geom for e in named]) if named else None
+
     faces: list[Face] = []
-    for f in enforce_limits(kept, p.projector) if p.enforce_size_limits else kept:
+    for f in pieces:
         ll = project_back(f, p.projector, p.decimals)
         if ll.is_empty or not ll.geom_type.endswith("Polygon"):
             continue
@@ -329,6 +337,9 @@ def build_faces(
                 ll, names, area, (miny, maxy, minx, maxx), cells,
                 extent_m=max(x1 - x0, y1 - y0),
                 compactness=compactness(area, local_m.length),
+                stats=(
+                    {"tile_cut": p.subdivider.is_tile_cut(f)} if p.subdivider is not None else {}
+                ),
             )
         )  # fmt: skip
     return faces

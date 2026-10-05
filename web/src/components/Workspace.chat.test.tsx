@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useMemo, useSyncExternalStore } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,8 +57,8 @@ const REPLY: ChatReply = {
   limited: false,
 };
 
-function setup() {
-  navigation.search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857";
+function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
+  navigation.search = search;
   const fetchMock = vi.fn<typeof fetch>(async (input) =>
     String(input).includes("/explanation")
       ? jsonResponse(liveExplanationBody)
@@ -95,17 +95,25 @@ beforeEach(() => {
   vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
 });
 
-describe("Workspace: Ask BenriSpace", () => {
-  it("opens the chat in place of the result cards, with the current place as context", async () => {
+describe("Workspace: Ask Benri", () => {
+  it("opens the chat inline in place of the button, with live place and filter context", async () => {
     const user = userEvent.setup();
     const { chat } = setup();
     await screen.findByTestId("composite-score");
 
-    await user.click(screen.getByRole("button", { name: "Ask BenriSpace" }));
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
 
-    expect(screen.getByRole("region", { name: "Ask BenriSpace" })).toBeInTheDocument();
-    expect(screen.queryByTestId("composite-score")).not.toBeInTheDocument();
+    // The button became the chat, in the same place (before the result card).
+    expect(screen.queryByRole("button", { name: "Ask Benri" })).not.toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "Ask Benri" });
+    expect(
+      region.compareDocumentPosition(screen.getByTestId("composite-score")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByRole("log", { name: "Conversation" })).toBeInTheDocument();
+    expect(screen.getByTestId("composite-score")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Address" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Your question" })).toHaveFocus();
 
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "best nearby?{Enter}");
     await screen.findByText("Darien looks best.");
@@ -115,7 +123,18 @@ describe("Workspace: Ask BenriSpace", () => {
       longitude: -73.9857,
     });
 
-    await user.click(screen.getByRole("button", { name: "Back to results" }));
+    // Changing the place while chatting is noted and used by the next question.
+    act(() => {
+      window.history.pushState(null, "", "/app?lat=40.67&lon=-73.98&address=Park+Slope");
+    });
+    expect(await screen.findByText(/^Now looking at/)).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "and now?{Enter}");
+    await waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
+    expect(chat.mock.calls[1][1]).toMatchObject({ latitude: 40.67, longitude: -73.98 });
+
+    await user.click(screen.getByRole("button", { name: "Close chat" }));
+    expect(screen.getByRole("button", { name: "Ask Benri" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Ask Benri" })).not.toBeInTheDocument();
     expect(screen.getByTestId("composite-score")).toBeInTheDocument();
   });
 
@@ -123,7 +142,7 @@ describe("Workspace: Ask BenriSpace", () => {
     const user = userEvent.setup();
     setup();
     await screen.findByTestId("composite-score");
-    await user.click(screen.getByRole("button", { name: "Ask BenriSpace" }));
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "go{Enter}");
 
     await user.click(await screen.findByRole("button", { name: "Show Darien, CT on map" }));
@@ -133,17 +152,43 @@ describe("Workspace: Ask BenriSpace", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
   });
 
-  it("Score this area selects the place and returns to the results", async () => {
+  it("Score this area selects the place and keeps the chat open", async () => {
     const user = userEvent.setup();
     setup();
     await screen.findByTestId("composite-score");
-    await user.click(screen.getByRole("button", { name: "Ask BenriSpace" }));
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "go{Enter}");
 
     await user.click(await screen.findByRole("button", { name: "Score Darien, CT" }));
 
     expect(window.history.pushState).toHaveBeenCalled();
     expect(navigation.search).toContain("lat=41.07");
-    expect(screen.queryByRole("region", { name: "Ask BenriSpace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Ask Benri" })).toBeInTheDocument();
+  });
+
+  it("sends the typed, unsubmitted search text as the chat address when nothing is scored", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup("");
+    await user.type(screen.getByRole("combobox", { name: "Address" }), "10 Main St, Stamford");
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).toEqual({ address: "10 Main St, Stamford" });
+  });
+
+  it("opens the chat on load for ?chat=1 and pre-fills ?ask= without scoring", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup("chat=1&ask=12+Elm+St");
+    expect(screen.getByRole("region", { name: "Ask Benri" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("12 Elm St");
+    expect(window.history.pushState).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).toEqual({ address: "12 Elm St" });
+  });
+
+  it("opens the chat on load for a bare ?chat=1", () => {
+    setup("chat=1");
+    expect(screen.getByRole("region", { name: "Ask Benri" })).toBeInTheDocument();
   });
 });

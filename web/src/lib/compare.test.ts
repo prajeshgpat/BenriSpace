@@ -7,6 +7,8 @@ import {
   MAX_COMPARE,
   addPlace,
   bestInRow,
+  biggestDifferences,
+  gapFromBest,
   loadPlaces,
   removePlace,
   savePlaces,
@@ -49,5 +51,17 @@ describe("compare", () => {
     expect(loadPlaces()).toEqual([]);
     savePlaces([]);
     expect(window.sessionStorage.getItem(COMPARE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("reports gaps from the best and the biggest differences", () => {
+    const list = [place("a", 70, 90), place("b", 80, 60), place("c", 60, null)];
+    expect(gapFromBest(list, list[0], "overall")).toBe(10);
+    expect(gapFromBest(list, list[1], "overall")).toBe(0);
+    expect(gapFromBest(list, list[2], "grocery")).toBeNull();
+    expect(gapFromBest([list[0]], list[0], "overall")).toBeNull();
+    const diffs = biggestDifferences(list);
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0]).toMatchObject({ row: "grocery", spread: 30, leaderIds: ["a"], trailerIds: ["b"] });
+    expect(biggestDifferences([list[0]])).toEqual([]);
   });
 });

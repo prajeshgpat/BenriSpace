@@ -2,8 +2,8 @@
 
 How a location's 0-100 score is computed. Two parts:
 
-- **Part A: what is shipped.** The models in production and built: `v1-handtuned`,
-  `v2-handtuned` (live) and `v2.1-handtuned` (built, cutover pending).
+- **Part A: what is shipped.** The models built: `v2-handtuned` and `v2.1-handtuned`
+  (served). `v1-handtuned` was retired and its rows deleted.
 - **Part B: the v3 framework (planned).** `v3-timeaccess`, framework v1.4 with the
   owner's decisions. Nothing in Part B is serving yet, except the default weights
   and factor set, which v2.1 already uses. Section numbers inside Part B refer to
@@ -18,9 +18,11 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md),
 
 ## A1. Status
 
+Stored scores are whole points: sub-scores are `smallint` (0-100) and the composite is `real` with one decimal (migration 0017), which is what every reader displays anyway.
+
 | Version | `weights_version` | Factors | State |
 | --- | --- | --- | --- |
-| v1 | `v1-handtuned` | 11 | history; rows kept for rollback |
+| v1 | `v1-handtuned` | 11 | retired; rows deleted from the database |
 | v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | **live in production** (cutover 2026-10-03, 64,320 rows) |
 | v2.1 | `v2.1-handtuned` | 13, all user-facing pills | built; migration 0009 applied; full ingestion in progress; cutover pending owner approval |
 
@@ -60,7 +62,7 @@ flows into `scores` already means "higher is better":
 | transit stop count and closeness | Positive | as-is |
 | school count, rating, closeness | Positive | as-is (see A4) |
 | running trail count and closeness, Strava popularity | Positive | as-is (see A5) |
-| premium retail (Whole Foods, Starbucks, Target) | Positive | one `premium_retail_raw` bonus built at ingestion from the three `*_nearest_m` columns |
+| premium retail (Whole Foods, Starbucks, Target) | Positive | one `premium_retail_raw` bonus built at ingestion from the three `*_nearest_ft` columns |
 | airport drive time | Positive | invert (lower time is better) |
 | gas station / convenience store count (v2) | Negative | invert before normalizing |
 | congestion proxy | Negative | invert before normalizing |
@@ -142,7 +144,8 @@ aliases.
 - Normalization is per `metro_area` cohort of geohash6 cells (about 0.6 x 0.4 mi).
   Scores for a road-bounded area (`GET /v1/area`) are not normalized separately:
   they are the area-weighted average of the overlapping cells' latest scores, so
-  small areas inherit similar scores until per-polygon scoring exists.
+  small areas inherit similar scores (`precision=point`, A8, scores sample points
+  inside the polygon instead).
 - Scores are relative within a metro area, so no place scores 100 on everything
   (factors pull in opposite directions: dense places have the best transit and
   cafes and also the most traffic and siren noise).
@@ -153,6 +156,50 @@ aliases.
 - Other limits: school ratings are district-level, airport time is straight-line
   until routing exists, and quality of gyms, restaurants and groceries is not
   measured.
+
+## A8. On-demand point scoring (`precision=point`, experimental)
+
+`GET /v1/score` and `GET /v1/area` accept `precision=point` (default `grid`, unchanged).
+A point is scored at its exact coordinates instead of reusing the stored score of the
+0.24 sq mi cell it falls in, with **no per-cell storage**. Code: `scoring/point.py`
+(raw features at a point), `scoring/scales.py` (normalization), `api/point_score.py`
+(DB wiring).
+
+- **Raw features.** The same feature dict the ingestion jobs write for a cell, built from
+  one PostGIS statement against `places.geom` (GiST box counts and KNN, distances by
+  `ST_DistanceSphere`). Grocery, gym, cafe, restaurant, bar, gas, convenience, transit
+  and school come live; the airport time is computed (it is straight-line in production).
+- **Anchoring.** `places` only holds named OSM elements and parks as one centre point,
+  while `feature_store` was computed from every element and from park footprints. So for
+  most categories the live value is measured at the point and at the cell's stored
+  centroid and the stored cell value is shifted by the difference (nearest distances are
+  clipped to the point-to-centroid distance). At a cell's centroid this reproduces the
+  stored value. Schools need no anchoring (the 3x3 bucket rule of the ingestion is
+  replicated).
+- **Cell-only inputs.** Traffic (`congestion_proxy_raw`), the Noise Corridor base signal
+  and street orientation, trail features, the school district rating, shopping variety
+  and the largest nearby park are not queryable live (`road_segments` is empty), so they
+  come from the containing cell. The gas / convenience adjacency penalty inside Noise
+  Corridor is live.
+- **Normalization.** Each factor is scaled with the metro's p2 / p98 (v2.1) raw bounds,
+  computed with the engine's own functions (`compute_scales`), so scoring the stored raw
+  row of a cell reproduces its stored score exactly. Read from `score_scales`
+  (migration 0013, written by `scoring/run.py`) or, until that exists, computed once per
+  metro per Lambda instance from `feature_store`.
+- **Areas.** The mean of up to five points inside the polygon (the point nearest its
+  bounding-box centre plus farthest-point picks on a 5 x 5 lattice), equal weights.
+- Validation numbers: `scripts/validate_point_scoring.py`.
+
+## A9. Routing precompute (inputs for time-based scoring)
+
+The Wave 4 precompute (`ingestion/routing/`, migration 0022, see ARCHITECTURE section 6) stores
+network minutes to the nearest, 2nd and 3rd nearest place of every category per cell (walk for
+cells at or above 10,000 people / sq mi, drive below), drive minutes to airports and rail
+stations, and rail ride times between stations. **No score reads them yet**: v2 / v2.1 still use
+straight-line distances, and the v3 time curves (Part B 1.2) will take these minutes as input.
+Optimizer and triangulate already use them. Assumptions to carry into v3: walk 3 mph;
+drive free-flow x 0.8; amenity search caps walk 30 min / drive 45 min (beyond = "not reachable",
+which a time curve should score as zero); train times are weekday AM peak and include the wait.
 
 ---
 

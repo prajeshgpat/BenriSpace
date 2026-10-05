@@ -514,17 +514,17 @@ describe("Workspace: the map and its controls", () => {
     );
   });
 
-  it("applies a preset", async () => {
+  it("sends the chosen factors to the map", async () => {
     const user = userEvent.setup();
     const { getMapCells } = setup();
     await mapReady();
     sendViewport();
 
-    await user.click(screen.getByRole("button", { name: "Commuter" }));
+    await user.click(screen.getByRole("checkbox", { name: /Cafes/ }));
 
     await waitFor(() =>
       expect(getMapCells).toHaveBeenLastCalledWith(
-        expect.objectContaining({ factors: ["transit", "airport", "gasConvenience", "traffic"] }),
+        expect.objectContaining({ factors: expect.not.arrayContaining(["cafe"]) }),
         expect.anything(),
       ),
     );
@@ -611,12 +611,13 @@ describe("Workspace: the map and its controls", () => {
     setup();
     await mapReady();
     sendViewport();
-    await user.click(screen.getByRole("button", { name: "Family" }));
+    await user.click(screen.getByRole("checkbox", { name: /Cafes/ }));
 
     await waitFor(() => {
       const url = String(replaceState.mock.calls.at(-1)?.[2]);
       expect(url).toContain("/app?center=40.7000%2C-74.0000&z=11");
-      expect(url).toContain("factors=grocery%2Cschool");
+      expect(url).toContain("factors=");
+      expect(url).not.toContain("cafe");
     });
   });
 
@@ -772,9 +773,10 @@ describe("Workspace: the map and its controls", () => {
     await mapReady();
     sendViewport();
     await waitFor(() => expect(getMapCells).toHaveBeenCalledTimes(1));
-    const topCalls = getMapTop.mock.calls.length;
 
-    await user.click(screen.getByRole("button", { name: "Select none" }));
+    for (const box of screen.getAllByRole("checkbox", { checked: true })) {
+      await user.click(box);
+    }
 
     expect(
       screen.getByText(/Select a factor to color the map/),
@@ -785,8 +787,11 @@ describe("Workspace: the map and its controls", () => {
         .some((el) => /No factors selected/.test(el.textContent ?? "")),
     ).toBe(true);
     expect(map().cells.features).toHaveLength(0);
-    expect(getMapCells).toHaveBeenCalledTimes(1);
-    expect(getMapTop).toHaveBeenCalledTimes(topCalls);
+    // Turning factors off one by one may fetch on the way; once none are
+    // left nothing more is requested.
+    const settled = [getMapCells.mock.calls.length, getMapTop.mock.calls.length];
+    await new Promise((r) => setTimeout(r, 400));
+    expect([getMapCells.mock.calls.length, getMapTop.mock.calls.length]).toEqual(settled);
   });
 
   it("announces the number of best areas politely", async () => {
@@ -934,8 +939,8 @@ describe("Workspace: choosing a place on the map", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Scored for the area around 14A Rock Street, Jersey City, NJ"),
-    ).toBeInTheDocument();
+      screen.queryByText(/Scored for the area around/),
+    ).not.toBeInTheDocument();
     expect(reverseGeocode).toHaveBeenCalledWith(
       { lat: 40.7276, lon: -74.062 },
       expect.anything(),
@@ -957,7 +962,6 @@ describe("Workspace: choosing a place on the map", () => {
     const calls = fetchMock.mock.calls.length;
 
     await user.click(screen.getByRole("checkbox", { name: /Cafes/ }));
-    await user.click(screen.getByRole("button", { name: "Commuter" }));
 
     await waitFor(() =>
       expect(map().cells.features.length).toBeGreaterThan(0),
@@ -1026,10 +1030,8 @@ describe("area polygon", () => {
 
     act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
 
-    expect(
-      await screen.findByText("Area bounded by Broadway, Canal St, Bowery and Houston St"),
-    ).toBeInTheDocument();
-    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
+    expect(screen.queryByText(/Area bounded by/)).not.toBeInTheDocument();
     expect(map().highlightGeohash).toBe("dr5ru7");
     expect(String(areaMock.mock.calls[0][0])).toBe("http://api.test/v1/area?lat=40.7&lon=-74");
     // Only the background AI-explanation upgrade may use the generic fetch.
@@ -1052,10 +1054,7 @@ describe("area polygon", () => {
     expect(map().areaGeometry ?? null).toBeNull();
 
     await act(async () => release(jsonResponse(makeAreaBody())));
-    expect(
-      await screen.findByText("Area bounded by Broadway, Canal St, Bowery and Houston St"),
-    ).toBeInTheDocument();
-    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
   });
 
   it("holds the rectangle back during the fallback lookup and shows it once settled", async () => {
@@ -1089,27 +1088,36 @@ describe("area polygon", () => {
 
   it("re-resolves the area for a shared coordinates URL", async () => {
     setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
-    expect(await screen.findByText(/^Area bounded by/)).toBeInTheDocument();
-    expect(map().areaGeometry).toMatchObject({ type: "Polygon" });
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
   });
 
-  it("keeps a best-areas pick cell-based, with no area request", async () => {
+  it("shows the road polygon, not the rectangle, for a best-areas pick", async () => {
     const user = userEvent.setup();
     const { areaMock } = setup("", liveApi, {}, areaApi);
     await mapReady();
 
     await user.click(await screen.findByRole("button", { name: /Rank 1/ }));
 
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
+    expect(areaMock).toHaveBeenCalled();
+  });
+
+  it("falls back to the rectangle when the area is not found", async () => {
+    const user = userEvent.setup();
+    setup("", liveApi, {}, noArea);
+    await mapReady();
+
+    await user.click(await screen.findByRole("button", { name: /Rank 1/ }));
+
     expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
-    expect(areaMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(map().highlightGeohash).toBe("dr5ru7"));
     expect(map().areaGeometry ?? null).toBeNull();
-    expect(map().highlightGeohash).toBe("dr5ru7");
   });
 
   it("clears the polygon when the result is closed", async () => {
     const user = userEvent.setup();
     setup("lat=40.7&lon=-74", liveApi, {}, areaApi);
-    await screen.findByText(/^Area bounded by/);
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
 
     await user.click(screen.getByRole("button", { name: "Close result" }));
 

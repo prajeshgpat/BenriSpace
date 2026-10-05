@@ -49,47 +49,16 @@ describe("FactorControls", () => {
 
     expect(screen.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
     expect(changes.at(-1)?.factors).not.toContain("cafe");
-    expect(screen.getByText(`${FACTOR_KEYS.length - 1} of ${FACTOR_KEYS.length} on`)).toBeInTheDocument();
+    expect(screen.queryByText(/ on$/)).not.toBeInTheDocument();
   });
 
-  it("selects none and all", async () => {
-    const user = userEvent.setup();
+  it("has no count, presets or select all/none", () => {
     render(<Harness />);
-
-    await user.click(screen.getByRole("button", { name: "Select none" }));
-    expect(screen.queryAllByRole("checkbox", { checked: true })).toHaveLength(
-      0,
-    );
-    expect(screen.getByRole("button", { name: "Select none" })).toBeDisabled();
-
-    await user.click(screen.getByRole("button", { name: "Select all" }));
+    expect(screen.queryByText(/\d+ of \d+ on/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Presets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select none" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("checkbox", { checked: true })).toHaveLength(FACTOR_KEYS.length);
-  });
-
-  it("applies a preset and marks it pressed", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-
-    await user.click(screen.getByRole("button", { name: "Commuter" }));
-
-    expect(screen.getByRole("button", { name: "Commuter" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "Family" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(
-      screen
-        .getAllByRole("checkbox", { checked: true })
-        .map((c) => c.closest("label")?.textContent),
-    ).toEqual([
-      expect.stringContaining("Public transit"),
-      expect.stringContaining("Airport"),
-      expect.stringContaining("Gas & Convenience"),
-      expect.stringContaining("Traffic"),
-    ]);
   });
 
   it("offers importance only for enabled factors, in a disclosure and records the choice", async () => {

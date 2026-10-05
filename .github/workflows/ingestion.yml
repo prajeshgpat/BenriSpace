@@ -107,7 +107,7 @@ jobs:
     if: ${{ !cancelled() && needs.grid.result == 'success' }}
     runs-on: ubuntu-latest
     env:
-      # Written next to the v1 rows (unique per geo_entity + version); the API
+      # Written next to older versions' rows (unique per geo_entity + version); the API
       # keeps serving whichever version its SCORING_WEIGHTS_VERSION names.
       SCORING_WEIGHTS_VERSION: v2.1-handtuned
     steps:
@@ -117,4 +117,13 @@ jobs:
           python-version: "3.11"
       - run: pip install -e .
       - run: python -m scoring.run
-      - run: python -m scoring.embeddings
+      # Persist the compact score file (/v1/map/scores) so cold API requests skip the rebuild.
+      - run: python -m api.scorefile
+      # Publish the score file to R2 (manifest.json last). Area scores and tiles need the local
+      # areas database and stay a manual step: see docs/ARCHITECTURE.md, "Static files on R2".
+      - run: pip install boto3 && python scripts/publish_static.py --scores-only
+        if: ${{ env.R2_ACCESS_KEY_ID != '' }}
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

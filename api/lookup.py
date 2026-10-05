@@ -8,6 +8,7 @@ response shape) are plain functions over dicts -- see tests/test_api.py.
 from api.factors import FACTOR_COLUMNS, to_snake
 from api.schemas import SchoolInfo, ScoreResponse, SubScores
 from common.db import get_neighborhoods_by_geohash
+from common.feature_columns import from_db_row
 from common.geo import haversine_m
 from scoring.engine import LEGACY_FALLBACK_COLUMNS
 
@@ -84,7 +85,7 @@ def get_feature_row(conn, geo_entity_id: str) -> dict | None:
     metres, school district fields), or None."""
     with conn.cursor() as cur:
         cur.execute("select * from feature_store where geo_entity_id = %s", (geo_entity_id,))
-        return cur.fetchone()
+        return from_db_row(cur.fetchone())
 
 
 def school_info_from_rows(score_row: dict, feature_row: dict | None) -> SchoolInfo | None:
@@ -102,6 +103,11 @@ def school_info_from_rows(score_row: dict, feature_row: dict | None) -> SchoolIn
         district_name=district,
         source=source,
     )
+
+
+def travel_mode_of(feature_row: dict | None) -> str | None:
+    mode = (feature_row or {}).get("travel_mode")
+    return mode if mode in ("walk", "drive") else None
 
 
 def build_score_response(
@@ -126,4 +132,5 @@ def build_score_response(
         computed_at=score_row["computed_at"],
         school=school_info_from_rows(score_row, feature_row),
         neighborhood=geo_entity.get("neighborhood"),
+        travel_mode=travel_mode_of(feature_row),
     )

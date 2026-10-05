@@ -102,3 +102,59 @@ def rank_candidates(
         ]
     matched.sort(key=lambda c: c["composite_score"], reverse=True)
     return matched[:limit]
+
+
+# ----------------------------------------------------------------------------- real isochrones
+# Phase 4: anchors become reachable-cell sets from the precomputed road-network cell graph
+# (api/reach.py). An anchor with no routing data (area not precomputed yet) falls back to the
+# circle above, expressed as the cells inside it, so both kinds intersect / union exactly.
+
+
+def anchor_cells(conn, lat: float, lon: float, mode: str | None, minutes: int | None):
+    """(set of cell keys, effective minutes, method) for one anchor."""
+    from api import isochrone, reach
+
+    mode = mode or DEFAULT_MODE
+    mins = reach.clamp_minutes(mode, minutes if minutes is not None else DEFAULT_MAX_TRAVEL_MINUTES)
+    got = reach.reach(conn, lat, lon, mode, mins)
+    if got is not None:
+        return set(got.cells), int(mins), "network"
+    circle = anchor_to_circle(lat, lon, int(mins), mode)
+    return isochrone.disc_cells(lat, lon, circle.radius_m), int(mins), "estimate"
+
+
+def shape_for(cells: set, label: str | None, mode: str, minutes: int, method: str, lat: float):
+    from api import isochrone
+
+    return {
+        "label": label,
+        "mode": mode,
+        "minutes": minutes,
+        "method": method,
+        "cell_count": len(cells),
+        "area_sq_mi": round(isochrone.area_sq_mi(len(cells), lat), 2),
+        "geometry": isochrone.cells_to_geometry(cells),
+    }
+
+
+def cells_box(cells: set) -> tuple[float, float, float, float] | None:
+    """(min_lat, max_lat, min_lon, max_lon) covering the cells."""
+    from common.cellgrid import cell_bounds
+
+    if not cells:
+        return None
+    bounds = [cell_bounds(iy, ix) for iy, ix in cells]
+    return (
+        min(b[0] for b in bounds),
+        max(b[2] for b in bounds),
+        min(b[1] for b in bounds),
+        max(b[3] for b in bounds),
+    )
+
+
+def rank_in_cells(candidates: list[dict], cells: set, limit: int) -> list[dict]:
+    from common.cellgrid import cell_index
+
+    inside = [c for c in candidates if cell_index(c["latitude"], c["longitude"]) in cells]
+    inside.sort(key=lambda c: c["composite_score"], reverse=True)
+    return inside[:limit]

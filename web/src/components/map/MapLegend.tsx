@@ -1,10 +1,12 @@
+import { memo } from "react";
+
 import { RAMP_GRADIENT } from "@/lib/map/colors";
 import type { ScoreRange } from "@/lib/map/features";
 import { roundScore } from "@/lib/score/presentation";
 
 import styles from "./MapLegend.module.css";
 
-export function MapLegend({ range }: { range: ScoreRange | null }) {
+function MapLegendImpl({ range }: { range: ScoreRange | null }) {
   return (
     <div className={styles.legend} role="group" aria-label="Score legend">
       <p className={styles.title}>Score</p>
@@ -32,3 +34,6 @@ export function MapLegend({ range }: { range: ScoreRange | null }) {
     </div>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const MapLegend = memo(MapLegendImpl);

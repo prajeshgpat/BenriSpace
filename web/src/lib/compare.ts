@@ -63,6 +63,60 @@ export function bestInRow(
   return new Set(values.filter((x) => x.v === best).map((x) => x.id));
 }
 
+/** Points a place trails the row's best value by (0 for the best, null without data). */
+export function gapFromBest(
+  places: readonly ComparePlace[],
+  place: ComparePlace,
+  row: CompareRow,
+): number | null {
+  const own = rowValue(place, row);
+  if (own === null) return null;
+  const values = places.flatMap((p) => {
+    const v = rowValue(p, row);
+    return v === null ? [] : [v];
+  });
+  if (values.length < 2) return null;
+  return Math.max(...values) - own;
+}
+
+export interface RowDifference {
+  row: FactorKey;
+  /** Best minus worst value across the pinned places. */
+  spread: number;
+  leaderIds: string[];
+  trailerIds: string[];
+}
+
+/**
+ * The factors where the pinned places differ most, largest spread first.
+ * Rows with fewer than two values or a spread under `minSpread` are left out.
+ */
+export function biggestDifferences(
+  places: readonly ComparePlace[],
+  limit = 3,
+  minSpread = 5,
+): RowDifference[] {
+  if (places.length < 2) return [];
+  const out: RowDifference[] = [];
+  for (const row of FACTOR_KEY_LIST) {
+    const values = places.flatMap((p) => {
+      const v = rowValue(p, row);
+      return v === null ? [] : [{ id: p.id, v }];
+    });
+    if (values.length < 2) continue;
+    const hi = Math.max(...values.map((x) => x.v));
+    const lo = Math.min(...values.map((x) => x.v));
+    if (hi - lo < minSpread) continue;
+    out.push({
+      row,
+      spread: hi - lo,
+      leaderIds: values.filter((x) => x.v === hi).map((x) => x.id),
+      trailerIds: values.filter((x) => x.v === lo).map((x) => x.id),
+    });
+  }
+  return out.sort((a, b) => b.spread - a.spread).slice(0, limit);
+}
+
 function isPlace(value: unknown): value is ComparePlace {
   if (typeof value !== "object" || value === null) return false;
   const p = value as Record<string, unknown>;

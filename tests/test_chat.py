@@ -2,6 +2,7 @@
 (fake Anthropic client and fake database: no network, no Postgres)."""
 
 import contextlib
+import json
 from types import SimpleNamespace
 
 import psycopg
@@ -255,6 +256,48 @@ def test_context_reaches_prompt_and_defaults_factors(db, monkeypatch):
     assert "5 Main St, Hoboken NJ" in client.calls[0]["system"]
 
 
+def test_typed_address_is_geocoded_once_and_becomes_the_users_point(db, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "api.geocoding.geocode_address", lambda q, **k: calls.append(q) or (40.7357, -74.0336)
+    )
+    seen = {}
+    monkeypatch.setitem(
+        chat.TOOL_IMPL,
+        "search_areas",
+        lambda a, c: seen.update(near=(c.latitude, c.longitude)) or {"results": []},
+    )
+    client = FakeAnthropic(
+        [resp([tool("search_areas", {})], "tool_use"), resp([text("Nothing found.")])]
+    )
+    chat.run_chat(
+        body("near me?", context={"address": "5 Main St, Hoboken NJ"}), lambda timeout: client
+    )
+    assert calls == ["5 Main St, Hoboken NJ"]
+    assert seen["near"] == (40.7357, -74.0336)
+    system = client.calls[0]["system"]
+    assert "5 Main St, Hoboken NJ" in system and "40.7357" in system
+    assert "typed in the search box" in system
+
+
+def test_typed_address_that_cannot_be_geocoded_is_passed_as_text(db, monkeypatch):
+    monkeypatch.setattr("api.geocoding.geocode_address", lambda q, **k: None)
+    client = FakeAnthropic([resp([text("Which town?")])])
+    chat.run_chat(body("hi", context={"address": "Main St"}), lambda timeout: client)
+    system = client.calls[0]["system"]
+    assert "Main St" in system and "could not be located" in system
+
+
+def test_address_with_coordinates_is_not_geocoded(db, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("must not geocode")
+
+    monkeypatch.setattr("api.geocoding.geocode_address", boom)
+    client = FakeAnthropic([resp([text("ok")])])
+    ctx = {"address": "5 Main St", "latitude": 40.7, "longitude": -74.0}
+    chat.run_chat(body("hi", context=ctx), lambda timeout: client)
+
+
 # --- prompt rules -----------------------------------------------------------
 
 
@@ -395,6 +438,53 @@ def test_route_shapes(db, monkeypatch):
     assert limited.status_code == 429 and limited.json()["code"] == "rate_limited"
 
 
+# --- streaming --------------------------------------------------------------
+
+
+def _frames(text_body):
+    out = []
+    for frame in text_body.strip().split("\n\n"):
+        if frame.startswith(":"):
+            continue
+        event, data = frame.split("\n", 1)
+        out.append((event.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
+    return out
+
+
+def test_stream_emits_status_then_the_same_reply(db, optimize_tool, monkeypatch):
+    anchors = [{"kind": "address", "query": "1 Stamford Forum, Stamford CT"}]
+    client = FakeAnthropic(
+        [
+            resp([tool("optimize_location", {"anchors": anchors})], "tool_use"),
+            resp([text("Darien, Connecticut looks best: about 140 minutes of travel a week.")]),
+        ]
+    )
+    monkeypatch.setattr(chat, "make_client", lambda t: client)
+    http = TestClient(main.app)
+    payload = {"messages": [{"role": "user", "content": "Find a place near my work"}]}
+    streamed = http.post("/v1/chat/stream", json=payload)
+    assert streamed.status_code == 200
+    assert streamed.headers["content-type"].startswith("text/event-stream")
+    frames = _frames(streamed.text)
+    kinds = [k for k, _ in frames]
+    assert kinds[-1] == "reply" and kinds.count("reply") == 1 and "error" not in kinds
+    statuses = [d for k, d in frames if k == "status"]
+    assert any(d.get("tool") == "optimize_location" for d in statuses)
+    assert frames[-1][1]["reply"].startswith("Darien, Connecticut looks best")
+    assert frames[-1][1]["results"][0]["latitude"] == 41.07
+
+
+def test_stream_reports_errors_as_events(db, monkeypatch):
+    db.count = 99
+    http = TestClient(main.app)
+    streamed = http.post("/v1/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert streamed.status_code == 200
+    ((kind, data),) = _frames(streamed.text)[-1:]
+    assert kind == "error" and data["status"] == 429 and data["code"] == "rate_limited"
+    bad = http.post("/v1/chat/stream", json={"messages": []})
+    assert bad.status_code == 400
+
+
 # --- tools on the real functions -------------------------------------------
 
 
@@ -476,3 +566,88 @@ def test_grounding_accepts_names_from_any_tool_string():
     payloads = [{"results": [{"neighborhood": "Park Slope, Brooklyn", "areaLabel": "Area bounded by Union St and 5th Ave"}]}]
     assert chat.validate_reply("Try Park Slope or the area by Union St.", payloads, [], "{}")
     assert not chat.validate_reply("Try Park Slope or Williamsburg.", payloads, [], "{}")
+
+
+# --- brand lookups ----------------------------------------------------------
+
+
+def test_system_prompt_requires_brand_lookup_by_name():
+    s = chat.SYSTEM.lower()
+    for needle in ("find_places", "near_brands", "planet fitness", "never substitute", "say so explicitly"):
+        assert needle in s, needle
+    assert "find_places" in {t["name"] for t in chat.TOOLS}
+    props = next(t for t in chat.TOOLS if t["name"] == "search_areas")["input_schema"]["properties"]
+    assert "near_brands" in props
+
+
+PF = [
+    {"name": "Planet Fitness", "brand": "Planet Fitness", "category": "gym",
+     "latitude": 40.7300, "longitude": -74.0400},
+    {"name": "Planet Fitness Hoboken", "brand": None, "category": "gym",
+     "latitude": 40.7450, "longitude": -74.0300},
+]  # fmt: skip
+
+
+def test_find_places_returns_nearest_branches(monkeypatch):
+    monkeypatch.setattr(chat, "get_connection", lambda: contextlib.nullcontext(object()))
+    monkeypatch.setattr("common.places.places_by_brand_in_box", lambda conn, q, *box: list(PF))
+    out, err = chat.run_tool(
+        "find_places",
+        {"query": "planet fitness", "near_latitude": 40.72, "near_longitude": -74.04},
+        None,
+    )
+    assert not err
+    assert [p["name"] for p in out["places"]] == ["Planet Fitness", "Planet Fitness Hoboken"]
+    assert out["places"][0]["direction"] == "N" and "mi" in out["places"][0]["distance"]
+    assert "note" not in out
+
+
+def test_find_places_none_found_says_so(monkeypatch):
+    monkeypatch.setattr(chat, "get_connection", lambda: contextlib.nullcontext(object()))
+    monkeypatch.setattr("common.places.places_by_brand_in_box", lambda conn, q, *box: [])
+    out, err = chat.run_tool(
+        "find_places", {"query": "Nonesuch", "near_latitude": 40.72, "near_longitude": -74.04}, None
+    )
+    assert not err and out["places"] == [] and "No place matching" in out["note"]
+    out, err = chat.run_tool("find_places", {"query": "x"}, None)
+    assert err  # no point and no context
+
+
+def test_search_areas_near_brands_attaches_branch_and_reranks(monkeypatch):
+    from api.mapdata import MapTopResponse  # noqa: F401
+
+    def area(lat, lon, score):
+        return {"latitude": lat, "longitude": lon, "score": score, "neighborhood": None,
+                "subScores": {}}  # fmt: skip
+
+    class Top:
+        def model_dump(self, **k):
+            # A is higher scoring but far from any branch; B is slightly lower and next to one.
+            return {"factors": ["transit"], "results": [area(40.80, -74.00, 80), area(40.7301, -74.04, 74)]}
+
+    monkeypatch.setattr(chat, "get_connection", lambda: contextlib.nullcontext(object()))
+    monkeypatch.setattr(chat, "find_top", lambda *a, **k: Top())
+    monkeypatch.setattr(chat, "_scores_for", lambda sub, f: {})
+    monkeypatch.setattr("common.places.places_by_brand_in_box", lambda conn, q, *box: list(PF))
+    out, err = chat.run_tool("search_areas", {"near_brands": ["Planet Fitness"], "limit": 2}, None)
+    assert not err
+    first = out["results"][0]
+    assert first["score"] == 74  # re-ranked above the 80-scoring area
+    assert first["nearBrands"][0]["found"] and first["nearBrands"][0]["direction"]
+    assert out["results"][1]["nearBrands"][0]["found"] is False or out["results"][1]["nearBrands"][0]["distanceLabel"]
+    assert "points per mile" in out["rankingNote"]
+
+
+def test_search_areas_near_brands_with_no_branch_is_flagged(monkeypatch):
+    class Top:
+        def model_dump(self, **k):
+            return {"factors": ["transit"], "results": [
+                {"latitude": 40.8, "longitude": -74.0, "score": 80, "neighborhood": None, "subScores": {}}]}  # fmt: skip
+
+    monkeypatch.setattr(chat, "get_connection", lambda: contextlib.nullcontext(object()))
+    monkeypatch.setattr(chat, "find_top", lambda *a, **k: Top())
+    monkeypatch.setattr(chat, "_scores_for", lambda sub, f: {})
+    monkeypatch.setattr("common.places.places_by_brand_in_box", lambda conn, q, *box: [])
+    out, _ = chat.run_tool("search_areas", {"near_brands": ["Planet Fitness"]}, None)
+    assert out["results"][0]["nearBrands"][0] == {
+        "brand": "Planet Fitness", "found": False, "note": "No Planet Fitness within 5 miles"}  # fmt: skip

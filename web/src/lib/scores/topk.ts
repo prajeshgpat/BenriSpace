@@ -14,7 +14,7 @@ const MILES_PER_DEGREE_LAT = 69.0;
 /** Grid cells must never be narrower than the spacing anywhere in the metro. */
 const WIDEST_LATITUDE = 42.5;
 
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number) {
+export function haversineM(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = Math.PI / 180;
   const phi1 = lat1 * toRad;
   const phi2 = lat2 * toRad;
@@ -79,6 +79,12 @@ class CellHeap {
   }
 }
 
+/** What `localTop` ranks: the score file's cells, or anything shaped like them. */
+export type Rankable = Pick<
+  ScoreMatrix,
+  "count" | "lat" | "lon" | "factors" | "scores" | "geohashes"
+>;
+
 export interface TopOptions {
   bbox?: Bbox4;
   limit: number;
@@ -93,7 +99,7 @@ export interface TopOptions {
  * Names are not known here; `neighborhood` is null until looked up.
  */
 export function localTop(
-  matrix: ScoreMatrix,
+  matrix: Rankable,
   composites: Float64Array,
   { bbox, limit, minSeparationMi }: TopOptions,
 ): MapTopResult[] {

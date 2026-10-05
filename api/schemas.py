@@ -74,6 +74,12 @@ class ScoreResponse(CamelModel):
     school: SchoolInfo | None = None
     # Human name such as 'Park Slope, Brooklyn'; null when not labelled.
     neighborhood: str | None = None
+    # 'point' when scored on demand at the exact location (?precision=point),
+    # 'grid' when it is the stored score of the containing grid cell (default).
+    precision: Literal["point", "grid"] = "grid"
+    # How people here usually get around, from population density: 'walk' at
+    # 10,000+ people / sq mi, else 'drive'. Null when density is unknown.
+    travel_mode: Literal["walk", "drive"] | None = None
 
 
 class ExplanationResponse(CamelModel):
@@ -118,8 +124,29 @@ class RankedAddress(CamelModel):
     composite_score: float
 
 
+class IsochroneShape(CamelModel):
+    """A reachable area as GeoJSON (MultiPolygon, lon/lat). method is "network" when it comes
+    from the precomputed road-network cell graph, "estimate" for the straight-line fallback."""
+
+    label: str | None = None
+    mode: Literal["drive", "transit", "walk"]
+    minutes: int
+    method: Literal["network", "estimate"]
+    cell_count: int
+    area_sq_mi: float
+    geometry: dict | None = None
+
+
+class IsochroneResponse(CamelModel):
+    latitude: float
+    longitude: float
+    isochrone: IsochroneShape
+
+
 class TriangulateResponse(CamelModel):
     results: list[RankedAddress]
+    isochrones: list[IsochroneShape] = []
+    combined: IsochroneShape | None = None
 
 
 class Suggestion(CamelModel):

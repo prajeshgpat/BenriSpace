@@ -19,8 +19,10 @@ multi-destination solver, not a lookup tool.
 - **Scope.** The New York metro only, within about two hours of the city: the five
   boroughs, Long Island, Westchester, the Hudson Valley, northern New Jersey and
   Fairfield County, CT. The radius spans several transit agencies, each a separate
-  ingestion job. Nationwide expansion is **not planned** (the cell grid would be
-  about 17-20 GB for the US; tract-level polygons about 150 MB).
+  ingestion job. The next coverage target is a ~5 hour radius (about 10x today's
+  land, 2.4x its population) on a density-tiered grid; the US with territories is
+  estimated at 2-4 GB of Postgres (1.5-2 GB with polygons and raw features on R2),
+  which needs a paid database tier. See ARCHITECTURE.md section 10.
 - **Secondary goal.** The project doubles as a portfolio piece for a data
   engineering job search. The RAG pipeline, vector search and end-to-end ingestion
   pipeline are the target technical story, so favor architectural choices that
@@ -30,17 +32,16 @@ multi-destination solver, not a lookup tool.
   platforms, relocation companies, brokerages and multifamily marketers (closest
   comp: Walk Score's licensing). The consumer app is the front door and demo.
 
-## Status at a glance (2026-10-04)
+## Status at a glance (2026-10-05)
 
 | Area | State |
 | --- | --- |
-| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres |
-| Scoring served | `v2-handtuned`, 14 factors, 64,320 rows (cutover 2026-10-03) |
-| Scoring built | `v2.1-handtuned`, 13 pills; full ingestion in progress; cutover pending owner approval |
-| Areas | 49,158 road-bounded areas capped at 0.8 sq mi, with neighborhood names (migration 0008 applied) |
-| Features live | score, area click, address search, Best areas, improve-this-area, similar areas, places, AI explanations, multi-destination optimizer, map, mobile sheet, Home page |
-| In progress | Ask BenriSpace chat (`/v1/chat`, migration 0010 not applied) |
-| Planned | Valhalla routing precompute, imperial column rename, scoring v3, auth and tiers |
+| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres (328 MB of 500 MB after deleting v1 and v2 scores) |
+| Scoring served | `v2.1-handtuned`, 13 factor pills, 64,320 rows; v1 and v2 rows deleted 2026-10-05 |
+| Areas | Production: 49,158 road-bounded areas capped at 0.8 sq mi. `scratch`: density-capped road-hierarchy areas (0.1-1 sq mi, 35,943 areas) in local `areas_slim`, cutover pending |
+| Features live | score, area click, address search, Best areas, improve, similar areas, places, AI explanations, optimizer, Ask Benri chat, data page, feedback, map, mobile sheet, Home page |
+| On `scratch` (owner testing) | on-demand point scoring, inline Ask Benri with brand lookups, density-capped polygons, routing precompute + isochrones + real triangulate, storage compaction, browser-side best areas, PMTiles (flag), compare differences, chat streaming (infra not applied) |
+| Planned | Full routing run, scoring v3, density-tiered grid for a 5 hr radius, auth and tiers |
 
 ## Done
 
@@ -73,7 +74,7 @@ multi-destination solver, not a lookup tool.
 - AI-written, grounded score explanations (Haiku 4.5, prompt `expl-v2`, cache and
   a $5/month cap).
 - `/v1/improve` and the Improve card with named places (migration 0004).
-- `/v1/similar` with pgvector embeddings (migration 0007; see the status note in
+- `/v1/similar` (first with pgvector embeddings, migration 0007; SQL distance on `scratch`; see
   ARCHITECTURE.md).
 - `/v1/optimize`, the multi-destination planner (work + Trader Joe's + Planet
   Fitness), with openrouteservice refinement.
@@ -84,40 +85,29 @@ multi-destination solver, not a lookup tool.
 
 ## In progress
 
-- **v2.1 full ingestion and cutover.** Ingestion for the new columns is running;
-  the cutover (set `scoring_weights_version` to `v2.1-handtuned` and apply)
-  waits for owner approval.
-- **Ask BenriSpace chat.** `/v1/chat`, a tool-using Haiku assistant limited to
-  read-only tools, with grounding validation, budget cap and a per-visitor daily
-  cap. Migration 0010 (`chat_usage`) is not applied; the API skips the limit
-  while the table is missing.
+- **`scratch` branch, owner testing.** Everything listed above as "On `scratch`".
+  Production rollout needs these migrations, in order, each owner-approved:
+  0014 `areas_slim` (then the slim area build and `AREAS_TABLE=areas_slim`),
+  0015 `places_cat_geom_gist`, 0020 imperial expand (deploy + one ingestion run
+  before continuing), 0016 drop embeddings, 0017 compact scores, 0018 trim
+  `geo_entities`, 0019 `score_files` (then `python -m api.scorefile`), 0022
+  routing (then `python -m ingestion.routing.run --all`), and last 0021 imperial
+  contract (irreversible). Details: ARCHITECTURE.md storage model and migrations table.
 
 ## Next
 
-1. **Valhalla routing precompute.** Walk, drive and transit minutes per cell in a
-   batch run (Docker on a laptop; Docker and Colima are installed locally; or a
-   short-lived AWS spot instance). Replaces straight-line airport drive times and
-   the estimates in the optimizer and scoring v3. Valhalla, not OSRM (native
-   isochrones). Compute isochrones from the 2-4 anchor points, not per candidate.
-   Live triangulation from arbitrary addresses uses a hosted routing free tier.
-   Intersect or union the anchor isochrones, then rank the precomputed scores
-   inside. This turns the `/triangulate` placeholder into the real thing.
-2. **Imperial column rename.** Older raw `feature_store` columns are still metres
-   (`*_m`); the newer ones are imperial. Rename for consistency.
-3. **Scoring v3 (`v3-timeaccess`).** Absolute time-to-access curves per factor and
-   travel mode, mode chosen by population density (2020 Census block groups),
-   frontage-based noise, quality placeholders. Fixes the min-max outlier
-   weakness. Needs the Valhalla minutes and the 2020 Census density data. See
-   [SCORING.md](SCORING.md) Part B.
-4. **Natural-language search.** User intent ("somewhere quiet, near good coffee,
-   20 minutes from JFK") to a structured filter to retrieval against the feature
-   table. The strongest portfolio artifact; builds on the chat tools.
-5. **Compare locations**, a data transparency page, a feedback loop, and public API
-   docs with keys and an OpenAPI playground (Business tier).
-6. **Neighborhood polygons scored directly** (5-10 block clusters bounded by
-   secondary roads, instead of averaging grid cells). Stage 1 (offline prototype
-   in `ingestion/areas/`) exists; stage 2 (full-metro run) and stage 3
-   (per-polygon scoring, API and UI) are not started.
+1. **Ship `scratch`** after owner testing (PR to dev-benrispace, then main).
+2. **R2 static delivery (built on `scratch`, files live).** Score file, PMTiles and
+   per-area scores are on `tiles.benrispace.com` behind a versioned manifest; the web
+   reads them when `NEXT_PUBLIC_STATIC_URL` is set. Remaining: set the env var in
+   Amplify, copy simplified polygons to prod. See PLANNED.md Wave 2.
+3. **Full routing run.** Swap Overpass for a Geofabrik extract, run walk and drive
+   tiles for the whole metro, and add a geohash5 graph for drive trips over 90 min.
+4. **Scoring v3 (`v3-timeaccess`).** Per-factor time curves reading `cell_travel`,
+   frontage-based noise, quality placeholders. See [SCORING.md](SCORING.md) Part B.
+5. **Density-tiered grid** (geohash6 where dense, geohash5 elsewhere) as the
+   foundation for a ~5 hour radius.
+6. **Natural-language search** as a first-class flow on top of the chat tools.
 
 ## Later
 
@@ -154,44 +144,7 @@ multi-destination solver, not a lookup tool.
 
 ## Improvement plan
 
-Waves in rough order. All items are **planned** unless marked in flight.
-
-- **Wave 0 (in flight):** chat v1; web polish and docs; full ingestion, then v2.1 preview, then cutover (owner approval).
-- **Wave 1, quick performance wins (planned):**
-  - `(latitude, longitude)` index on `geo_entities`.
-  - Rewrite the similar-areas query to use the HNSW index (fetch the target vector, then `ORDER BY embedding <-> vec`).
-  - `pg_trgm` GIN index for brand search on `places`.
-  - Covering index on `scores(weights_version, geo_entity_id)`.
-  - Materialized view `latest_scores`.
-  - Precomputed top-20 similar cells per cell.
-  - Cloudflare edge caching for GET endpoints.
-  - Lambda cold-start cuts (lazy imports, consider SnapStart).
-- **Wave 2, client-side scoring and tiles (planned):**
-  - Static per-cell sub-score file (13 x uint8 per cell, about 300 KB gzipped) on Cloudflare R2, so filter and weight changes recolor the map and rank top areas in the browser with no API call (heap top-k plus grid-hash spacing).
-  - PMTiles vector tiles (tippecanoe) for the cell grid and area polygons.
-- **Wave 3, v3 data foundation (planned):**
-  - Imperial column rename using expand/contract migrations.
-  - Census 2020 population density per cell (car below 10,000 people per sq mi).
-  - PostGIS geometry columns with GiST indexes (areas, places, cells, major-road lines), replacing bbox plus Python point-in-polygon.
-  - Ingestion speedups (scipy cKDTree and numpy; parallel non-Overpass jobs).
-- **Wave 4, routing precompute (planned):**
-  - Pandana multi-source k-nearest network search per amenity category (walk and drive).
-  - OSRM table (contraction hierarchies) for drive matrices to airports and stations.
-  - r5py RAPTOR station-to-station transit matrix.
-  - Optimizer seeded by the weighted geometric median (Weiszfeld), with lower-bound pruning and precomputed train times.
-  - (Valhalla, decided 2026-10-04, remains the plan for isochrones and per-cell minutes; this wave's tools are candidates for the bulk matrices.)
-- **Wave 5, scoring v3 and cutover (planned):** per-factor curves, density-based modes, dining density in polygon plus a 10-minute walk, transit service quality from GTFS frequencies, noise by frontage band from road geometry, gas and convenience adjacency; calibration against known places; preview and rollback.
-- **Wave 6, product and quality (planned):**
-  - Compare 2-4 places.
-  - Data transparency page (sources and freshness from `ingestion_runs`).
-  - Feedback (thumbs on AI text, report a closed place).
-  - Chat streaming and ask-about-this-area.
-  - Playwright E2E including WebKit (Safari) in CI.
-  - CloudWatch alarms and an LLM spend dashboard.
-  - Fix the duplicate push-run `ci-ok` failure.
-  - Rotate secrets before making the repo public.
-- **Wave 7, Phase 4 (planned):** Google sign-in, tiers, API keys and an OpenAPI playground, Stripe, saved places and shareable reports.
-- **Later data:** BTS noise map, school-level ratings (state report cards), a quality ratings source, safety and affordability (Census ACS).
+The wave-by-wave backlog (with status markers) lives in [PLANNED.md](PLANNED.md).
 
 ## Decisions log
 
@@ -209,9 +162,16 @@ Waves in rough order. All items are **planned** unless marked in flight.
 | 2026-10-04 | NJ Transit uses its open official rail and bus feeds; no API key needed (this retires the old blocker) |
 | 2026-10-04 | Scoring framework v1.2-v1.4 (owner decisions): overall normalized to selected filters and out of 100; Gas & Convenience is one positive factor and still a noise source when adjacent; travel mode by density (car below 10,000 people per sq mi, walk plus transit at or above); quality components are placeholders; schools 20/80 confirmed; no reserved weight; restaurants, cafes and bars stay separate pills; weights follow frequency of use with diminishing returns; noise scored by position relative to the road; weights and mode-aware adjustment accepted; every factor is a pill (Recreation and Shopping replace the hidden signals); icons: airport plane, noise corridor siren, "Bars", "Traffic"; per-factor, per-mode proximity curves; neighborhood polygons capped at 0.8 sq mi |
 | 2026-10-04 | Routing: precompute with Valhalla (batch run, then store minutes per cell) |
-| 2026-10-04 | Nationwide expansion is not planned |
+| 2026-10-04 | Nationwide expansion is not planned (superseded 2026-10-05) |
+| 2026-10-04 | v2.1 cutover approved; robust normalization (clip at p2/p98 per metro) |
+| 2026-10-05 | v1 and v2 score rows deleted (owner-run), database 447 MB to 328 MB |
+| 2026-10-05 | On-demand point scoring (live PostGIS nearest-place lookups anchored to stored cell features) |
+| 2026-10-05 | Area polygons sized by population density: 0.1 sq mi at 20k+/sq mi up to 1 sq mi below 2k, split along tertiary then residential roads, never across a hard road |
+| 2026-10-05 | Similar areas: SQL distance over per-metro z-scored factor scores; pgvector embeddings and `similar_cells` dropped |
+| 2026-10-05 | Routing: Pandana precompute per tile plus a stored cell graph for isochrones (pure Python in Lambda); Valhalla no longer needed. Train times from GTFS with the Connection Scan Algorithm |
+| 2026-10-05 | Coverage target: ~5 hour radius on a density-tiered grid; static files move to Cloudflare R2 |
 
-Other standing decisions: Valhalla over OSRM; precompute scores rather than
+Other standing decisions: precompute scores rather than
 compute live; GitHub Actions for orchestration (Airflow deferred); Business tier
 sales-assisted first; rate limiting via a Postgres counter first.
 
@@ -220,7 +180,7 @@ sales-assisted first; rate limiting via a Postgres counter first.
 - Schema and API contract: single owner, direct work, first.
 - Ingestion scripts: mechanical and independent once the schema is locked, so
   good candidates for parallel work.
-- Valhalla setup: independent infrastructure task, can run alongside ingestion.
+- Routing precompute: independent batch job, can run alongside ingestion.
 - Scoring engine design: direct work, not delegated; this is where the product's
   judgment and defensibility live.
 - API integration and the RAG layer: after scoring and routing exist.
@@ -229,9 +189,7 @@ sales-assisted first; rate limiting via a Postgres counter first.
 
 ## Open items and housekeeping
 
-- Confirm migration 0006 and 0007 status in production (file headers still say
-  "not applied"), then update those headers.
-- Apply migration 0010 when chat is ready to ship.
+- Migrations 0014-0022 are written but not applied (order under "In progress").
 - Not yet verified: Safari and Firefox, screen readers, real touch devices.
 - NCES public-domain status should be verified before launch
   ([data-sources.md](data-sources.md)).

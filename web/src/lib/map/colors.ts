@@ -30,6 +30,12 @@ export const PREVIEW_STYLE = {
   dark: { fillOpacity: 0.2, line: "#fdba74", casing: "#0b1020" },
 } as const;
 
+/** The reachable-area overlay (isochrone): teal, distinct from the blue selection and orange preview. */
+export const REACH_STYLE = {
+  light: { fillOpacity: 0.16, line: "#0f766e", casing: "#ffffff" },
+  dark: { fillOpacity: 0.22, line: "#5eead4", casing: "#0b1020" },
+} as const;
+
 export const RAMP_GRADIENT = `linear-gradient(to right, ${RAMP_STOPS.map(
   ([score, color]) => `${color} ${(score / SCORE_MAX) * 100}%`,
 ).join(", ")})`;

@@ -82,7 +82,7 @@ describe("SimilarCard", () => {
     expect(await screen.findByText("Area to the SE")).toBeInTheDocument();
   });
 
-  it("titles a row by neighborhood with the street boundary as a subtitle", async () => {
+  it("titles a row by neighborhood and drops the street boundary", async () => {
     const onPreview = vi.fn();
     render(
       <SimilarCard
@@ -102,13 +102,10 @@ describe("SimilarCard", () => {
       />,
     );
     expect(await screen.findByText("Park Slope, Brooklyn")).toBeInTheDocument();
-    expect(screen.getByText("Bounded by Bedford Ave, Nostrand Ave")).toBeInTheDocument();
+    expect(screen.queryByText(/Bounded by/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show similar area 1 on map" }));
     expect(onPreview).toHaveBeenCalledWith(
-      expect.objectContaining({
-        label: "Park Slope, Brooklyn",
-        subtitle: "Bounded by Bedford Ave, Nostrand Ave",
-      }),
+      expect.objectContaining({ label: "Park Slope, Brooklyn" }),
     );
   });
 

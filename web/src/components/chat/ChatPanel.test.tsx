@@ -63,7 +63,7 @@ describe("ChatPanel", () => {
 
     await user.keyboard("{Enter}");
     await screen.findByText("Shippan Point looks best.");
-    expect(chat.mock.calls[0][0]).toEqual([{ role: "user", content: "line one\nline two" }]);
+    expect((chat.mock.calls as unknown[][])[0][0]).toEqual([{ role: "user", content: "line one\nline two" }]);
     expect(chat.mock.calls[0][1]).toEqual(context);
     expect(box).toHaveValue("");
   });
@@ -155,11 +155,30 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("button", { name: "Try again" }) !== null).toBe(retryable);
   });
 
-  it("Back to results calls onClose", async () => {
+  it("Close chat calls onClose", async () => {
     const user = userEvent.setup();
     const { onClose } = setup();
-    await user.click(screen.getByRole("button", { name: "Back to results" }));
+    await user.click(screen.getByRole("button", { name: "Close chat" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("adds a client-side note when the place changes, and never sends it", async () => {
+    const user = userEvent.setup();
+    const chat = vi.fn(async () => REPLY);
+    const client = stubClient({ chat });
+    const handlers = { onShowOnMap: vi.fn(), onScoreArea: vi.fn() };
+    const { rerender } = render(
+      <ChatPanel client={client} {...handlers} place={{ key: "a", label: "Astoria" }} />,
+    );
+    expect(screen.queryByText(/Now looking at/)).not.toBeInTheDocument();
+    rerender(
+      <ChatPanel client={client} {...handlers} place={{ key: "b", label: "Park Slope, Brooklyn" }} />,
+    );
+    expect(await screen.findByText("Now looking at Park Slope, Brooklyn")).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Shippan Point looks best.");
+    expect((chat.mock.calls as unknown[][])[0][0]).toEqual([{ role: "user", content: "hi" }]);
+    expect(window.sessionStorage.getItem(CHAT_STORAGE_KEY)).not.toContain("Now looking");
   });
 
   it("ignores a stale reply after New chat", async () => {

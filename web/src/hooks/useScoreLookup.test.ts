@@ -344,16 +344,12 @@ describe("useScoreLookup", () => {
       expect(result.current.state).toMatchObject({ error: { kind: "not-found" } });
     });
 
-    it("stays cell-based for a best-areas pick", async () => {
+    it("resolves the area for a best-areas pick like a map click", async () => {
       const client = makeClient({ getAreaByCoordinates: vi.fn(async () => makeAreaScore()) });
-      const pick: ScoreTarget = { ...click, precision: "cell" };
-
-      const { result } = renderHook(() => useScoreLookup(pick, client));
-
+      const { result } = renderHook(() => useScoreLookup(click, client));
       await waitFor(() => expect(result.current.state.status).toBe("success"));
-      expect(client.getAreaByCoordinates).not.toHaveBeenCalled();
-      expect(client.getScoreByCoordinates).toHaveBeenCalledTimes(1);
-      expect(result.current.state).toMatchObject({ area: null });
+      expect(client.getAreaByCoordinates).toHaveBeenCalledTimes(1);
+      expect(result.current.state).not.toMatchObject({ area: null });
     });
 
     it("never asks for an area for a typed address", async () => {

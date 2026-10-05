@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -32,6 +33,7 @@ import numpy as np
 from shapely.geometry import Point, box, mapping
 
 from common.coverage import BOUNDING_BOXES
+from ingestion.areas import limits
 from ingestion.areas.faces import Face, FaceParams, _to_m, build_faces, number_faces
 from ingestion.areas.hard_source import (
     fetch_region,
@@ -39,12 +41,7 @@ from ingestion.areas.hard_source import (
     region_bbox,
     street_points,
 )
-from ingestion.areas.limits import (
-    M_PER_MI,
-    MAX_AREA_SQ_MI,
-    MAX_EXTENT_M,
-    MIN_SLIVER_SQ_MI,
-)
+from ingestion.areas.limits import M_PER_MI
 from ingestion.areas.osm_source import SAMPLE_BBOX, Projector, cache_path, parse_layers
 
 SQ_M_PER_SQ_MI = 2_589_988.11
@@ -76,11 +73,18 @@ def build_numbered(
     bbox: tuple[float, float, float, float],
     geohashes: frozenset[str] | None = None,
     include_rail: bool = False,
+    subdivider_factory=None,
 ) -> tuple[Numbered, Projector]:
     proj = projector_for(bbox)
     roads, coast = parse_hard(data, proj, include_rail)
-    faces = build_faces(roads, coast, frame_for(bbox, proj), FaceParams(proj, geohashes=geohashes))
-    return number_faces(faces), proj
+    sub = subdivider_factory(proj) if subdivider_factory else None
+    faces = build_faces(
+        roads, coast, frame_for(bbox, proj), FaceParams(proj, geohashes=geohashes, subdivider=sub)
+    )
+    numbered = number_faces(faces)
+    if sub is not None:
+        build_numbered.last_stats = dict(sub.stats)
+    return numbered, proj
 
 
 # ------------------------------------------------------------------ metrics
@@ -106,13 +110,17 @@ def compute_metrics(
             )
         }
         m["total_area_sq_mi"] = round(float(areas_mi.sum()), 3)
-        m["share_over_max_area_pct"] = round(100.0 * float((areas_mi > MAX_AREA_SQ_MI).mean()), 3)
-        m["share_under_sliver_pct"] = round(100.0 * float((areas_mi < MIN_SLIVER_SQ_MI).mean()), 2)
+        m["share_over_max_area_pct"] = round(
+            100.0 * float((areas_mi > limits.MAX_AREA_SQ_MI).mean()), 3
+        )
+        m["share_under_sliver_pct"] = round(
+            100.0 * float((areas_mi < limits.MIN_SLIVER_SQ_MI).mean()), 2
+        )
         ext = [f.extent_m for _, f in numbered if f.extent_m is not None]
         if ext:
             m["max_extent_mi"] = round(max(ext) / M_PER_MI, 3)
             m["share_over_max_extent_pct"] = round(
-                100.0 * sum(e > MAX_EXTENT_M for e in ext) / len(ext), 3
+                100.0 * sum(e > limits.MAX_EXTENT_M for e in ext) / len(ext), 3
             )
     metric_geoms = [_to_m(f.geometry, proj) for _, f in numbered]
     if street_pts and metric_geoms:
@@ -243,10 +251,109 @@ def _backfill_area_geom(conn) -> None:
         conn.commit()
     except Exception as exc:  # noqa: BLE001 - optional column, never fail the rebuild
         conn.rollback()
-        print(f"areas.geom not filled ({type(exc).__name__}); apply migration 0012.", file=sys.stderr)
+        print(
+            f"areas.geom not filled ({type(exc).__name__}); apply migration 0012.", file=sys.stderr
+        )
 
 
 # ---------------------------------------------------------------------- CLI
+
+
+def _env_float(name: str, cli: float | None) -> float | None:
+    """CLI flag wins, then the env var, else None (keep the default)."""
+    if cli is not None:
+        return cli
+    raw = os.environ.get(name, "").strip()
+    return float(raw) if raw else None
+
+
+def _labeler(mode: str):
+    """lat, lon -> neighbourhood label for slim areas, from cached data only."""
+    if mode == "none":
+        return lambda lat, lon: None
+    from ingestion.neighborhoods import label_point, load_town_index
+
+    index = load_town_index()
+    cell_labels: dict[str, str] = {}
+    if mode == "cells":
+        from common.db import get_connection
+        from common.geo import encode
+
+        with get_connection() as conn, conn.cursor() as cur:  # read-only
+            cur.execute(
+                "select geohash, neighborhood from geo_entities where neighborhood is not null"
+            )
+            cell_labels = {r["geohash"]: r["neighborhood"] for r in cur}
+        print(f"{len(cell_labels)} labelled grid cells (read-only)")
+
+        def by_cell(lat: float, lon: float) -> str | None:
+            return cell_labels.get(encode(lat, lon, precision=6)) or label_point(lat, lon, index)
+
+        return by_cell
+    return lambda lat, lon: label_point(lat, lon, index)
+
+
+_FIELD: list = [None]
+
+
+def _hierarchy_factory(args):
+    from ingestion.areas.density_cells import DensityField, load_cells
+    from ingestion.areas.hierarchy import Hierarchy
+
+    gh, dens = load_cells(refresh=args.density_refresh)
+    print(f"{len(gh)} density cells ({int((~np.isnan(dens)).sum())} with density)")
+
+    def make(proj):
+        _FIELD[0] = DensityField(gh, dens, proj)
+        return Hierarchy(proj, _FIELD[0], args.cache_dir, allow_network=args.allow_network)
+
+    return make
+
+
+def density_class_metrics(numbered: Numbered, proj: Projector, field) -> dict:
+    """Size distribution per density class (the class of the area's own density)."""
+    if field is None or not numbered:
+        return {}
+    geoms = [_to_m(f.geometry, proj) for _, f in numbered]
+    dens = field.of_many(geoms)
+    out: dict = {}
+    for lo, cap in limits.DENSITY_CAPS:
+        sel = [i for i, d in enumerate(dens) if limits.cap_for_density(d) == cap]
+        if not sel:
+            continue
+        a = np.array([numbered[i][1].area_sq_m / SQ_M_PER_SQ_MI for i in sel])
+        q = np.quantile(a, [0.1, 0.5, 0.9])
+        out[f">={int(lo)}/sqmi cap {cap}"] = {
+            "n": len(sel),
+            "tile_cut_pct": round(
+                100.0 * sum(1 for i in sel if numbered[i][1].stats.get("tile_cut")) / len(sel), 1
+            ),
+            "p10": round(float(q[0]), 3),
+            "median": round(float(q[1]), 3),
+            "p90": round(float(q[2]), 3),
+            "max": round(float(a.max()), 3),
+            "share_over_cap_pct": round(100.0 * float((a > cap * 1.005).mean()), 2),
+            "mean_pct_of_cap": round(100.0 * float(a.mean()) / cap, 1),
+        }
+    cut = sum(1 for _, f in numbered if f.stats.get("tile_cut"))
+    out["tile_cut_pieces"] = cut
+    out["fully_road_bounded_pct"] = round(100.0 * (1 - cut / len(numbered)), 2)
+    return out
+
+
+def _write_slim(numbered: Numbered, args) -> dict:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from ingestion.areas import slim
+
+    url = slim.areas_database_url()
+    labels = slim.label_faces(numbered, _labeler(args.neighborhoods))
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        written = slim.write_areas_slim(conn, numbered, args.build_version, metro_of, labels)
+        written["sizes"] = slim.table_sizes(conn)
+    written["labelled"] = sum(1 for v in labels.values() if v)
+    return written
 
 
 def _load_sample(cache_dir: Path) -> dict:
@@ -262,6 +369,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="default: files only, no DB")
     mode.add_argument("--write", action="store_true", help="replace areas + area_cells (1 txn)")
+    mode.add_argument(
+        "--write-slim",
+        action="store_true",
+        help="replace areas_slim in the DB named by $AREAS_DATABASE_URL (never DATABASE_URL)",
+    )
+    ap.add_argument("--max-area-sq-mi", type=float, help="cap on one area (default 0.8)")
+    ap.add_argument("--max-extent-mi", type=float, help="cap on the longest side (default 1.4)")
+    ap.add_argument("--target-tile-mi", type=float, help="tile grid side for cuts (default 0.75)")
+    ap.add_argument("--min-sliver-sq-mi", type=float, help="merge smaller faces (default 0.02)")
+    ap.add_argument(
+        "--neighborhoods",
+        choices=["cells", "towns", "none"],
+        default="cells",
+        help="--write-slim labels: 'cells' = label of the grid cell under the area's point "
+        "(read-only query on DATABASE_URL), falling back to the cached Census towns",
+    )
+    ap.add_argument(
+        "--road-hierarchy",
+        action="store_true",
+        help="subdivide over-cap hard-road faces along tertiary then residential roads with "
+        "density-adaptive caps (limits.DENSITY_CAPS) instead of straight tile cuts",
+    )
+    ap.add_argument("--density-refresh", action="store_true", help="re-read densities (read-only)")
+    ap.add_argument("--bbox", help="south,west,north,east: build only this frame (testing)")
     ap.add_argument("--source", choices=["sample", "region"], default="sample")
     ap.add_argument("--allow-network", action="store_true", help="permit Overpass fetches")
     ap.add_argument("--include-rail", action="store_true", help="rails as walls (default off)")
@@ -270,8 +401,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--build-version", default=DEFAULT_BUILD_VERSION)
     args = ap.parse_args(argv)
 
-    if args.write and args.source != "region":
-        ap.error("--write requires --source region")
+    if (args.write or args.write_slim) and args.source != "region":
+        ap.error("--write / --write-slim require --source region")
+    caps = limits.configure(
+        max_area_sq_mi=_env_float("AREAS_MAX_AREA_SQ_MI", args.max_area_sq_mi),
+        max_extent_mi=_env_float("AREAS_MAX_EXTENT_MI", args.max_extent_mi),
+        target_tile_mi=_env_float("AREAS_TARGET_TILE_MI", args.target_tile_mi),
+        min_sliver_sq_mi=_env_float("AREAS_MIN_SLIVER_SQ_MI", args.min_sliver_sq_mi),
+    )
+    print(f"size caps: {caps}")
 
     t0 = time.monotonic()
     geohashes = None
@@ -281,6 +419,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         with get_connection() as conn:
             geohashes = read_geohashes(conn)
         print(f"{len(geohashes)} geohashes in geo_entities")
+    elif args.write_slim:
+        geohashes = frozenset()  # slim areas keep no grid-cell overlaps
 
     street_ll = water = None
     if args.source == "sample":
@@ -291,13 +431,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         street_m = [q for q in street_points(data, proj) if frame.contains(Point(*q))]
         water = parse_layers(data, bbox).water
     else:
-        bbox = region_bbox()
+        bbox = tuple(float(x) for x in args.bbox.split(",")) if args.bbox else region_bbox()
         data = fetch_region(
-            bbox, args.cache_dir, allow_network=args.allow_network, include_rail=args.include_rail
+            region_bbox(),
+            args.cache_dir,
+            allow_network=args.allow_network,
+            include_rail=args.include_rail,
         )
         street_m = None
-    numbered, proj = build_numbered(data, bbox, geohashes, args.include_rail)
+    factory = None
+    if args.road_hierarchy:
+        factory = _hierarchy_factory(args)
+    numbered, proj = build_numbered(data, bbox, geohashes, args.include_rail, factory)
     metrics = compute_metrics(numbered, proj, time.monotonic() - t0, street_m, water)
+    if args.road_hierarchy:
+        metrics["hierarchy"] = dict(getattr(build_numbered, "last_stats", {}))
+        metrics["by_density_class"] = density_class_metrics(numbered, proj, _FIELD[0])
     if street_m is not None:
         street_ll = [proj.inv(x, y) for x, y in street_m]
 
@@ -306,6 +455,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         with get_connection() as conn:
             metrics["written"] = write_areas(conn, numbered, args.build_version)
+    elif args.write_slim:
+        metrics["written"] = _write_slim(numbered, args)
     else:
         args.out_dir.mkdir(parents=True, exist_ok=True)
         (args.out_dir / "areas.geojson").write_text(json.dumps(to_geojson(numbered)))

@@ -40,6 +40,8 @@ interface AddressSearchProps {
   suggestClient?: Pick<ApiClient, "suggestAddresses">;
   /** Shown inside the box on its right edge, e.g. a locate button. */
   endAdornment?: ReactNode;
+  /** Every keystroke, so a parent can use text that was never submitted. */
+  onTextChange?: (text: string) => void;
 }
 
 export function AddressSearch({
@@ -49,6 +51,7 @@ export function AddressSearch({
   onSelectSuggestion,
   suggestClient,
   endAdornment,
+  onTextChange,
 }: AddressSearchProps) {
   const id = useId();
   const inputId = `${id}-input`;
@@ -157,6 +160,7 @@ export function AddressSearch({
             value={value}
             onChange={(event) => {
               setValue(event.target.value);
+              onTextChange?.(event.target.value);
               if (error) setError(null);
               if (autocomplete) suggestions.handleInput(event.target.value);
             }}

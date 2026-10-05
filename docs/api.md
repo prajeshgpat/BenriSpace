@@ -12,13 +12,15 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
-| `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
+| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) as a GeoJSON polygon | built, needs migration 0022 and the routing precompute |
+| `POST /triangulate` | Best locations that satisfy several commute anchors, with the isochrone polygons | live; real isochrones once migration 0022 data exists, straight-line circles otherwise |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
-| `POST /chat` | Ask BenriSpace: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
+| `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
+| `POST /chat/stream` | The same chat as server-sent events (progress, then the reply) | built, not deployed |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
-| `GET /similar` | Well-separated areas with a similar factor profile (pgvector) | built, needs migration 0007 |
+| `GET /similar` | Well-separated areas with a similar factor profile | built |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
 
@@ -125,6 +127,7 @@ Score for one place. Give either `address`, or `lat` and `lon`, not both.
 | `address` | string | one of address / lat+lon | Free-text address. Geocoded server-side with OpenStreetMap Nominatim. |
 | `lat` | number | with `lon` | Latitude. Skips geocoding; use this with a `/suggest` result. |
 | `lon` | number | with `lat` | Longitude. |
+| `precision` | `grid` \| `point` | no | `grid` (default) returns the stored score of the containing cell. `point` scores the exact location on demand (see [SCORING.md](SCORING.md) A8) and falls back to `grid` on any error; the response's `precision` field says which was served. `/area` accepts it too and scores the mean of up to five points inside the polygon. |
 
 The point is snapped to its geohash6 cell; if that exact cell is not in the grid, the nearest covered cell within about 2 miles is used.
 
@@ -171,7 +174,7 @@ curl "https://api.benrispace.com/v1/score?lat=40.7546&lon=-73.985"
 
 ### Units: feet and miles
 
-Everything user-facing is in feet and miles: distances in text, `nearestMi`, `minSeparationMi`, the cell sizes above. Internally the data and the scoring stay metric (the `*_500m` / `*_nearest_m` columns and radii), so a "within 500 m" count is described to users as about 0.3 mi. Distances in prose follow one rule: under 0.1 mi they are feet rounded to the nearest 50 (`450 ft`), otherwise miles to one decimal (`0.4 mi`).
+Everything user-facing is in feet and miles: distances in text, `nearestMi`, `minSeparationMi`, the cell sizes above. The feature_store columns are imperial too (`*_nearest_ft`, `*_count_1600ft`, `*_count_half_mi`, `*_count_1mi`; migrations 0020 / 0021). The scoring code still computes in metres internally: `common/feature_columns.py` converts at the database boundary, so a "within 500 m" count (stored as `*_count_1600ft`) is described to users as about 0.3 mi. Distances in prose follow one rule: under 0.1 mi they are feet rounded to the nearest 50 (`450 ft`), otherwise miles to one decimal (`0.4 mi`).
 
 ### `school`
 
@@ -320,11 +323,46 @@ Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no sco
 
 ---
 
+## `GET /isochrone`
+
+The area reachable from a point within a time budget, as a GeoJSON `MultiPolygon` (coordinates `[lon, lat]`).
+
+| Parameter | Description |
+| --- | --- |
+| `lat`, `lon` | Origin (required) |
+| `mode` | `walk`, `drive` or `transit` (rail). Default `drive` |
+| `minutes` | 1-120, capped per mode: walk 45, drive 90, transit 120. Default 15 / 30 / 45 |
+
+```bash
+curl "https://api.benrispace.com/v1/isochrone?lat=40.7178&lon=-74.0431&mode=walk&minutes=20"
+```
+
+```json
+{
+  "latitude": 40.7178,
+  "longitude": -74.0431,
+  "isochrone": {
+    "mode": "walk",
+    "minutes": 20,
+    "method": "network",
+    "cellCount": 14,
+    "areaSqMi": 2.9,
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[[-74.0549, 40.7141], "..."]]] }
+  }
+}
+```
+
+How it is computed: the road network is folded ahead of time into a graph of the 0.58 x 0.38 mi grid cells (travel minutes from each cell to its 8 neighbours, measured on OpenStreetMap roads and paths; table `cell_graph`). A request runs Dijkstra over that graph, then traces the reached cells into a smoothed polygon. Rail trips walk to nearby stations on the walk graph, add the precomputed station-to-station ride (`rail_matrix`, a weekday AM-peak timetable from the MTA, LIRR, Metro-North, PATH and NJ Transit rail feeds, median over three departures, so it includes the wait), then walk out from every station reached. Resolution is one cell, so treat it as a commute-scale answer: good for 15+ minutes, coarse for a 5 minute walk. Walking is 3 mph; driving is free-flow road speeds x 0.8 with no live traffic.
+
+`method` is `network` when the area has precomputed routing, and `estimate` when it does not (a straight-line circle, drive 25 mph / transit 15 mph / walk 3 mph, the old placeholder). Responses carry `Cache-Control: public, max-age=300`.
+
+---
+
 ## `POST /triangulate`
 
-Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score. Candidate cells are prefiltered with a bounding box derived from the anchor circles.
+Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score, plus each anchor's isochrone polygon and the combined polygon.
 
-**This endpoint is live but uses placeholder geometry.** There is no routing engine yet (Valhalla arrives with Phase 2), so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
+Each anchor becomes a set of reachable cells (the same method as `GET /isochrone`); `intersect` and `union` are exact set operations on those cells and the ranking reads the precomputed scores of the cells inside. An anchor whose area has no routing data yet falls back to a straight-line circle (`method: "estimate"`), so the endpoint always answers; the circle ignores rivers, bridges and real transit lines and can be off by a lot.
 
 Request body (JSON):
 
@@ -376,9 +414,16 @@ curl -X POST "https://api.benrispace.com/v1/triangulate" \
       "longitude": -73.9960000000001,
       "compositeScore": 77.093630662023
     }
-  ]
+  ],
+  "isochrones": [
+    { "label": "Work", "mode": "transit", "minutes": 20, "method": "network", "cellCount": 31, "areaSqMi": 6.4, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } },
+    { "label": "Gym", "mode": "walk", "minutes": 15, "method": "network", "cellCount": 9, "areaSqMi": 1.9, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } }
+  ],
+  "combined": { "mode": "transit", "minutes": 15, "method": "network", "cellCount": 6, "areaSqMi": 1.3, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } }
 }
 ```
+
+`isochrones` is in request order; `combined` is the intersection (or union) polygon (its `mode` and `minutes` are the first anchor's mode and the smallest budget; use `cellCount` / `areaSqMi` for size).
 
 Errors:
 
@@ -394,6 +439,8 @@ Errors:
 ---
 
 ## `POST /optimize`
+
+> **Travel times.** Where the routing precompute exists the optimizer uses stored minutes instead of estimates: category anchors on walk / drive read the cell's nearest-place minutes (`cell_travel`), the `airport` category reads the drive time to the nearest airport (`cell_hubs`), and a single-address transit anchor uses walk + rail ride + walk from the station matrix. Those results report `approx: false`. Candidate cells are first narrowed by an exact lower-bound prune seeded at the weighted geometric median (Weiszfeld) of the anchors.
 
 Finds the places to live that minimise your weekly travel to several destinations, for example "near my work (123 Main St, Stamford), a Trader Joe's and a Planet Fitness". Each anchor is an `address` (geocoded, or pass `latitude`/`longitude`), a `brand` (case-insensitive match on a place's name or brand, so `trader joe` finds "Trader Joe's") or a `category` (`grocery`, `gym`, `cafe`, `restaurant`, `bar`, `transit`, `school`, `gas_station`, `convenience_store`, plus synonyms such as `coffee`, `groceries`, `gas`). For brands and categories each candidate uses its nearest matching place.
 
@@ -469,7 +516,7 @@ Errors:
 
 ## `POST /chat`
 
-"Ask BenriSpace": a short chat that finds and explains neighborhoods. The model (Claude Haiku 4.5) can only call our own read-only tools (`geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `optimize_location`) and may only state what their results, or the user's own messages, contain. The client keeps the conversation and sends it with every request; only the last 6 messages (each cut to 2,000 characters) are used.
+"Ask Benri": a short chat that finds and explains neighborhoods. The model (Claude Haiku 4.5) can only call our own read-only tools (`geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `find_places`, `optimize_location`) and may only state what their results, or the user's own messages, contain. The client keeps the conversation and sends it with every request; only the last 6 messages (each cut to 2,000 characters) are used.
 
 Request body (JSON):
 
@@ -517,6 +564,28 @@ Errors:
 | 400 | `invalid_request` | Empty `messages`, a bad factor key, or the last message is not from the user |
 | 429 | `rate_limited` | The visitor has used today's 15 messages |
 | 503 | `chat_unavailable` | No `ANTHROPIC_API_KEY` is configured, or the model call failed or timed out |
+
+---
+
+## `POST /chat/stream`
+
+The same request body, tools, limits and answer as [`POST /chat`](#post-chat), delivered as server-sent events (`Content-Type: text/event-stream`). A malformed body is rejected with a plain `400` before the stream starts; everything after that arrives as frames:
+
+```text
+event: status
+data: {"text":"Searching areas","tool":"search_areas"}
+
+event: reply
+data: {"reply":"...","results":[],"sources":[]}
+```
+
+| Event | Data | When |
+| --- | --- | --- |
+| `status` | `{text, tool?}` | Zero or more times while the assistant thinks or runs a tool |
+| `reply` | The `POST /chat` response body | Exactly once on success. The text is sent whole, after the grounding check |
+| `error` | `{status, code, message}` | Instead of `reply`, with the codes in the table above (`429`, `503`) |
+
+Lines starting with `:` are keep-alive comments. Behind API Gateway the frames arrive together when the answer is done; they stream live only through a Lambda function URL (see [ARCHITECTURE.md](ARCHITECTURE.md), "Chat streaming"). The web app uses it only when `NEXT_PUBLIC_CHAT_STREAM_URL` is set.
 
 ---
 
@@ -693,11 +762,11 @@ Errors:
 
 ## `GET /similar`
 
-Areas elsewhere in the same metro with a similar factor profile. Each scored cell has a 14-dimension vector (one z-scored sub-score per factor, a missing school score counts as average), stored in pgvector. The nearest vectors are found in the database, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
+Areas elsewhere in the same metro with a similar factor profile. Cells are compared on their 13 factor scores, z-scored with the metro's mean and standard deviation (a missing score counts as average). The nearest cells are found in one SQL scan of the target's metro, then spread out: results closer than `minSeparationMi` to the point or to an earlier result are dropped, so you get distinct places rather than a cluster of neighbouring cells. Distances are in feet (under 0.1 mi) or miles; there are no metric fields. Results are cached for 5 minutes.
 
-With `factors`, the closest 200 vectors are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the stored vectors, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
+With `factors`, the closest 200 cells are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the SQL distance, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
 
-Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404. Neighbours come from pgvector's HNSW index (`hnsw.ef_search` sized to the pool, iterative scan where available); with migration `0011_perf.sql` the embeddings job also stores each cell's top 20 neighbours in `similar_cells`, which answer unfiltered requests directly when they yield enough spread-out results.
+Needs only the `scores` rows (no embedding column, vector index or extra job; migration 0016 drops the old ones). The distance is `sqrt(sum of squared z-score differences)` over the 13 factors, computed in SQL on the stored whole-point scores; the scan covers one metro (about 25,000 rows) and takes tens of milliseconds.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -744,7 +813,7 @@ Errors:
 | Status | `code` | When |
 | --- | --- | --- |
 | 400 | `invalid_request` | Missing or invalid `lat`/`lon`, `k` outside 1..10, `minSeparationMi` outside 0..10, or an invalid `factors`/`weights` |
-| 404 | `not_found` | The cell under the point has no embedding (or no score) yet |
+| 404 | `not_found` | The cell under the point has no score yet |
 | 422 | `out_of_coverage` | The point is outside the covered metro area |
 
 ---
@@ -857,7 +926,7 @@ Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factor
 
 ## `GET /map/scores`
 
-Every cell's 13 sub-scores for the configured weights version in one compact binary file, so a browser can recompute the composite locally for any factor or importance change with no further API calls. `version` is optional; if given it must equal the served weights version (otherwise 404). Cached for a day (`Cache-Control: public, max-age=86400`); `ETag` is `"<version>-<max computed_at as unix seconds>"` and a matching `If-None-Match` returns `304`. Sent gzip-encoded when the client accepts it (`Vary: Accept-Encoding`). About 1.2 MB raw for 64,320 cells (19 bytes a cell), built from one SQL query and cached per server process by ETag.
+Every cell's 13 sub-scores for the configured weights version in one compact binary file, so a browser can recompute the composite locally for any factor or importance change with no further API calls. `version` is optional; if given it must equal the served weights version (otherwise 404). Cached for a day (`Cache-Control: public, max-age=86400`); `ETag` is `"<version>-<max computed_at as unix seconds>"` and a matching `If-None-Match` returns `304`. Sent gzip-encoded when the client accepts it (`Vary: Accept-Encoding`). About 1.2 MB raw for 64,320 cells (19 bytes a cell), built from one SQL query and cached per server process by ETag. The same bytes are also published to R2 as `scores/<version>.<sha12>.bin` (see `docs/ARCHITECTURE.md`, "Static files on R2"), together with the area-scores file `areas/<version>.<sha12>.bin`.
 
 `Content-Type: application/octet-stream`. All integers are little-endian. Layout:
 
@@ -887,6 +956,8 @@ def decode(blob):
 | --- | --- | --- |
 | 304 | | `If-None-Match` matches the current `ETag` |
 | 404 | `not_found` | Unknown `version`, or no scores for the served version |
+
+**Static copy (client note).** The web app can read this same file, byte for byte, from R2 when `NEXT_PUBLIC_STATIC_URL` is set: `manifest.json` (`{"format":1,"weightsVersion","generatedAt","scores":{"path","bytes","sha256"},"areaScores":{...},"tiles":{...}}`, paths relative to the manifest, any piece optional) names a content-hashed `scores/<version>.<sha12>.bin`, served with `Content-Encoding: gzip`. Any failure falls back to this endpoint. A sibling `areas/...bin` (format 1, `kind: "areaScores"`) holds each area's sub-scores (the same numbers `GET /area?precision=point` returns, keyed by the `areaId` of `/area` and the `id` of the tiles' `areas` layer) for instant area clicks and local `/similar`; the web app falls back to `/area` and `/similar` when it is absent.
 
 ---
 

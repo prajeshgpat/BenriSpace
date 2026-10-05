@@ -45,6 +45,15 @@ paths:
           in: query
           required: true
           schema: { type: number, format: double }
+        - name: precision
+          in: query
+          description: >
+            `grid` (default) returns the stored score of the containing grid cell.
+            `point` scores the exact location on demand (an area: the mean of up to
+            five sample points inside it) from live place queries and the metro's
+            factor scales, and falls back to `grid` on any error. The response's
+            `precision` says which was served.
+          schema: { type: string, enum: [grid, point], default: grid }
       responses:
         "200":
           description: Area found.
@@ -91,6 +100,15 @@ paths:
           schema:
             type: number
             format: double
+        - name: precision
+          in: query
+          description: >
+            `grid` (default) returns the stored score of the containing grid cell.
+            `point` scores the exact location on demand (an area: the mean of up to
+            five sample points inside it) from live place queries and the metro's
+            factor scales, and falls back to `grid` on any error. The response's
+            `precision` says which was served.
+          schema: { type: string, enum: [grid, point], default: grid }
       responses:
         "200":
           description: Score found.
@@ -159,6 +177,42 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+
+  /isochrone:
+    get:
+      summary: >
+        Area reachable from a point within N minutes by walking, driving or rail,
+        from the precomputed road-network cell graph.
+      operationId: getIsochrone
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: {type: number, format: double}
+        - name: lon
+          in: query
+          required: true
+          schema: {type: number, format: double}
+        - name: mode
+          in: query
+          schema: {type: string, enum: [walk, drive, transit], default: drive}
+        - name: minutes
+          in: query
+          description: Time budget, 1-120 (capped per mode, walk 45, drive 90, transit 120). Default 15 / 30 / 45.
+          schema: {type: integer, minimum: 1, maximum: 120}
+      responses:
+        "200":
+          description: The reachable area as a GeoJSON MultiPolygon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IsochroneResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /triangulate:
     post:
@@ -238,9 +292,42 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
+  /chat/stream:
+    post:
+      summary: The same chat as /chat, delivered as server-sent events.
+      description: >
+        Takes the same body as `/chat`. The response is `text/event-stream`:
+        `status` frames (`{text, tool?}`) while the assistant works, then exactly
+        one `reply` frame (the `/chat` JSON body) or one `error` frame
+        (`{status, code, message}` using the codes of `/chat`). The reply text is
+        sent whole after grounding validation, never as unvalidated tokens. A
+        malformed body is rejected with a plain 400 before the stream starts.
+        Behind API Gateway the frames arrive together at the end; true streaming
+        needs a Lambda function URL (docs/ARCHITECTURE.md, Chat streaming).
+      operationId: chatStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: A server-sent event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /chat:
     post:
-      summary: Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+      summary: Ask Benri, a tool-using chat assistant grounded in our own data.
       description: >
         The client keeps the conversation and sends it each time; only the last
         6 messages (each cut to 2,000 characters) are used. The assistant can only
@@ -978,6 +1065,21 @@ components:
             (OpenStreetMap place nodes); null until the neighborhoods job has run or
             when nothing is nearby. For an area, the area's own label, else the
             representative cell's.
+        precision:
+          type: string
+          enum: [grid, point]
+          default: grid
+          description: >
+            `point` when scored on demand at the exact location (`?precision=point`),
+            `grid` when it is the stored score of the containing cell.
+        travelMode:
+          type: string
+          nullable: true
+          enum: [walk, drive]
+          description: >
+            How people here usually get around, from population density: `walk` at
+            10,000 or more people per square mile, otherwise `drive`. Null when the
+            density is unknown. Clients use it to pick a default travel mode.
 
     AreaScoreResponse:
       description: >
@@ -1119,6 +1221,47 @@ components:
         compositeScore:
           type: number
 
+    IsochroneShape:
+      type: object
+      required: [mode, minutes, method, cellCount, areaSqMi]
+      description: >
+        A reachable area. `method` is `network` when computed from the precomputed
+        road-network cell graph (resolution one 0.58 x 0.38 mi cell) and `estimate` when
+        the area has no routing data yet and a straight-line circle was used.
+      properties:
+        label:
+          type: string
+          nullable: true
+        mode:
+          type: string
+          enum: [drive, transit, walk]
+        minutes:
+          type: integer
+        method:
+          type: string
+          enum: [network, estimate]
+        cellCount:
+          type: integer
+        areaSqMi:
+          type: number
+        geometry:
+          type: object
+          nullable: true
+          description: GeoJSON MultiPolygon, coordinates [lon, lat].
+
+    IsochroneResponse:
+      type: object
+      required: [latitude, longitude, isochrone]
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        isochrone:
+          $ref: "#/components/schemas/IsochroneShape"
+
     TriangulateResponse:
       type: object
       required: [results]
@@ -1127,6 +1270,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RankedAddress"
+        isochrones:
+          type: array
+          description: One reachable area per anchor, in request order.
+          items:
+            $ref: "#/components/schemas/IsochroneShape"
+        combined:
+          $ref: "#/components/schemas/IsochroneShape"
 
     OptimizeAnchor:
       type: object

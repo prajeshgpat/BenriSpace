@@ -11,14 +11,19 @@ API call. Format (all integers little-endian), documented in docs/api.md:
     N * 13   uint8 sub-scores, cell-major (cell i, factor j at i * 13 + j);
              0-100 rounded half up, 255 = no score
 
-Built from one SQL query and cached in-process keyed by the ETag.
+Built from one SQL query (about 8 s on a cold Lambda) and cached in-process keyed by
+the ETag. The scoring job also stores the gzipped file in `score_files` (migration 0019,
+`python -m api.scorefile`), so a cold request reads one ~300 KB row instead of rebuilding.
 """
 
 import gzip
 import json
 import struct
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+
+import psycopg
 
 from api.factors import FACTOR_COLUMNS
 from scoring.engine import LEGACY_FALLBACK_COLUMNS
@@ -42,6 +47,15 @@ SCORES_SQL = (
     "where s.weights_version = %s and length(ge.geohash) = " + str(GEOHASH_LENGTH)
 )
 STAMP_SQL = "select max(computed_at) as stamp from scores where weights_version = %s"
+
+
+STORED_SQL = "select body_gz from score_files where weights_version = %s and etag = %s"
+STORE_SQL = """
+    insert into score_files (weights_version, etag, body_gz)
+    values (%s, %s, %s)
+    on conflict (weights_version) do update
+    set etag = excluded.etag, body_gz = excluded.body_gz, computed_at = now()
+"""
 
 
 @dataclass(frozen=True)
@@ -94,8 +108,37 @@ def current_stamp(conn, version: str) -> datetime | None:
     return row["stamp"] if row else None
 
 
+def load_stored(conn, version: str, etag: str) -> ScoreFile | None:
+    """The persisted file for exactly this ETag, or None (missing, stale or no table yet)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(STORED_SQL, (version, etag))
+            row = cur.fetchone()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return None
+    if not row:
+        return None
+    gz = bytes(row["body_gz"])
+    return ScoreFile(etag, gzip.decompress(gz), gz)
+
+
+def build_fresh(conn, version: str, stamp: datetime) -> ScoreFile | None:
+    """Builds the file from the scores table."""
+    with conn.cursor() as cur:
+        cur.execute(SCORES_SQL, (version,))
+        rows = list(cur)
+    if not rows:
+        return None
+    body = encode(rows, version, stamp)
+    return ScoreFile(
+        make_etag(version, stamp), body, gzip.compress(body, compresslevel=6, mtime=0)
+    )
+
+
 def build(conn, version: str, stamp: datetime | None = None) -> ScoreFile | None:
-    """The cached file for `version`, built on a miss; None when it has no scores."""
+    """The cached file for `version`: process cache, then the persisted row, then built
+    from the scores table. None when the version has no scores."""
     stamp = stamp or current_stamp(conn, version)
     if stamp is None:
         return None
@@ -103,13 +146,45 @@ def build(conn, version: str, stamp: datetime | None = None) -> ScoreFile | None
     hit = _cache.get(etag)
     if hit is not None:
         return hit
-    with conn.cursor() as cur:
-        cur.execute(SCORES_SQL, (version,))
-        rows = list(cur)
-    if not rows:
+    built = load_stored(conn, version, etag) or build_fresh(conn, version, stamp)
+    if built is None:
         return None
-    body = encode(rows, version, stamp)
-    built = ScoreFile(etag, body, gzip.compress(body, compresslevel=6, mtime=0))
     _cache.clear()  # one weights version is served at a time
     _cache[etag] = built
     return built
+
+
+def store(conn, version: str) -> int:
+    """Rebuilds the file and upserts it into score_files; returns the stored bytes
+    (0 when the version has no scores). Run after scoring."""
+    stamp = current_stamp(conn, version)
+    if stamp is None:
+        return 0
+    built = build_fresh(conn, version, stamp)
+    if built is None:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(STORE_SQL, (version, built.etag, built.gzipped))
+    conn.commit()
+    return len(built.gzipped)
+
+
+def main() -> None:
+    from psycopg.rows import dict_row
+
+    from common.config import DATABASE_URL, SCORING_WEIGHTS_VERSION
+
+    # A plain connection, not common.db.get_connection(): that one runs in pipeline
+    # mode, where the single ~700 KB bytea insert stalls (the server sits in
+    # ClientRead waiting for the rest of the message). Two statements need no batching.
+    try:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            size = store(conn, SCORING_WEIGHTS_VERSION)
+    except psycopg.errors.UndefinedTable:
+        print("score_files missing (migration 0019 not applied); skipped.", file=sys.stderr)
+        return
+    print(f"Stored {SCORING_WEIGHTS_VERSION} score file: {size:,} bytes gzipped.", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

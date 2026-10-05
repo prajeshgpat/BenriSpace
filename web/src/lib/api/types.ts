@@ -132,6 +132,18 @@ export interface SimilarArea {
   summary: string;
 }
 
+export type ReachMode = "walk" | "drive" | "transit";
+
+/** The area reachable from a point (GET /isochrone), as a GeoJSON polygon. */
+export interface Reach {
+  mode: ReachMode;
+  minutes: number;
+  /** "network" = precomputed road network; "estimate" = straight-line circle. */
+  method: "network" | "estimate";
+  areaSqMi: number;
+  geometry: AreaGeometry | null;
+}
+
 export interface Similar {
   minSeparationMi: number;
   results: SimilarArea[];
@@ -165,6 +177,8 @@ export type MapTopResult = Omit<Schemas["MapTopResult"], "subScores"> & {
   neighborhood?: string | null;
   /** Set on a locally ranked area whose name is still being looked up. */
   namePending?: boolean;
+  /** Set when the result is a road-bounded area (ranked from the area file), not a cell. */
+  areaId?: number;
 };
 
 export interface MapTop {
@@ -219,7 +233,7 @@ export interface AreaScore {
   explanation: string;
 }
 
-/** One turn of an "Ask BenriSpace" conversation, as the API takes it. */
+/** One turn of an "Ask Benri" conversation, as the API takes it. */
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;

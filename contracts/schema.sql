@@ -321,3 +321,242 @@ create table if not exists road_segments (
 create index if not exists road_segments_geom_idx on road_segments using gist (geom);
 
 create index if not exists road_segments_osm_id_idx on road_segments (osm_id);
+
+-- Per-metro factor scales for on-demand point scoring (migration 0013, not yet applied).
+create table if not exists score_scales (
+    weights_version text             not null,
+    metro_area      text             not null,
+    factor          text             not null,
+    component       text             not null,
+    lo              double precision not null,
+    hi              double precision not null,
+    n               integer          not null default 0,
+    computed_at     timestamptz      not null default now(),
+    primary key (weights_version, metro_area, factor, component)
+);
+
+-- Compact small road-bounded areas (migration 0014, not yet applied). Geometry only, no
+-- jsonb copy and no area_cells; scored by on-demand point sampling.
+create table if not exists areas_slim (
+    id            integer primary key,
+    build_version text,
+    metro_area    text,
+    geom          geometry(MultiPolygon, 4326) not null,
+    area_sq_mi    real,
+    extent_mi     real,
+    compactness   real,
+    bounded_by    text[],
+    neighborhood  text
+);
+
+create index if not exists areas_slim_geom_idx on areas_slim using gist (geom);
+
+-- Per-category nearest-neighbour search for point scoring (migration 0015, not yet applied).
+create extension if not exists btree_gist;
+create index if not exists places_category_geom_gist on places using gist (category, geom);
+
+-- Drop the similar-areas embeddings and similar_cells (migration 0016, not yet applied).
+drop table if exists similar_cells;
+
+drop index if exists scores_embedding_hnsw_idx;
+
+alter table scores drop column if exists embedding;
+
+-- Compact scores: smallint sub-scores, real composite, composite primary key (migration 0017, not yet applied).
+alter table scores
+    drop constraint if exists scores_pkey,
+    drop column if exists id,
+    drop constraint if exists scores_geo_entity_id_weights_version_key,
+    alter column grocery_score type smallint using round(grocery_score)::smallint,
+    alter column gym_score type smallint using round(gym_score)::smallint,
+    alter column cafe_score type smallint using round(cafe_score)::smallint,
+    alter column gas_station_score type smallint using round(gas_station_score)::smallint,
+    alter column convenience_store_score type smallint using round(convenience_store_score)::smallint,
+    alter column transit_score type smallint using round(transit_score)::smallint,
+    alter column school_score type smallint using round(school_score)::smallint,
+    alter column road_score type smallint using round(road_score)::smallint,
+    alter column emergency_corridor_score type smallint using round(emergency_corridor_score)::smallint,
+    alter column airport_score type smallint using round(airport_score)::smallint,
+    alter column trail_popularity_score type smallint using round(trail_popularity_score)::smallint,
+    alter column restaurant_score type smallint using round(restaurant_score)::smallint,
+    alter column bar_score type smallint using round(bar_score)::smallint,
+    alter column premium_retail_score type smallint using round(premium_retail_score)::smallint,
+    alter column school_proximity_score type smallint using round(school_proximity_score)::smallint,
+    alter column shopping_score type smallint using round(shopping_score)::smallint,
+    alter column recreation_score type smallint using round(recreation_score)::smallint,
+    alter column gas_convenience_score type smallint using round(gas_convenience_score)::smallint,
+    alter column composite_score type real using composite_score::real,
+    add primary key (geo_entity_id, weights_version);
+
+drop index if exists scores_geo_entity_idx;
+
+drop index if exists scores_weights_version_idx;
+
+-- Trim geo_entities: drop the unused geom and timestamps (migration 0018, not yet applied).
+alter table geo_entities
+    drop column if exists geom,
+    drop column if exists created_at,
+    drop column if exists updated_at;
+
+-- Persisted compact score file (migration 0019, not yet applied).
+create table if not exists score_files (
+    weights_version text        primary key,
+    etag            text        not null,
+    body_gz         bytea       not null,
+    computed_at     timestamptz not null default now()
+);
+
+-- Imperial feature_store columns, expand step (migration 0020, not yet applied).
+alter table feature_store
+    add column if not exists grocery_count_1600ft smallint,
+    add column if not exists gym_count_1600ft smallint,
+    add column if not exists cafe_count_1600ft smallint,
+    add column if not exists gas_station_count_1600ft smallint,
+    add column if not exists convenience_store_count_1600ft smallint,
+    add column if not exists restaurant_count_1600ft smallint,
+    add column if not exists bar_count_1600ft smallint,
+    add column if not exists transit_stop_count_half_mi smallint,
+    add column if not exists running_trail_count_half_mi smallint,
+    add column if not exists strava_segment_count_half_mi smallint,
+    add column if not exists school_count_1mi smallint,
+    add column if not exists emergency_facility_count_1mi smallint,
+    add column if not exists school_avg_rating_1mi real,
+    add column if not exists grocery_nearest_ft real,
+    add column if not exists gym_nearest_ft real,
+    add column if not exists cafe_nearest_ft real,
+    add column if not exists gas_station_nearest_ft real,
+    add column if not exists convenience_store_nearest_ft real,
+    add column if not exists transit_nearest_ft real,
+    add column if not exists school_nearest_ft real,
+    add column if not exists running_trail_nearest_ft real,
+    add column if not exists restaurant_nearest_ft real,
+    add column if not exists bar_nearest_ft real,
+    add column if not exists whole_foods_nearest_ft real,
+    add column if not exists starbucks_nearest_ft real,
+    add column if not exists target_nearest_ft real,
+    add column if not exists emergency_facility_nearest_ft real;
+
+update feature_store set
+    grocery_count_1600ft = grocery_count_500m::smallint,
+    gym_count_1600ft = gym_count_500m::smallint,
+    cafe_count_1600ft = cafe_count_500m::smallint,
+    gas_station_count_1600ft = gas_station_count_500m::smallint,
+    convenience_store_count_1600ft = convenience_store_count_500m::smallint,
+    restaurant_count_1600ft = restaurant_count_500m::smallint,
+    bar_count_1600ft = bar_count_500m::smallint,
+    transit_stop_count_half_mi = transit_stop_count_800m::smallint,
+    running_trail_count_half_mi = running_trail_count_800m::smallint,
+    strava_segment_count_half_mi = strava_segment_count_800m::smallint,
+    school_count_1mi = school_count_1600m::smallint,
+    emergency_facility_count_1mi = emergency_facility_count_1600m::smallint,
+    school_avg_rating_1mi = school_avg_rating_1600m::real,
+    grocery_nearest_ft = round((grocery_nearest_m * 3.280839895)::numeric, 1)::real,
+    gym_nearest_ft = round((gym_nearest_m * 3.280839895)::numeric, 1)::real,
+    cafe_nearest_ft = round((cafe_nearest_m * 3.280839895)::numeric, 1)::real,
+    gas_station_nearest_ft = round((gas_station_nearest_m * 3.280839895)::numeric, 1)::real,
+    convenience_store_nearest_ft = round((convenience_store_nearest_m * 3.280839895)::numeric, 1)::real,
+    transit_nearest_ft = round((transit_nearest_m * 3.280839895)::numeric, 1)::real,
+    school_nearest_ft = round((school_nearest_m * 3.280839895)::numeric, 1)::real,
+    running_trail_nearest_ft = round((running_trail_nearest_m * 3.280839895)::numeric, 1)::real,
+    restaurant_nearest_ft = round((restaurant_nearest_m * 3.280839895)::numeric, 1)::real,
+    bar_nearest_ft = round((bar_nearest_m * 3.280839895)::numeric, 1)::real,
+    whole_foods_nearest_ft = round((whole_foods_nearest_m * 3.280839895)::numeric, 1)::real,
+    starbucks_nearest_ft = round((starbucks_nearest_m * 3.280839895)::numeric, 1)::real,
+    target_nearest_ft = round((target_nearest_m * 3.280839895)::numeric, 1)::real,
+    emergency_facility_nearest_ft = round((emergency_facility_nearest_m * 3.280839895)::numeric, 1)::real;
+
+-- Imperial feature_store columns, contract step (migration 0021, not yet applied).
+alter table feature_store
+    drop column if exists grocery_count_500m,
+    drop column if exists gym_count_500m,
+    drop column if exists cafe_count_500m,
+    drop column if exists gas_station_count_500m,
+    drop column if exists convenience_store_count_500m,
+    drop column if exists restaurant_count_500m,
+    drop column if exists bar_count_500m,
+    drop column if exists transit_stop_count_800m,
+    drop column if exists running_trail_count_800m,
+    drop column if exists strava_segment_count_800m,
+    drop column if exists school_count_1600m,
+    drop column if exists emergency_facility_count_1600m,
+    drop column if exists school_avg_rating_1600m,
+    drop column if exists grocery_nearest_m,
+    drop column if exists gym_nearest_m,
+    drop column if exists cafe_nearest_m,
+    drop column if exists gas_station_nearest_m,
+    drop column if exists convenience_store_nearest_m,
+    drop column if exists transit_nearest_m,
+    drop column if exists school_nearest_m,
+    drop column if exists running_trail_nearest_m,
+    drop column if exists restaurant_nearest_m,
+    drop column if exists bar_nearest_m,
+    drop column if exists whole_foods_nearest_m,
+    drop column if exists starbucks_nearest_m,
+    drop column if exists target_nearest_m,
+    drop column if exists emergency_facility_nearest_m,
+    alter column congestion_proxy_raw type real,
+    alter column emergency_corridor_proxy_raw type real,
+    alter column strava_segment_popularity_raw type real,
+    alter column premium_retail_raw type real,
+    alter column emergency_corridor_facility_raw type real,
+    alter column school_district_rating type real,
+    alter column shopping_nearest_ft type real,
+    alter column shopping_raw type real,
+    alter column park_nearest_ft type real,
+    alter column park_largest_sq_ft_half_mi type real,
+    alter column recreation_raw type real,
+    alter column pop_density_per_sq_mi type real,
+    alter column shopping_count_1mi type smallint,
+    alter column shopping_variety_count_1mi type smallint,
+    alter column park_count_1mi type smallint;
+
+-- Wave 4 routing precompute (migration 0022, not yet applied). Minutes are deci-minutes in
+-- smallint arrays; -1 = not reachable. See the migration for the column meanings.
+create table if not exists routing_meta (
+    key         text primary key,
+    value       jsonb not null,
+    computed_at timestamptz not null default now()
+);
+
+create table if not exists cell_travel (
+    geohash     text primary key,
+    mode        text not null check (mode in ('walk', 'drive')),
+    minutes_dm  smallint[] not null,
+    computed_at timestamptz not null default now()
+);
+
+create table if not exists cell_graph (
+    geohash     text not null,
+    mode        text not null check (mode in ('walk', 'drive')),
+    latitude    real not null,
+    longitude   real not null,
+    edges_dm    smallint[] not null,
+    primary key (geohash, mode)
+);
+
+create index if not exists cell_graph_mode_lat_lon_idx on cell_graph (mode, latitude, longitude);
+
+create table if not exists routing_hubs (
+    id          integer primary key,
+    kind        text not null check (kind in ('airport', 'rail')),
+    code        text not null,
+    name        text not null,
+    latitude    double precision not null,
+    longitude   double precision not null,
+    unique (kind, code)
+);
+
+create index if not exists routing_hubs_kind_lat_lon_idx on routing_hubs (kind, latitude, longitude);
+
+create table if not exists cell_hubs (
+    geohash     text not null,
+    kind        text not null check (kind in ('airport', 'rail')),
+    hub_ids     integer[] not null,
+    minutes_dm  smallint[] not null,
+    primary key (geohash, kind)
+);
+
+create table if not exists rail_matrix (
+    origin_id   integer primary key references routing_hubs (id) on delete cascade,
+    minutes_dm  smallint[] not null
+);

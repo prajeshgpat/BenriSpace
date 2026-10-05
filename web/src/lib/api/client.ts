@@ -1,10 +1,11 @@
+import { SCORE_PRECISION, type ScorePrecision } from "@/lib/config";
 import {
   ALL_FACTOR_KEYS,
   LEGACY_FACTOR_ALIASES,
   canonicalFactorKey,
 } from "@/lib/score/factors";
 
-import { ApiError } from "./errors";
+import { ApiError, isApiError } from "./errors";
 import type {
   AreaGeometry,
   AreaInfo,
@@ -25,6 +26,8 @@ import type {
   ExplanationSource,
   Position,
   PriorityQuery,
+  Reach,
+  ReachMode,
   Similar,
   SimilarArea,
   FactorKey,
@@ -45,8 +48,20 @@ export const DEFAULT_TIMEOUT_MS = 20_000;
 
 export interface ApiClientOptions {
   baseUrl: string;
+  /** `point` adds `precision=point` to /score and /area; defaults to NEXT_PUBLIC_SCORE_PRECISION. */
+  scorePrecision?: ScorePrecision;
+  /**
+   * Full URL of the streaming chat endpoint (a Lambda function URL, or
+   * `/chat/stream` on the API). Left out, chat uses plain `/chat`.
+   */
+  chatStreamUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+}
+
+export interface ChatOptions extends RequestOptions {
+  /** Told what the assistant is doing ("Searching areas") when streaming works. */
+  onStatus?: (text: string) => void;
 }
 
 export interface RequestOptions {
@@ -118,17 +133,25 @@ export interface ApiClient {
     lon: number,
     options?: RequestOptions & PriorityQuery,
   ): Promise<Similar>;
+  /** The area reachable from a point within `minutes` by walking, driving or rail. */
+  getReach(
+    lat: number,
+    lon: number,
+    mode: ReachMode,
+    minutes: number,
+    options?: RequestOptions,
+  ): Promise<Reach>;
   /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
   getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
   /** Where the data comes from: names, licences and when each was last refreshed. */
   getSources(options?: RequestOptions): Promise<DataSource[]>;
   /** Thumbs and "wrong place" reports. Callers ignore failures. */
   sendFeedback(feedback: Feedback, options?: RequestOptions): Promise<void>;
-  /** "Ask BenriSpace": send the conversation so far; it must end with a user turn. */
+  /** "Ask Benri": send the conversation so far; it must end with a user turn. */
   chat(
     messages: readonly ChatTurn[],
     context?: ChatContext,
-    options?: RequestOptions,
+    options?: ChatOptions,
   ): Promise<ChatReply>;
 }
 
@@ -213,6 +236,7 @@ export function parseScore(body: unknown): Score {
     weightsVersion: body.weightsVersion,
     computedAt: body.computedAt,
     neighborhood: parseNeighborhood(body.neighborhood),
+    precision: body.precision === "point" ? "point" : "grid",
     ...parseSchool(body.school),
   };
 }
@@ -259,6 +283,26 @@ function parseGeometry(raw: unknown): AreaGeometry {
     }
   }
   throw invalidResponse("area geometry");
+}
+
+export function parseReach(body: unknown): Reach {
+  const iso = isObject(body) && isObject(body.isochrone) ? body.isochrone : null;
+  if (
+    !iso ||
+    !isFiniteNumber(iso.minutes) ||
+    !isFiniteNumber(iso.areaSqMi) ||
+    (iso.mode !== "walk" && iso.mode !== "drive" && iso.mode !== "transit") ||
+    (iso.method !== "network" && iso.method !== "estimate")
+  ) {
+    throw invalidResponse("reachable area");
+  }
+  return {
+    mode: iso.mode,
+    minutes: iso.minutes,
+    method: iso.method,
+    areaSqMi: iso.areaSqMi,
+    geometry: iso.geometry ? parseGeometry(iso.geometry) : null,
+  };
 }
 
 export function parseAreaScore(body: unknown): AreaScore {
@@ -752,12 +796,37 @@ function errorFromResponse(
   return new ApiError("server", message, details);
 }
 
+/** Splits a server-sent-event buffer into complete frames and the unfinished rest. */
+export function splitSseFrames(buffer: string): {
+  frames: { event: string; data: string }[];
+  rest: string;
+} {
+  const parts = buffer.replace(/\r\n/g, "\n").split("\n\n");
+  const rest = parts.pop() ?? "";
+  const frames = parts.flatMap((part) => {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of part.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+    }
+    return data.length > 0 ? [{ event, data: data.join("\n") }] : [];
+  });
+  return { frames, rest };
+}
+
 export function createApiClient({
+  chatStreamUrl,
   baseUrl,
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  scorePrecision = SCORE_PRECISION,
 }: ApiClientOptions): ApiClient {
   const root = baseUrl.replace(/\/+$/, "");
+  const withPrecision = (params: URLSearchParams) => {
+    if (scorePrecision === "point") params.set("precision", "point");
+    return params;
+  };
 
   async function requestJson(
     path: string,
@@ -793,23 +862,94 @@ export function createApiClient({
     return body;
   }
 
+  /**
+   * Chat over server-sent events. Resolves `null` when streaming is not
+   * available (endpoint missing, wrong content type, network failure, stream
+   * cut before a reply) so the caller can use plain `/chat`; a reply or a
+   * server-reported error ends it.
+   */
+  async function streamChat(
+    url: string,
+    body: unknown,
+    { signal, timeoutMs: requestTimeoutMs, onStatus }: ChatOptions,
+  ): Promise<ChatReply | null> {
+    const timeout = AbortSignal.timeout(requestTimeoutMs ?? CHAT_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      });
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return null;
+    }
+    if (response.status === 429 || response.status === 400 || response.status === 422) {
+      throw errorFromResponse(response.status, await readJson(response), response.headers);
+    }
+    const type = response.headers.get("Content-Type") ?? "";
+    if (!response.ok || !response.body || !type.includes("text/event-stream")) return null;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: !done });
+        const { frames, rest } = splitSseFrames(buffer);
+        buffer = rest;
+        for (const frame of frames) {
+          let data: unknown;
+          try {
+            data = JSON.parse(frame.data);
+          } catch {
+            continue;
+          }
+          if (frame.event === "status" && isObject(data) && typeof data.text === "string") {
+            onStatus?.(data.text);
+          } else if (frame.event === "reply") {
+            return parseChatReply(data);
+          } else if (frame.event === "error" && isObject(data)) {
+            throw errorFromResponse(
+              isFiniteNumber(data.status) ? data.status : 503,
+              data,
+            );
+          }
+        }
+        if (done) return null;
+      }
+    } catch (cause) {
+      if (signal?.aborted || isApiError(cause)) throw cause;
+      return null;
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  }
+
   const getJson = (path: string, options?: RequestOptions) =>
     requestJson(path, { method: "GET" }, options);
 
   return {
     async getScore(address, options) {
       const query: ScoreQuery = { address };
-      const params = new URLSearchParams(query as Record<string, string>);
+      const params = withPrecision(new URLSearchParams(query as Record<string, string>));
       return parseScore(await getJson(`/score?${params}`, options));
     },
 
     async getScoreByCoordinates({ lat, lon }, options) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      const params = withPrecision(
+        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
+      );
       return parseScore(await getJson(`/score?${params}`, options));
     },
 
     async getAreaByCoordinates({ lat, lon }, options) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      const params = withPrecision(
+        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
+      );
       return parseAreaScore(await getJson(`/area?${params}`, options));
     },
 
@@ -847,6 +987,16 @@ export function createApiClient({
         }),
       );
       return parseSimilar(await getJson(`/similar?${params}`, options));
+    },
+
+    async getReach(lat, lon, mode, minutes, options) {
+      const params = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        mode,
+        minutes: String(minutes),
+      });
+      return parseReach(await getJson(`/isochrone?${params}`, options));
     },
 
     async getScoreExplanation(geoEntityId, { factors, weights, ...options } = {}) {
@@ -920,11 +1070,16 @@ export function createApiClient({
       const turns = prepareChatTurns(messages);
       const body: Record<string, unknown> = { messages: turns };
       if (Object.keys(context).length > 0) body.context = context;
+      const { onStatus, ...request } = options ?? {};
+      if (chatStreamUrl && onStatus) {
+        const streamed = await streamChat(chatStreamUrl, body, { ...request, onStatus });
+        if (streamed) return streamed;
+      }
       return parseChatReply(
         await requestJson(
           "/chat",
           { method: "POST", body },
-          { timeoutMs: CHAT_TIMEOUT_MS, ...options },
+          { timeoutMs: CHAT_TIMEOUT_MS, ...request },
         ),
       );
     },

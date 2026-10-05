@@ -171,8 +171,36 @@ export function cellComposite(
   return total > 0 ? weighted / total : null;
 }
 
+/**
+ * The composite of one place's sub-scores for the selected factors and
+ * weights: the arithmetic of `cellComposite`, on sub-scores rounded the way
+ * the score files store them, so a score card matches the map and the
+ * best-areas list exactly. `null` when no selected factor has a score.
+ */
+export function subScoresComposite(
+  subScores: Partial<Record<FactorKey, number | null>>,
+  selected: readonly FactorKey[],
+  overrides: Partial<Record<FactorKey, number>> | undefined,
+  defaults: Partial<Record<FactorKey, number>> = {},
+): number | null {
+  let weighted = 0;
+  let total = 0;
+  for (const key of selected) {
+    const value = subScores[key];
+    if (value === null || value === undefined || !Number.isFinite(value)) continue;
+    const weight = overrides?.[key] ?? defaults[key] ?? DEFAULT_FACTOR_WEIGHTS[key];
+    if (!(weight > 0)) continue;
+    weighted += weight * Math.max(0, Math.min(100, Math.floor(value + 0.5)));
+    total += weight;
+  }
+  return total > 0 ? weighted / total : null;
+}
+
 /** One composite per cell; `NaN` where the cell has no selected score. */
-export function compositeAll(matrix: ScoreMatrix, spec: CompositeSpec): Float64Array {
+export function compositeAll(
+  matrix: Pick<ScoreMatrix, "count" | "scores" | "factors">,
+  spec: CompositeSpec,
+): Float64Array {
   const out = new Float64Array(matrix.count);
   for (let i = 0; i < matrix.count; i++) {
     out[i] = cellComposite(matrix, i, spec) ?? Number.NaN;
@@ -185,7 +213,10 @@ export function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-export function subScoresOf(matrix: ScoreMatrix, index: number): SubScores {
+export function subScoresOf(
+  matrix: Pick<ScoreMatrix, "factors" | "scores">,
+  index: number,
+): SubScores {
   const width = matrix.factors.length;
   return Object.fromEntries(
     FACTOR_KEY_LIST.map((key) => {
@@ -200,7 +231,10 @@ export function subScoresOf(matrix: ScoreMatrix, index: number): SubScores {
 export type Bbox4 = readonly [number, number, number, number];
 
 /** Indexes of the cells whose centre is inside the box (west, south, east, north). */
-export function cellsInBbox(matrix: ScoreMatrix, bbox: Bbox4): number[] {
+export function cellsInBbox(
+  matrix: Pick<ScoreMatrix, "count" | "lat" | "lon">,
+  bbox: Bbox4,
+): number[] {
   const [west, south, east, north] = bbox;
   const out: number[] = [];
   for (let i = 0; i < matrix.count; i++) {

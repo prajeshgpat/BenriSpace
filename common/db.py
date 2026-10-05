@@ -3,14 +3,20 @@ script and the API import this rather than opening their own connections,
 so there's one place that knows the schema's shape.
 """
 
+import logging
+import os
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from common.config import DATABASE_URL
+from common.feature_columns import LEGACY_BY_NEW, to_db_fields
 from scoring.engine import CATEGORY_SPECS, CATEGORY_SPECS_V2_1, LEGACY_FALLBACK_COLUMNS
 
 # feature_store columns typed `jsonb` in schema.sql -- values for these
@@ -21,9 +27,10 @@ from scoring.engine import CATEGORY_SPECS, CATEGORY_SPECS_V2_1, LEGACY_FALLBACK_
 # JSON -- `{` starts an object, not an array).
 FEATURE_STORE_JSON_COLUMNS = {"transit_agencies"}
 
-# feature_store columns an ingestion job is allowed to write. Used to
-# validate upsert_feature_store() calls so a typo'd column name fails at
-# call time, not as a silent no-op.
+# feature_store keys an ingestion job is allowed to write. Used to validate
+# upsert_feature_store() calls so a typo'd column name fails at call time, not as a silent
+# no-op. Distances and counts are listed under their original metric keys; the database
+# columns are the imperial names in common/feature_columns.py (which is also accepted).
 FEATURE_STORE_COLUMNS = {
     "grocery_count_500m",
     "grocery_nearest_m",
@@ -98,9 +105,154 @@ def get_connection() -> Iterator[psycopg.Connection]:
         conn.close()
 
 
-def iter_geo_entities(
-    conn: psycopg.Connection, metro_area: str | None = None
-) -> Iterator[dict]:
+# --- Connection reuse for the API (api/main.py) ------------------------------
+# Opening a Postgres connection to Supabase costs ~200 ms (TCP + TLS + auth), which
+# was a large share of every API request. api_connection() keeps a tiny locked pool
+# per process (one Lambda instance / uvicorn worker) and hands each request its own
+# transaction. Ingestion and scoring scripts keep using get_connection() above.
+#
+# Compatibility with the pooler: DATABASE_URL on port 5432 is Supabase's SESSION
+# pooler (a client connection owns a server connection), so server-side prepared
+# statements (psycopg auto-prepares a query after 5 executions) and session SETs
+# work. On port 6543 (TRANSACTION pooler) they do not, so prepare_threshold is
+# turned off there. Pipeline mode is not used for the API: its reads wait for each
+# result anyway, and a pipeline held open across requests would defer errors.
+
+log = logging.getLogger(__name__)
+
+API_POOL_SIZE = int(os.environ.get("API_DB_POOL_SIZE", "4"))
+API_POOL_WAIT_S = 15.0
+API_IDLE_PING_S = 10.0  # ping (select 1) a connection idle longer than this before use
+API_IDLE_TX_TIMEOUT_MS = 30_000  # server kills a session stuck idle in a transaction
+
+
+def is_transaction_pooler(url: str) -> bool:
+    """True for a Supabase/pgbouncer transaction-mode URL (port 6543)."""
+    try:
+        return urlparse(url).port == 6543
+    except ValueError:
+        return False
+
+
+def _connect_for_api(url: str | None = None) -> psycopg.Connection:
+    url = url or DATABASE_URL
+    kwargs = {"prepare_threshold": None} if is_transaction_pooler(url) else {}
+    conn = psycopg.connect(url, row_factory=dict_row, **kwargs)
+    try:
+        # A request that dies mid-transaction must not pin a pooler slot forever.
+        conn.execute(f"set idle_in_transaction_session_timeout = {API_IDLE_TX_TIMEOUT_MS}")
+        conn.commit()
+    except psycopg.Error:  # e.g. a transaction pooler that rejects session SETs
+        if not conn.closed:
+            conn.rollback()
+    return conn
+
+
+class ConnectionPool:
+    """A small blocking pool of long-lived connections. Not psycopg_pool: that adds a
+    dependency and background threads (which Lambda freezes) for a pool of two to
+    four connections."""
+
+    def __init__(self, connect, size: int = API_POOL_SIZE, clock=time.monotonic):
+        self._connect = connect
+        self._clock = clock
+        self._idle: list[tuple[psycopg.Connection, float]] = []
+        self._lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(max(1, size))
+
+    def acquire(self) -> psycopg.Connection:
+        if not self._slots.acquire(timeout=API_POOL_WAIT_S):
+            raise TimeoutError("no free database connection")
+        try:
+            while True:
+                with self._lock:
+                    entry = self._idle.pop() if self._idle else None
+                if entry is None:
+                    return self._connect()
+                conn, since = entry
+                if self._healthy(conn, self._clock() - since):
+                    return conn
+                self._close(conn)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def release(self, conn: psycopg.Connection, discard: bool = False) -> None:
+        try:
+            if not discard and not conn.closed and not conn.broken:
+                with self._lock:
+                    self._idle.append((conn, self._clock()))
+            else:
+                self._close(conn)
+        finally:
+            self._slots.release()
+
+    def _healthy(self, conn: psycopg.Connection, idle_s: float) -> bool:
+        if conn.closed or conn.broken:
+            return False
+        if idle_s < API_IDLE_PING_S:
+            return True
+        try:
+            conn.execute("select 1")
+            conn.rollback()
+            return True
+        except psycopg.Error:
+            return False
+
+    @staticmethod
+    def _close(conn: psycopg.Connection) -> None:
+        try:
+            conn.close()
+        except Exception:
+            log.debug("closing a database connection failed", exc_info=True)
+
+    def close_all(self) -> None:
+        with self._lock:
+            idle, self._idle = self._idle, []
+        for conn, _ in idle:
+            self._close(conn)
+
+
+_api_pools: dict[str, ConnectionPool] = {}
+_api_pool_lock = threading.Lock()
+
+
+def _get_api_pool(url: str | None = None) -> ConnectionPool:
+    """One pool per database URL (the default is DATABASE_URL, read at first use)."""
+    key = url or DATABASE_URL
+    with _api_pool_lock:
+        if key not in _api_pools:
+            _api_pools[key] = ConnectionPool(lambda: _connect_for_api(key))
+        return _api_pools[key]
+
+
+@contextmanager
+def api_connection(url: str | None = None) -> Iterator[psycopg.Connection]:
+    """A reused connection for one API request: the body runs in its own
+    transaction, committed on success and rolled back on error, so nothing stays
+    open between requests. A connection that failed with a connection-level error
+    is discarded and the next request reconnects (stale idle connections are also
+    pinged and replaced at checkout, which is the "reconnect and retry"). `url`
+    selects another database (the areas_slim container) with its own pool."""
+    pool = _get_api_pool(url)
+    conn = pool.acquire()
+    discard = False
+    try:
+        yield conn
+        conn.commit()
+    except BaseException as exc:
+        discard = isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError))
+        if not discard and not conn.closed:
+            try:
+                conn.rollback()
+            except psycopg.Error:
+                discard = True
+        raise
+    finally:
+        pool.release(conn, discard=discard)
+
+
+def iter_geo_entities(conn: psycopg.Connection, metro_area: str | None = None) -> Iterator[dict]:
     """Yields {id, geohash, latitude, longitude, metro_area} for every grid
     cell. Ingestion scripts loop over this to know what to query POI/GTFS/
     school/road sources against."""
@@ -118,11 +270,12 @@ def upsert_feature_store(conn: psycopg.Connection, geo_entity_id: str, fields: d
     """Updates only the given columns for one geo_entity_id, inserting the
     row first if it doesn't exist yet. Unknown column names raise —
     catches typos instead of silently dropping data."""
-    unknown = set(fields) - FEATURE_STORE_COLUMNS
+    unknown = set(fields) - FEATURE_STORE_COLUMNS - set(LEGACY_BY_NEW)
     if unknown:
         raise ValueError(f"Unknown feature_store columns: {unknown}")
     if not fields:
         return
+    fields = to_db_fields(fields)  # metric keys -> imperial columns (migration 0020)
 
     columns = list(fields)
     values = [
@@ -480,9 +633,7 @@ def get_area_candidates(conn: psycopg.Connection, lat: float, lon: float) -> lis
     return []
 
 
-def get_neighborhoods_by_geohash(
-    conn: psycopg.Connection, geohashes: list[str]
-) -> dict[str, str]:
+def get_neighborhoods_by_geohash(conn: psycopg.Connection, geohashes: list[str]) -> dict[str, str]:
     """{geohash: neighborhood} for the cells that have a label (migration
     0008). Returns {} before the column exists."""
     wanted = sorted({g for g in geohashes if g})

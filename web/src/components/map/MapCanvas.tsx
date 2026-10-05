@@ -20,14 +20,17 @@ import {
   CELL_OPACITY,
   FILL_COLOR_EXPRESSION,
   PREVIEW_STYLE,
+  REACH_STYLE,
 } from "@/lib/map/colors";
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
+import type { TileCells } from "@/lib/map/tileScores";
 import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
+import { usePmtilesCells } from "./usePmtilesCells";
 
 // See scripts/copy-maplibre-worker.mjs for why the worker is served by us.
 setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
@@ -49,6 +52,11 @@ const PREVIEW_SOURCE_ID = "preview-area";
 const PREVIEW_FILL_LAYER = "preview-area-fill";
 const PREVIEW_CASING_LAYER = "preview-area-outline-casing";
 const PREVIEW_LINE_LAYER = "preview-area-outline";
+
+const REACH_SOURCE_ID = "reach-area";
+const REACH_FILL_LAYER = "reach-area-fill";
+const REACH_CASING_LAYER = "reach-area-outline-casing";
+const REACH_LINE_LAYER = "reach-area-outline";
 
 const EMPTY_AREA = { type: "FeatureCollection", features: [] } as never;
 
@@ -74,6 +82,8 @@ export interface CellClick {
   score: number;
   lat: number;
   lon: number;
+  /** Tile map only: the id of the one area under the click, if it can be told. */
+  areaId?: number;
 }
 
 export interface MarkerSpec {
@@ -112,7 +122,15 @@ interface MapCanvasProps {
   areaGeometry?: AreaGeometry | null;
   /** A previewed (not selected) area: drawn dashed, in orange. */
   previewAreaGeometry?: AreaGeometry | null;
+  /** The area reachable from the selected place (isochrone): dashed teal. */
+  reachGeometry?: AreaGeometry | null;
   previewPin?: PinSpec | null;
+  /**
+   * Local scores for the view, to colour the PMTiles grid (only used when
+   * NEXT_PUBLIC_PMTILES_URL is set); `null` keeps the GeoJSON cells.
+   */
+  tileCells?: TileCells | null;
+  onTilesFailed?: () => void;
   theme: ResolvedTheme;
   pin: PinSpec | null;
   flyRequest: FlyRequest | null;
@@ -121,6 +139,8 @@ interface MapCanvasProps {
   onMarkerClick: (id: string) => void;
   onUnavailable: () => void;
 }
+
+const noopTilesFailed = () => {};
 
 /** Fade-in for the area polygon fill. */
 const AREA_FADE_MS = 250;
@@ -250,6 +270,53 @@ function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean)
   );
 }
 
+function addReachLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
+  const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
+  const style = REACH_STYLE[theme];
+
+  map.addSource(REACH_SOURCE_ID, { type: "geojson", data: EMPTY_AREA });
+  map.addLayer(
+    {
+      id: REACH_FILL_LAYER,
+      type: "fill",
+      source: REACH_SOURCE_ID,
+      paint: {
+        "fill-color": style.line,
+        "fill-opacity": visible ? style.fillOpacity : 0,
+        "fill-opacity-transition": {
+          duration: prefersReducedMotion() ? 0 : AREA_FADE_MS,
+          delay: 0,
+        },
+      },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: REACH_CASING_LAYER,
+      type: "line",
+      source: REACH_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: { "line-color": style.casing, "line-width": 5, "line-opacity": 0.85 },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: REACH_LINE_LAYER,
+      type: "line",
+      source: REACH_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": style.line,
+        "line-width": 2.5,
+        "line-dasharray": [3, 2],
+      },
+    },
+    firstLabel?.id,
+  );
+}
+
 function addPreviewLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
   const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
   const style = PREVIEW_STYLE[theme];
@@ -315,7 +382,10 @@ export function MapCanvas({
   highlightGeohash,
   areaGeometry = null,
   previewAreaGeometry = null,
+  reachGeometry = null,
   previewPin = null,
+  tileCells = null,
+  onTilesFailed,
   theme,
   pin,
   flyRequest,
@@ -342,6 +412,7 @@ export function MapCanvas({
     highlightGeohash: areaGeometry ? null : highlightGeohash,
     areaGeometry,
     previewAreaGeometry,
+    reachGeometry,
     theme,
   });
   const styleTheme = useRef(theme);
@@ -425,6 +496,10 @@ export function MapCanvas({
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
       addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
+      addReachLayers(map, styleTheme.current, Boolean(latest.current.reachGeometry));
+      (map.getSource(REACH_SOURCE_ID) as GeoJSONSource).setData(
+        areaData(latest.current.reachGeometry),
+      );
       addPreviewLayers(
         map,
         styleTheme.current,
@@ -525,6 +600,21 @@ export function MapCanvas({
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
+    (map.getSource(REACH_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
+      areaData(reachGeometry),
+    );
+    if (map.getLayer(REACH_FILL_LAYER)) {
+      map.setPaintProperty(
+        REACH_FILL_LAYER,
+        "fill-opacity",
+        reachGeometry ? REACH_STYLE[latest.current.theme].fillOpacity : 0,
+      );
+    }
+  }, [reachGeometry, ready, latest]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
     (map.getSource(PREVIEW_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
       areaData(previewAreaGeometry),
     );
@@ -606,6 +696,16 @@ export function MapCanvas({
       else delete button.dataset.active;
     });
   }, [activeMarkerId, markers, ready]);
+
+  usePmtilesCells({
+    mapRef,
+    ready,
+    theme,
+    tileCells,
+    highlightGeohash: areaGeometry ? null : highlightGeohash,
+    onCellClick,
+    onFailed: onTilesFailed ?? noopTilesFailed,
+  });
 
   const pinLat = pin?.lat;
   const pinLon = pin?.lon;

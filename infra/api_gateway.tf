@@ -64,6 +64,6 @@ resource "cloudflare_dns_record" "api" {
   type    = "CNAME"
   content = aws_apigatewayv2_domain_name.api.domain_name_configuration[0].target_domain_name
   ttl     = local.cloudflare_auto_ttl
-  proxied = false
+  proxied = var.enable_edge_cache # DNS-only unless edge caching is on (edge_cache.tf)
   comment = "API Gateway custom domain (Terraform)"
 }

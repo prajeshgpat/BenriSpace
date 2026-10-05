@@ -75,6 +75,7 @@ export function makeScore(overrides: Partial<Score> = {}): Score {
     subScores: { ...emptySubScores, airport: 62.79 },
     weightsVersion: "v1-handtuned",
     computedAt: "2026-09-29T03:12:03.491922Z",
+    precision: "grid",
     ...overrides,
   };
 }
@@ -105,6 +106,7 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getAreaExplanation: unexpected("getAreaExplanation"),
     getImprove: unexpected("getImprove"),
     getSimilar: unexpected("getSimilar"),
+    getReach: unexpected("getReach"),
     suggestAddresses: unexpected("suggestAddresses"),
     reverseGeocode: unexpected("reverseGeocode"),
     getMapCells: unexpected("getMapCells"),

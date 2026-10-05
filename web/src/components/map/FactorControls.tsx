@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, memo } from "react";
 
 import type { FactorKey } from "@/lib/api/types";
 import {
@@ -8,12 +8,7 @@ import {
   type FactorGroup,
 } from "@/lib/score/factors";
 import {
-  ALL_FACTORS,
   IMPORTANCE_LEVELS,
-  PRESETS,
-  activePresetId,
-  applyPreset,
-  createSelection,
   importanceOf,
   setImportance,
   toggleFactor,
@@ -77,67 +72,19 @@ function ScoreBadge({ value }: { value: number | null }) {
   );
 }
 
-export function FactorControls({
+function FactorControlsImpl({
   selection,
   onChange,
   scores = null,
 }: FactorControlsProps) {
-  const preset = activePresetId(selection);
-  const allOn = selection.factors.length === FACTOR_KEYS.length;
-  const noneOn = selection.factors.length === 0;
-
+  const headingId = useId();
   return (
-    <details className={styles.section} open>
-      <summary className={styles.summary}>
-        <h2 className={styles.heading}>Factors</h2>
-        <span className={styles.count}>
-          {selection.factors.length} of {FACTOR_KEYS.length} on
-        </span>
-        <svg
-          className={styles.chevron}
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <path d="M6 14l6-6 6 6" />
-        </svg>
-      </summary>
+    <section className={styles.section} aria-labelledby={headingId}>
+      <h2 id={headingId} className={styles.heading}>
+        Factors
+      </h2>
 
       <div className={styles.body}>
-        <div className={styles.group} role="group" aria-label="Presets">
-          {PRESETS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.chip}
-              aria-pressed={preset === item.id}
-              title={item.description}
-              onClick={() => onChange(applyPreset(item))}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div className={styles.bulk}>
-          <button
-            type="button"
-            className={styles.linkButton}
-            disabled={allOn && Object.keys(selection.importance).length === 0}
-            onClick={() => onChange(ALL_FACTORS)}
-          >
-            Select all
-          </button>
-          <button
-            type="button"
-            className={styles.linkButton}
-            disabled={noneOn}
-            onClick={() => onChange(createSelection([]))}
-          >
-            Select none
-          </button>
-        </div>
-
         {GROUPS.map((group) => (
           <fieldset key={group} className={styles.fieldset}>
             <legend className={styles.legend}>{FACTOR_GROUPS[group]}</legend>
@@ -209,7 +156,7 @@ export function FactorControls({
           once. Pick one or two factors to see where each is at its maximum.
         </p>
       </div>
-    </details>
+    </section>
   );
 }
 
@@ -248,3 +195,6 @@ function ImportanceRow({ factor, selection, onChange }: ImportanceRowProps) {
     </div>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const FactorControls = memo(FactorControlsImpl);

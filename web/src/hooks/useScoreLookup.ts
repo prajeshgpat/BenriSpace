@@ -35,6 +35,8 @@ export type LookupState =
       score: Score;
       /** The secondary-road polygon behind the score; null for a plain grid-square score. */
       area: AreaInfo | null;
+      /** The area's id, which keys the static area-score file. */
+      areaId?: number | null;
       explanation: ExplanationState;
     }
   | { status: "error"; address: string; error: ApiError };
@@ -106,7 +108,7 @@ export function useScoreLookup(
     (async () => {
       // The area is the better answer for a point, but it is an upgrade, not
       // a requirement: any failure quietly falls back to the grid square.
-      if (current.kind === "coordinates" && current.precision !== "cell") {
+      if (current.kind === "coordinates") {
         try {
           const result = await client.getAreaByCoordinates(
             { lat: current.lat, lon: current.lon },
@@ -118,6 +120,7 @@ export function useScoreLookup(
             address,
             score: result.score,
             area: result.area,
+            areaId: result.areaId,
             explanation: text.trim()
               ? { status: "ready", text, explanationSource: "rules" }
               : { status: "unavailable" },

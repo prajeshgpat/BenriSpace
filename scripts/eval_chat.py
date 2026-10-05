@@ -1,4 +1,4 @@
-"""Local eval of Ask BenriSpace (NOT run in CI; makes paid Haiku calls).
+"""Local eval of Ask Benri (NOT run in CI; makes paid Haiku calls).
 
     .venv/bin/python scripts/eval_chat.py [--max-calls 25] [--only N]
 
@@ -47,6 +47,8 @@ CASES: list[dict] = [
     {"name": "ambiguous address -> clarify", "turns": ["Find me a place near my work at 100 Main Street, with a gym"]},
     {"name": "similar areas", "context": PARK_SLOPE, "turns": ["Which other areas feel like this one?"]},
     {"name": "search best areas for walkable cafes", "turns": ["Where are the best areas for cafes and restaurants within 5 miles of Hoboken NJ?"]},
+    {"name": "brand lookup: bars/restaurants + train + Planet Fitness",
+     "turns": ["Find me a neighborhood that has a lot of bars and restaurants and is close to a train station in jersey city and planet fitness"]},
 ]  # fmt: skip
 
 

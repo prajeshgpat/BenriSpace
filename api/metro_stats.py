@@ -2,7 +2,7 @@
 
 One aggregate query per (weights version, metro) the first time it is needed,
 then cached for the life of the process, so request handlers never scan the
-~64k score rows. The mean/std match the z-scoring in scoring/embeddings.py
+~64k score rows. The mean/std match the z-scoring in scoring/similarity.py
 (population std over non-null values, per metro), which /similar needs to
 re-rank by a subset of factors; the cut points give a factor's metro
 percentile for the explanation evidence.
