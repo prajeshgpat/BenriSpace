@@ -52,7 +52,9 @@ def roads_in(bbox):
         files += tile_files(pat + ".json.gz", bbox)
     for f in files:
         if True:
-            for el in json.load(gzip.open(f, "rt")).get("elements", []):
+            with gzip.open(f, "rt") as fh:
+                elements = json.load(fh).get("elements", [])
+            for el in elements:
                 hw = (el.get("tags") or {}).get("highway")
                 g = el.get("geometry")
                 if el.get("type") != "way" or not hw or not g:
