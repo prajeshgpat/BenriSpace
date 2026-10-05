@@ -9,7 +9,9 @@ import os
 import threading
 from collections import OrderedDict
 
-import httpx
+from common.lazy import lazy_module
+
+httpx = lazy_module("httpx")
 
 MATRIX_URL = "https://api.openrouteservice.org/v2/matrix/{profile}"
 PROFILES = {"drive": "driving-car", "walk": "foot-walking"}

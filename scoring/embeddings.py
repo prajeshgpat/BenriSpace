@@ -113,14 +113,21 @@ def write_similar_cells(conn, weights_version: str, neighbours: dict) -> int:
     try:
         with conn.cursor() as cur:
             cur.execute("delete from similar_cells where weights_version = %s", (weights_version,))
-            with cur.copy(
-                "copy similar_cells (geo_entity_id, weights_version, neighbor_id, rank, distance) "
-                "from stdin"
-            ) as copy:
-                for gid, items in neighbours.items():
-                    for rank, (nid, dist) in enumerate(items, start=1):
-                        copy.write_row((gid, weights_version, nid, rank, dist))
-                        written += 1
+            # executemany, not COPY: common.db connections run in pipeline mode,
+            # where COPY is not supported.
+            rows = [
+                (gid, weights_version, nid, rank, dist)
+                for gid, items in neighbours.items()
+                for rank, (nid, dist) in enumerate(items, start=1)
+            ]
+            for start in range(0, len(rows), 5000):
+                cur.executemany(
+                    "insert into similar_cells "
+                    "(geo_entity_id, weights_version, neighbor_id, rank, distance) "
+                    "values (%s, %s, %s, %s, %s)",
+                    rows[start : start + 5000],
+                )
+            written = len(rows)
         conn.commit()
     except Exception:
         conn.rollback()

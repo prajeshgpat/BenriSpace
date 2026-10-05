@@ -140,6 +140,10 @@ function setup(
     ...createApiClient({ baseUrl: "http://api.test/v1", fetch: routed }),
     getMapCells,
     getMapTop,
+    // No score file: these tests exercise the API path.
+    getMapScores: vi.fn(async () => {
+      throw new Error("no score file");
+    }),
     // No street address unless a test asks for one; the card keeps its coordinates.
     reverseGeocode: vi.fn(async ({ lat, lon }) => ({
       label: null,

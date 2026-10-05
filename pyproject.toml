@@ -30,19 +30,35 @@ dev = [
     # ingestion/school_districts.py tests (never in the Lambda bundle)
     "shapely>=2.0",
     "pyshp>=2.3",
-    # scoring/embeddings.py similar_cells (never in the Lambda bundle)
+    # scoring/embeddings.py similar_cells and ingestion/spatial.py (never in the Lambda bundle)
     "numpy>=1.26",
+    "scipy>=1.11",
 ]
 # School-district boundary + NCES school-location ingestion only; NOT in the Lambda bundle.
 schools = [
     "shapely>=2.0",
     "pyshp>=2.3",
 ]
+# Ingestion jobs (GitHub Actions): school / density / town polygons and the KD-tree
+# spatial index. NOT in the Lambda bundle.
+ingestion = [
+    "shapely>=2.0",
+    "pyshp>=2.3",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
 # Offline neighborhood-polygon prototype (ingestion/areas); NOT in the Lambda bundle.
 geo = [
     "shapely>=2.0",
     "numpy>=1.26",
     "matplotlib>=3.8",
+]
+
+# Wave 4 routing prototype (scripts/routing_prototype.py); NOT in the Lambda bundle.
+routing = [
+    "pandana>=0.7",
+    "osmnx>=2.0",
+    "numpy>=1.26",
 ]
 
 [tool.ruff]

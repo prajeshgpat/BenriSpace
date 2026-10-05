@@ -217,6 +217,7 @@ erDiagram
     text formatted_address "nullable"
     text metro_area "nyc, long_island, westchester, ..."
     text neighborhood "0008"
+    geometry geom "0012 Point 4326, generated from lat/lon, GiST"
   }
   feature_store {
     uuid geo_entity_id PK, FK
@@ -231,6 +232,8 @@ erDiagram
     text street_orientation
     numeric airport_drive_time_min
     numeric shopping_raw "0009, v2.1"
+    float pop_density_per_sq_mi "0012, Census 2020 area-weighted"
+    text travel_mode "0012, drive below 10000 else walk"
     numeric strava_segment_popularity_raw "null = not measured"
   }
   scores {
@@ -252,6 +255,7 @@ erDiagram
     jsonb geometry "GeoJSON, lon/lat"
     text_array bounded_by "road names"
     text neighborhood "0008"
+    geometry geom "0012 MultiPolygon 4326, GiST"
   }
   area_cells {
     int area_id PK, FK
@@ -262,7 +266,7 @@ erDiagram
 
 Other tables: `ingestion_runs` (per-job status log: source, status, rows
 affected, error), `places` (named amenities, 0004), `llm_cache` and `llm_usage`
-(0005), and `chat_usage` (0010, not applied).
+(0005), `chat_usage` (0010), and `road_segments` (0012, not applied: `osm_id`, `highway`, `name`, `is_emergency_route`, `geom` LineString 4326 with a GiST index; major roads and mainline rail). `places.geom` (Point 4326, GiST) is added by 0012 too. The geometry columns are not used by any API query yet.
 
 `feature_store` has dozens of raw columns; only a representative set is shown. A
 `null` raw value always means "not measured yet", never "zero".
@@ -286,6 +290,7 @@ after review (additive and idempotent, so old code keeps working).
 | 0008 `neighborhoods` | `neighborhood` on `geo_entities` and `areas` | applied 2026-10-04 |
 | 0009 `v2_1` | v2.1 feature_store and scores columns (imperial units) | applied 2026-10-04 |
 | 0010 `chat` | `chat_usage` (per-visitor daily message count) | not applied; the API skips the limit while the table is missing |
+| 0012 `density_postgis` | PostGIS; `feature_store.pop_density_per_sq_mi` and `travel_mode`; `geom` on `geo_entities`, `places`, `areas` with GiST indexes; `road_segments` | not applied; written by `ingestion.density` and `ingestion.road_segments` |
 
 ## 4. Scoring engine
 

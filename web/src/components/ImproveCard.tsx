@@ -11,11 +11,12 @@ import { roundScore } from "@/lib/score/presentation";
 
 import { ShowMoreButton, useShowMore } from "./ShowMore";
 
+import { ReportProblem } from "./Feedback";
 import styles from "./ImproveCard.module.css";
 
 export interface ImproveCardProps {
   coordinates: { lat: number; lon: number } | null;
-  client: Pick<ApiClient, "getImprove">;
+  client: Pick<ApiClient, "getImprove"> & Partial<Pick<ApiClient, "sendFeedback">>;
   priorities?: PriorityQuery;
   onPreview: (preview: Preview) => void;
 }
@@ -144,6 +145,7 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
         ))}
       </ul>
       <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
+      <ReportProblem client={client} list="Improve this area" />
     </section>
   );
 }

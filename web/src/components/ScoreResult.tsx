@@ -9,7 +9,10 @@ import {
 
 import { scorePillColor } from "@/lib/score/pillColors";
 
+import { CompareButton } from "./CompareButton";
 import { CopyLinkButton } from "./CopyLinkButton";
+import { FeedbackThumbs } from "./Feedback";
+import type { ApiClient } from "@/lib/api/client";
 
 import styles from "./ScoreResult.module.css";
 
@@ -20,6 +23,8 @@ interface ScoreHeaderProps {
   score: Score;
   /** Present when the score is for a secondary-road area rather than a grid square. */
   area?: AreaInfo | null;
+  /** Pin this place for the compare view. */
+  compare?: { pinned: boolean; full: boolean; onToggle: () => void };
 }
 
 /** "Area bounded by Broadway, Canal St and Bowery"; null when no roads are named. */
@@ -42,6 +47,7 @@ export function ScoreHeader({
   readableAddress = null,
   score,
   area = null,
+  compare,
 }: ScoreHeaderProps) {
   const neighborhood = score.neighborhood?.trim() || null;
   const roads = area ? roadList(area.boundedBy) : null;
@@ -76,6 +82,14 @@ export function ScoreHeader({
         </p>
         <div className={styles.actions}>
           <CopyLinkButton />
+          {compare ? (
+            <CompareButton
+              name={address}
+              pinned={compare.pinned}
+              full={compare.full}
+              onToggle={compare.onToggle}
+            />
+          ) : null}
         </div>
       </div>
     </article>
@@ -85,16 +99,23 @@ export function ScoreHeader({
 interface ScoreSummaryProps {
   score: Score;
   explanation: ExplanationState;
+  /** Where thumbs are sent; leave out to hide them. */
+  client?: Pick<ApiClient, "sendFeedback">;
+  /** The place, for the feedback record. */
+  target?: string;
 }
 
 /** The written explanation (AI or rule-based); sits under the filters. */
-export function ScoreSummary({ explanation }: ScoreSummaryProps) {
+export function ScoreSummary({ explanation, client, target }: ScoreSummaryProps) {
   return (
     <section className={styles.section} aria-labelledby="explanation-heading">
       <h3 id="explanation-heading" className={styles.sectionHeading}>
         Summary
       </h3>
       <ExplanationText explanation={explanation} />
+      {explanation.status === "ready" ? (
+        <FeedbackThumbs client={client} kind="summary" target={target ?? explanation.text} />
+      ) : null}
     </section>
   );
 }

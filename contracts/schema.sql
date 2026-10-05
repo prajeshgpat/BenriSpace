@@ -280,3 +280,44 @@ create table if not exists feedback (
     visitor_hash text not null,
     created_at   timestamptz not null default now()
 );
+
+-- Population density + PostGIS foundation (migration 0012, not yet applied).
+create extension if not exists postgis;
+
+alter table feature_store
+    add column if not exists pop_density_per_sq_mi double precision,
+    add column if not exists travel_mode text;
+
+alter table geo_entities
+    add column if not exists geom geometry(Point, 4326)
+        generated always as (st_setsrid(st_makepoint(longitude, latitude), 4326)) stored;
+
+alter table places
+    add column if not exists geom geometry(Point, 4326)
+        generated always as (st_setsrid(st_makepoint(longitude, latitude), 4326)) stored;
+
+alter table areas
+    add column if not exists geom geometry(MultiPolygon, 4326);
+
+update areas
+    set geom = st_multi(st_setsrid(st_geomfromgeojson(geometry::text), 4326))
+    where geom is null;
+
+create index if not exists geo_entities_geom_idx on geo_entities using gist (geom);
+
+create index if not exists places_geom_idx on places using gist (geom);
+
+create index if not exists areas_geom_idx on areas using gist (geom);
+
+create table if not exists road_segments (
+    id                 bigserial primary key,
+    osm_id             bigint,
+    highway            text,                  -- OSM highway value, or 'rail'
+    name               text,
+    is_emergency_route boolean not null default false,
+    geom               geometry(LineString, 4326)
+);
+
+create index if not exists road_segments_geom_idx on road_segments using gist (geom);
+
+create index if not exists road_segments_osm_id_idx on road_segments (osm_id);

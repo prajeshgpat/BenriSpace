@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import styles from "./SiteFooter.module.css";
 
 function ExternalLink({ href, children }: { href: string; children: string }) {
@@ -51,7 +53,8 @@ export function SiteFooter() {
           Education Data Portal
         </ExternalLink>{" "}
         (Urban Institute, ODC Attribution License). Scores describe an area,
-        not a single building.
+        not a single building. See all{" "}
+        <Link href="/data">data sources and licences</Link>.
       </p>
     </footer>
   );

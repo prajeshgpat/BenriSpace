@@ -125,3 +125,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 3px;
 }
+
+.compare {
+  padding: 0 0.75rem 0.5rem;
+}

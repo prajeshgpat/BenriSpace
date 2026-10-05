@@ -16,6 +16,7 @@ the table is absent), 503 without ANTHROPIC_API_KEY.
 
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -50,7 +51,7 @@ MAX_CONTENT_CHARS = 2000
 MAX_TOOL_ROUNDS = 4
 MAX_TOKENS = 900
 CALL_TIMEOUT_S = 25.0
-DEFAULT_DEADLINE_S = 17.0  # the Lambda is capped at 20 s by default
+DEFAULT_DEADLINE_S = 26.0  # the Lambda is capped at 29 s (API Gateway cuts off at 30 s)
 DAILY_LIMIT = 15
 MAX_RESULTS = 3
 MAX_TOOL_JSON_CHARS = 9000
@@ -781,6 +782,46 @@ def _sentences(text: str) -> str:
     return re.sub(r"\s*\n+\s*", ". ", text)
 
 
+MAX_DERIVED_VALUES = 150
+
+
+def _fmt_number(x: float) -> list[str]:
+    """Spellings a reply may use for x: whole number (half up) and one decimal."""
+    out = {str(int(abs(x) + 0.5))}
+    one = f"{abs(x):.1f}"
+    out.add(one.removesuffix(".0") if one.endswith(".0") else one)
+    return list(out)
+
+
+def derived_numbers(tool_payloads: list[Any]) -> set[str]:
+    """Numbers a reply may state without them appearing verbatim in tool output:
+    roundings (whole, nearest 5 / 10, one decimal) of any tool number and the sum
+    or absolute difference of any two of them. Capped so the pair loop stays small;
+    invented figures still fail because they match none of these."""
+    values: list[float] = []
+    seen: set[float] = set()
+    for payload in tool_payloads:
+        for chunk in (json.dumps(payload, ensure_ascii=False),):
+            for raw in ai_explain._numbers(chunk):
+                try:
+                    v = float(raw)
+                except ValueError:
+                    continue
+                if v not in seen and len(values) < MAX_DERIVED_VALUES:
+                    seen.add(v)
+                    values.append(v)
+    out: set[str] = set()
+    for v in values:
+        out.update(_fmt_number(v))
+        for step in (5, 10):
+            out.add(str(int(math.floor(v / step + 0.5) * step)))
+    for i, a in enumerate(values):
+        for b in values[i:]:
+            out.update(_fmt_number(a + b))
+            out.update(_fmt_number(a - b))
+    return out
+
+
 def validate_reply(
     reply: str, tool_payloads: list[Any], user_texts: list[str], context_json: str
 ) -> bool:
@@ -800,6 +841,7 @@ def validate_reply(
         for node in _walk(payload):
             if isinstance(node, list):
                 allowed.add(str(len(node)))
+    allowed |= derived_numbers(tool_payloads)
     if not ai_explain._numbers(text) <= allowed:
         return False
     haystack = ai_explain._norm(" ".join(source_text))

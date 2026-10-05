@@ -56,7 +56,7 @@ const GEOHASH_LENGTH = 6;
 export function decodeScoreMatrix(buffer: ArrayBuffer): ScoreMatrix {
   if (buffer.byteLength < 4) throw new Error("score file too short");
   const view = new DataView(buffer);
-  const headerLength = view.getUint32(0, false);
+  const headerLength = view.getUint32(0, true);
   if (headerLength <= 0 || 4 + headerLength > buffer.byteLength) {
     throw new Error("score file header is truncated");
   }

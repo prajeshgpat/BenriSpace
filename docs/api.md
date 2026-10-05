@@ -697,7 +697,7 @@ Areas elsewhere in the same metro with a similar factor profile. Each scored cel
 
 With `factors`, the closest 200 vectors are re-ranked by straight-line distance over only the selected factors (z-scored with the metro's mean and standard deviation, the same as the stored vectors, loaded once per server process; a missing score counts as average; `weights` scale each factor's share), and then the spacing rule is applied. `similarity` is rescaled so it stays comparable with the unfiltered value.
 
-Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404.
+Requires migration `0007_embeddings.sql` and a run of `python -m scoring.embeddings` (part of the weekly score job). Until then every request returns 404. Neighbours come from pgvector's HNSW index (`hnsw.ef_search` sized to the pool, iterative scan where available); with migration `0011_perf.sql` the embeddings job also stores each cell's top 20 neighbours in `similar_cells`, which answer unfiltered requests directly when they yield enough spread-out results.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -852,6 +852,57 @@ With no `factors` or `weights`, all thirteen factors and their default weights a
 Note the second result: a spot at 40.97 N is far from the dense core yet scores 87 on `bar` and 96 on `restaurant`. That is the min-max normalization weakness described under "What a score means" (a v3 candidate), not a real nightlife hub.
 
 Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factors` and `weights`, plus `limit` outside 1-50, `minSeparationMi` outside 0-31 (or `minSeparationKm` outside 0-50), or both separation parameters at once. The response has no separation field; the spacing is applied, not echoed.
+
+---
+
+## `GET /map/scores`
+
+Every cell's 13 sub-scores for the configured weights version in one compact binary file, so a browser can recompute the composite locally for any factor or importance change with no further API calls. `version` is optional; if given it must equal the served weights version (otherwise 404). Cached for a day (`Cache-Control: public, max-age=86400`); `ETag` is `"<version>-<max computed_at as unix seconds>"` and a matching `If-None-Match` returns `304`. Sent gzip-encoded when the client accepts it (`Vary: Accept-Encoding`). About 1.2 MB raw for 64,320 cells (19 bytes a cell), built from one SQL query and cached per server process by ETag.
+
+`Content-Type: application/octet-stream`. All integers are little-endian. Layout:
+
+| Part | Size | Content |
+| --- | --- | --- |
+| `headerLength` | 4 bytes | `uint32`, byte length of the header JSON |
+| header | `headerLength` bytes | UTF-8 JSON: `{"format":1,"version":"v2-handtuned","factors":[13 keys],"count":N,"geohashLength":6,"generatedAt":"<ISO 8601>"}` |
+| geohashes | `N * 6` bytes | fixed 6-character ASCII geohashes, sorted ascending, no separators |
+| scores | `N * 13` bytes | `uint8`, cell-major: cell `i`, factor `j` is at `i * 13 + j`; `0` to `100` rounded half up, `255` means no score |
+
+`factors` gives the column order (the same keys as `/map/top`: grocery, gym, cafe, restaurant, bar, shopping, gasConvenience, transit, school, traffic, emergencyCorridor, airport, recreation). A cell's composite for chosen factors is `sum(w_j * s_j) / sum(w_j)` over the chosen factors whose byte is not `255`, exactly as `/map/cells` computes it (up to the rounding of each sub-score to a whole number).
+
+Decoder (Python):
+
+```python
+import json, struct
+def decode(blob):
+    (hlen,) = struct.unpack_from("<I", blob, 0)
+    h = json.loads(blob[4:4 + hlen]); n, w, f = h["count"], h["geohashLength"], len(h["factors"])
+    p = 4 + hlen
+    hashes = [blob[p + i*w:p + (i+1)*w].decode() for i in range(n)]
+    p += n * w
+    return h, hashes, [[None if b == 255 else b for b in blob[p + i*f:p + (i+1)*f]] for i in range(n)]
+```
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 304 | | `If-None-Match` matches the current `ETag` |
+| 404 | `not_found` | Unknown `version`, or no scores for the served version |
+
+---
+
+## `GET /sources`
+
+Data transparency: where the scores come from. Each entry has `id`, `name`, `feeds` (what it feeds), `license`, `url`, `lastUpdated` (latest successful ingestion finish across the jobs that refresh it, or `null`) and `rowsAffected` (their summed rows, or `null`). The registry is static (`api/sources.py`); freshness comes from `ingestion_runs`. Cached for an hour.
+
+```json
+{ "sources": [ { "id": "osm_poi", "name": "OpenStreetMap points of interest", "feeds": "Grocery, gym, ...", "license": "ODbL 1.0 (c) OpenStreetMap contributors", "url": "https://www.openstreetmap.org/copyright", "lastUpdated": "2026-10-01T04:12:09Z", "rowsAffected": 101690 } ] }
+```
+
+---
+
+## `POST /feedback`
+
+Thumbs and reports from the app. Body: `kind` (`summary`, `chat` or `place`), optional `target` (up to 200 characters; a geohash, message id or place name), optional `rating` (`-1`, `0` or `1`) and optional `message` (up to 1000 characters). Returns `204` with no body. Each anonymous visitor (salted hash of the client IP, never stored raw) may send 30 a day; beyond that the response is `429 rate_limited`. Requires migration `0011_perf.sql`; until it is applied the item is logged and dropped and the response is still `204`. An invalid body is a 400.
 
 ---
 

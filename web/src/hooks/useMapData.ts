@@ -2,8 +2,19 @@
 
 import { useMemo, useState } from "react";
 
+import { useScoreMatrix } from "@/hooks/useScoreMatrix";
+import {
+  DEFAULT_FACTOR_WEIGHTS,
+  buildCompositeSpec,
+  compositeAll,
+  localCells,
+} from "@/lib/scores/matrix";
+import { localTop } from "@/lib/scores/topk";
+import type { MapCells, MapTopResult } from "@/lib/api/types";
+import { boundsToFeatures } from "@/lib/map/features";
+
 import type { Viewport } from "@/components/map/MapCanvas";
-import { useResource } from "@/hooks/useResource";
+import { useResource, type Resource } from "@/hooks/useResource";
 import type { ApiClient } from "@/lib/api/client";
 import { EMPTY_CELLS, cellsToFeatures, scoreRange } from "@/lib/map/features";
 import {
@@ -22,6 +33,12 @@ import {
 } from "@/lib/map/viewport";
 
 const TOP_LIMIT = 10;
+/** The API's own default spacing (3 km) when the best-areas list has no viewport. */
+const METRO_SEPARATION_MI = 3 / 1.609344;
+interface Names {
+  [geohash: string]: { neighborhood: string | null; metroArea: string };
+}
+const noop = () => {};
 /** A zoomed-in view holds a neighbourhood, where 2 mi would leave one result. */
 const VIEW_SEPARATION_MI = 0.6;
 
@@ -41,12 +58,29 @@ export function useMapData({
   topViewport,
 }: MapDataInput) {
   const [defaults, setDefaults] = useState<DefaultWeights>({});
+  const [names, setNames] = useState<Names>({});
+  const matrixState = useScoreMatrix(client);
+  const matrix = matrixState.matrix;
 
   const noFactors = selection.factors.length === 0;
+  // With the score file the defaults are known up front; the server's own
+  // numbers, once seen, still win.
   const weights = useMemo(
-    () => resolveWeights(selection, defaults),
-    [selection, defaults],
+    () =>
+      resolveWeights(
+        selection,
+        matrix ? { ...DEFAULT_FACTOR_WEIGHTS, ...defaults } : defaults,
+      ),
+    [selection, defaults, matrix],
   );
+  const composites = useMemo(() => {
+    if (!matrix || selection.factors.length === 0) return null;
+    return compositeAll(
+      matrix,
+      buildCompositeSpec(matrix, selection.factors, weights, defaults),
+    );
+  }, [matrix, selection.factors, weights, defaults]);
+  const local = composites !== null;
   const factorsParam = priorityQuery(selection, weights).factors;
   const selectionKey = `${selection.factors.join(",")}|${JSON.stringify(weights ?? {})}`;
 
@@ -55,11 +89,11 @@ export function useMapData({
     [viewport],
   );
   const cellsKey =
-    !noFactors && viewport && cellBbox
+    !noFactors && !local && viewport && cellBbox
       ? `${bboxKey(cellBbox)}|${precisionForZoom(viewport.zoom)}|${selectionKey}`
       : null;
 
-  const cells = useResource(cellsKey, async (signal) => {
+  const apiCells = useResource(cellsKey, async (signal) => {
     if (!viewport || !cellBbox) throw new Error("unreachable");
     const result = await client.getMapCells(
       {
@@ -93,22 +127,89 @@ export function useMapData({
       { signal },
     );
     setDefaults((known) => learnDefaults(known, result.weights, weights));
+    // Names for locally ranked areas come from here.
+    setNames((known) => ({
+      ...known,
+      ...Object.fromEntries(
+        result.results.map((r) => [
+          r.geohash,
+          { neighborhood: r.neighborhood ?? null, metroArea: r.metroArea },
+        ]),
+      ),
+    }));
     return result;
   });
 
-  const features = useMemo(
-    () =>
-      cells.data && !noFactors ? cellsToFeatures(cells.data) : EMPTY_CELLS,
-    [cells.data, noFactors],
-  );
+  const localCellData = useMemo(() => {
+    if (!matrix || !composites || !cellBbox || !viewport) return null;
+    return localCells(
+      matrix,
+      cellBbox,
+      precisionForZoom(viewport.zoom),
+      composites,
+    );
+  }, [matrix, composites, cellBbox, viewport]);
+
+  const cells: Resource<MapCells> = useMemo(() => {
+    if (!localCellData || !viewport) return apiCells;
+    return {
+      status: "ready",
+      error: null,
+      retry: noop,
+      data: {
+        precision: precisionForZoom(viewport.zoom),
+        factors: [...selection.factors],
+        weights: weights ?? {},
+        weightsVersion: String(matrix?.header.version ?? ""),
+        truncated: false,
+        geohashes: localCellData.geohashes,
+        scores: localCellData.scores,
+      },
+    };
+  }, [localCellData, viewport, apiCells, selection.factors, weights, matrix]);
+
+  const localResults = useMemo(() => {
+    if (!matrix || !composites) return null;
+    return localTop(matrix, composites, {
+      bbox: viewBbox,
+      limit: TOP_LIMIT,
+      minSeparationMi: viewBbox ? VIEW_SEPARATION_MI : METRO_SEPARATION_MI,
+    });
+    // viewBbox is rebuilt each render; its key is the identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matrix, composites, viewBbox ? bboxKey(viewBbox) : "metro"]);
+
+  const features = useMemo(() => {
+    if (noFactors) return EMPTY_CELLS;
+    if (localCellData) return boundsToFeatures(localCellData);
+    return cells.data ? cellsToFeatures(cells.data) : EMPTY_CELLS;
+  }, [cells.data, noFactors, localCellData]);
   const range = useMemo(
     () => (cells.data && !noFactors ? scoreRange(cells.data.scores) : null),
     [cells.data, noFactors],
   );
-  const topResults = useMemo(
-    () => (noFactors ? null : (top.data?.results ?? null)),
-    [top.data, noFactors],
-  );
+  const topResults = useMemo((): MapTopResult[] | null => {
+    if (noFactors) return null;
+    if (!localResults) return top.data?.results ?? null;
+    const lookupDone = top.status === "ready" || top.status === "error";
+    return localResults.map((r) => {
+      const known = names[r.geohash];
+      if (known) return { ...r, ...known };
+      return lookupDone ? r : { ...r, namePending: true };
+    });
+  }, [noFactors, localResults, top.data, top.status, names]);
+  const topState = localResults
+    ? { ...top, status: "ready" as const, error: null, retry: noop }
+    : top;
 
-  return { noFactors, cells, top, features, range, topResults, weights };
+  return {
+    noFactors,
+    cells,
+    top: topState,
+    features,
+    range,
+    topResults,
+    weights,
+    local,
+  };
 }

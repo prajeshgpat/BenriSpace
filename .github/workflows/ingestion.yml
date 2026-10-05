@@ -59,8 +59,24 @@ jobs:
       - run: pip install -e .
       - run: python -m ingestion.grid
 
-  ingest:
+  # Census block-group population density + default travel mode (migration 0012 columns).
+  # Downloads ~120 MB of public Census files; runs before the sequential ingest matrix so
+  # its feature_store row locks never overlap another job's.
+  density:
     needs: grid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[ingestion]"
+      - run: python -m ingestion.density
+      - run: python -m ingestion.road_segments
+
+  ingest:
+    needs: [grid, density]
+    if: ${{ !cancelled() && needs.grid.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180 # trails.py's Strava enhancement can run ~150min; this is a safety ceiling
     strategy:
@@ -81,12 +97,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # The schools job needs shapely/pyshp (the `schools` extra); the rest ignore it.
-      - run: pip install -e ".[schools]"
+      # schools needs shapely/pyshp; osm_poi, osm_retail_parks, gtfs_transit use scipy/numpy
+      # (cKDTree) when present -- all in the `ingestion` extra.
+      - run: pip install -e ".[ingestion]"
       - run: python -m ${{ matrix.module }}
 
   score:
-    needs: [grid, ingest]
+    needs: [grid, density, ingest]
     if: ${{ !cancelled() && needs.grid.result == 'success' }}
     runs-on: ubuntu-latest
     env:

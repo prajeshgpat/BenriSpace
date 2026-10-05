@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -222,7 +223,27 @@ def write_areas(conn, numbered: Numbered, build_version: str) -> dict:
     except Exception:
         conn.rollback()
         raise
+    _backfill_area_geom(conn)
     return {"areas": len(area_rows), "area_cells": len(cell_rows)}
+
+
+GEOM_BACKFILL_SQL = (
+    "update areas set geom = st_multi(st_setsrid(st_geomfromgeojson(geometry::text), 4326)) "
+    "where geom is null"
+)
+
+
+def _backfill_area_geom(conn) -> None:
+    """Fills the PostGIS `areas.geom` column (migration 0012) from the stored
+    GeoJSON. Separate from the rebuild transaction so a database without
+    PostGIS / migration 0012 keeps the new areas; it only logs."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(GEOM_BACKFILL_SQL)
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001 - optional column, never fail the rebuild
+        conn.rollback()
+        print(f"areas.geom not filled ({type(exc).__name__}); apply migration 0012.", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------- CLI

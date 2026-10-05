@@ -80,3 +80,24 @@ Labels such as "Park Slope, Brooklyn", "Montclair, NJ" or "Newtown, CT" for ever
 - Inside a town with at least 5 neighbourhood nodes (Jersey City, Newark, Stamford, ...): "Neighbourhood, City" from nodes inside that town within 1.2 mi; otherwise "City, ST".
 - Anywhere else: "Town, ST" with legal suffix words (town, township, city, village, borough) dropped. A label never uses a place outside the containing town, so it cannot cross a river or state line.
 - Points in no town polygon (water, edge) use the nearest town within 0.5 mi, else no label. Coordinates are never used as a label.
+
+## Population density and travel mode (`density`, Wave 3)
+
+| Source | Notes |
+|---|---|
+| 2020 Census PL 94-171 redistricting files, NY / NJ / CT (`www2.census.gov/programs-surveys/decennial/2020/data/01-Redistricting_File--PL_94-171/`) | Block-group (summary level 150) total population `P0010001` and `AREALAND`. Used instead of `api.census.gov`, which now rejects keyless requests (302 to `missing_key`). About 117 MB, cached in `data/cache/density/`. Public domain (US federal). |
+| TIGER/Line 2020 block groups (`www2.census.gov/geo/tiger/TIGER2020/BG/tl_2020_{fips}_bg.zip`) | Polygons. Public domain. |
+
+Density = population / land square miles per block group, area-weighted to each cell's geohash
+rectangle (shapely STRtree, exact intersection). `travel_mode` = `drive` below 10,000 people / sq mi,
+else `walk`. Cells with no block group (open water, the Pennsylvania part of the NJ box) stay NULL.
+First run on real data (64,320 cells): 71.8% drive, 3.2% walk, 25.1% NULL (mostly water). Samples:
+Manhattan Midtown 28,507 walk; Upper West Side 129,936; Park Slope 69,259; Hoboken 50,281; Jersey City
+68,279; Yonkers 33,498 (all walk); Montclair 5,168 drive; White Plains 18,156 and Stamford 16,410
+walk (above the 10k line); Huntington 3,991 drive; rural Fairfield County CT 212-988 drive.
+
+## Major roads and rail (`road_segments`, Wave 3)
+
+OpenStreetMap via Overpass (ODbL): `highway` motorway..secondary plus links, and `railway=rail`,
+stored whole per way in `road_segments` (PostGIS LineString) with `is_emergency_route` set for
+secondary and above. Feeds later noise-by-frontage work; no API query reads it yet.

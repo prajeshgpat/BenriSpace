@@ -1,4 +1,4 @@
--- BenriSpace performance + product tables migration. NOT yet applied.
+-- BenriSpace performance + product tables migration. Applied to production on 2026-10-04.
 -- Additive only, idempotent. Mirrored into contracts/schema.sql.
 -- Run by hand after review; the API works without it (each feature falls back
 -- while its index or table is missing, see api/similar.py, api/feedback.py).

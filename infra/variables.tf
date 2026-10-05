@@ -45,7 +45,7 @@ variable "lambda_memory_mb" {
 variable "lambda_timeout_seconds" {
   description = "Lambda timeout. Must stay below API Gateway's 30s integration limit."
   type        = number
-  default     = 20
+  default     = 29
 
   validation {
     condition     = var.lambda_timeout_seconds > 0 && var.lambda_timeout_seconds < 30

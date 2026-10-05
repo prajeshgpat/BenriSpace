@@ -259,6 +259,7 @@ export interface ChatReply {
 
 /** One row of the data transparency page. */
 export interface DataSource {
+  id?: string;
   name: string;
   /** What in BenriSpace this source feeds. */
   feeds: string | null;
@@ -271,11 +272,9 @@ export interface DataSource {
 /** What `POST /feedback` takes. */
 export interface Feedback {
   kind: "summary" | "chat" | "place";
-  /** Thumbs; absent on a place report. */
-  rating?: "up" | "down";
-  /** A place report's reason. */
-  reason?: "wrong" | "closed";
-  note?: string;
-  /** Where it happened: the place, a place's name, or the text being rated. */
-  context?: Record<string, string | number>;
+  /** What it is about: an address, a place name or a short excerpt. */
+  target?: string;
+  /** 1 thumbs up, -1 thumbs down, 0 or absent for a plain report. */
+  rating?: -1 | 0 | 1;
+  message?: string;
 }

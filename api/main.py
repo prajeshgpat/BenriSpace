@@ -28,6 +28,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api import scorefile, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
@@ -87,7 +88,6 @@ from api.schemas import (
     TriangulateRequest,
     TriangulateResponse,
 )
-from api import scorefile, sources
 from api.similar import build_similar, fetch_neighbours, fetch_target, overfetch_limit
 from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses

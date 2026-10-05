@@ -11,11 +11,12 @@ import { roundScore } from "@/lib/score/presentation";
 
 import { ShowMoreButton, useShowMore } from "./ShowMore";
 
+import { ReportProblem } from "./Feedback";
 import styles from "./SimilarCard.module.css";
 
 export interface SimilarCardProps {
   coordinates: { lat: number; lon: number } | null;
-  client: Pick<ApiClient, "getSimilar">;
+  client: Pick<ApiClient, "getSimilar"> & Partial<Pick<ApiClient, "sendFeedback">>;
   priorities?: PriorityQuery;
   onPreview: (preview: Preview) => void;
 }
@@ -139,6 +140,7 @@ export function SimilarCard({
         })}
       </ul>
       <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
+      <ReportProblem client={client} list="Similar areas" />
     </section>
   );
 }

@@ -23,7 +23,9 @@ Respecting Nominatim's usage policy
 
 import os
 
-import httpx
+from common.lazy import lazy_module
+
+httpx = lazy_module("httpx")
 
 LOCATIONIQ_SEARCH_URL = "https://us1.locationiq.com/v1/search"
 LOCATIONIQ_KEY_ENV = "LOCATIONIQ_API_KEY"

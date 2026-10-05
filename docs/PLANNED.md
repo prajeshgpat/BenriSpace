@@ -13,30 +13,30 @@ Last updated 2026-10-04.
 
 Low-risk changes to the database and API that make every request faster.
 
-- [ ] **Spatial index on cells.** `geo_entities (latitude, longitude)` btree. Bounding-box
+- [~] **Spatial index on cells.** `geo_entities (latitude, longitude)` btree. Bounding-box
   queries (map cells, improve, optimize candidates) stop scanning all 64k rows.
-- [ ] **Similar areas use the vector index.** Fetch the target vector first, then
+- [~] **Similar areas use the vector index.** Fetch the target vector first, then
   `ORDER BY embedding <-> $vector LIMIT k` with a weights-version filter, so pgvector's
   HNSW index is used instead of a join that scans every row.
-- [ ] **Precomputed similar neighbours.** Top 20 similar cells per cell, written by the
+- [~] **Precomputed similar neighbours.** Top 20 similar cells per cell, written by the
   embeddings step into a `similar_cells` table; `/v1/similar` becomes a lookup plus the
   selected-factor re-rank.
-- [ ] **Trigram search on places.** `pg_trgm` GIN index on `places.name` / `brand`, so
+- [~] **Trigram search on places.** `pg_trgm` GIN index on `places.name` / `brand`, so
   brand matching ("trader joe") is indexed.
-- [ ] **Covering index and a latest-scores view.** `scores (weights_version, geo_entity_id)`
+- [~] **Covering index (view skipped: measured no win).** `scores (weights_version, geo_entity_id)`
   covering index; a materialized view of the latest scores joined to cells for map and top
   queries (refreshed by the scoring job).
 - [ ] **Edge caching.** Cloudflare cache rules for GET endpoints that already send
   `Cache-Control` (map, area, score, places, similar, improve).
-- [ ] **Faster cold starts.** Import the Anthropic SDK, shapely and routing clients lazily;
+- [~] **Faster cold starts.** Import the Anthropic SDK, shapely and routing clients lazily;
   measure; consider Lambda SnapStart (a few cents a month).
-- [ ] **Lambda timeout 20 s → 29 s** so multi-tool chat answers fit (API Gateway caps at 30 s).
-- [ ] **Chat grounding tuned.** Allow numbers that are sums / roundings of tool values and
+- [~] **Lambda timeout 20 s → 29 s** so multi-tool chat answers fit (API Gateway caps at 30 s).
+- [~] **Chat grounding tuned.** Allow numbers that are sums / roundings of tool values and
   names that appear in tool results, so fewer good answers fall back to the plain summary.
 
 ## Wave 2 — Instant filters in the browser
 
-- [ ] **Compact score file.** One file per weights version with each cell's 13 sub-scores
+- [~] **Compact score file.** One file per weights version with each cell's 13 sub-scores
   as bytes (64k × 13 ≈ 0.8 MB, ≈ 300 KB compressed), served with long cache headers and a
   version tag. The overall score is a weighted average, so the browser recomputes it
   exactly for any filter or importance change: the map recolours instantly with no API
@@ -52,20 +52,23 @@ Low-risk changes to the database and API that make every request faster.
 - [ ] **Imperial column rename.** `*_count_500m` → `*_count_1600ft`, `*_nearest_m` →
   `*_nearest_ft` (values × 3.2808), `*_1600m` → `*_1mi`, `area_sq_m` → `area_sq_mi`, via
   expand (add + backfill) → deploy → contract (drop) migrations.
-- [ ] **Population density per cell.** 2020 Census block-group population and land area,
+- [~] **Population density per cell.** 2020 Census block-group population and land area,
   area-weighted to cells; travel mode = car below 10,000 people / sq mi, walk + transit at
-  or above.
-- [ ] **PostGIS.** Geometry columns and GiST indexes on `areas`, `places`, `geo_entities`
+  or above. Built: `ingestion/density.py` (Census PL files, no key), migration 0012 not applied.
+- [~] **PostGIS.** Geometry columns and GiST indexes on `areas`, `places`, `geo_entities`
   and a new `road_segments` (major roads, rail) table. Polygon lookup (`ST_Contains`),
   nearby places (KNN `<->`) and noise distances become indexed spatial queries.
-- [ ] **Faster ingestion.** `scipy.spatial.cKDTree` + numpy for nearest / within-radius
-  counts (10–100× faster than Python bucket scans); run non-Overpass jobs in parallel.
+- [~] **Faster ingestion.** `scipy.spatial.cKDTree` + numpy for nearest / within-radius
+  counts (10–100× faster than Python bucket scans); run non-Overpass jobs in parallel. Built
+  for `osm_poi`, shops in `osm_retail_parks` and `gtfs_transit` (`ingestion/spatial.py`); parks
+  (rectangles) and schools (3x3-bucket semantics) still use bucket scans.
 
 ## Wave 4 — Routing precompute
 
-- [ ] **Walk / drive minutes per cell.** One multi-source network search per amenity
+- [~] **Walk / drive minutes per cell.** One multi-source network search per amenity
   category (Pandana k-nearest over a contraction-hierarchy network) instead of 64,000
-  point-to-point queries; nearest and k-th nearest minutes for every cell.
+  point-to-point queries; nearest and k-th nearest minutes for every cell. Prototype:
+  `scripts/routing_prototype.py` (Park Slope: 9.9k nodes, k=3 search 0.05 s).
 - [ ] **Drive matrices** to airports and rail stations (OSRM table service, contraction
   hierarchies), or Valhalla where isochrones are needed.
 - [ ] **Train times.** Station-to-station matrix for every rail station (r5py / RAPTOR) from
@@ -92,9 +95,9 @@ Low-risk changes to the database and API that make every request faster.
 ## Wave 6 — Product and quality
 
 - [ ] **Compare places.** Pin 2–4 places; side-by-side factor rings and differences.
-- [ ] **Data transparency page.** Sources, licences and freshness per source (from
+- [~] **Data transparency page.** Sources, licences and freshness per source (from
   `ingestion_runs`).
-- [ ] **Feedback.** Thumbs up / down on AI summaries and chat answers; "this place is
+- [~] **Feedback.** Thumbs up / down on AI summaries and chat answers; "this place is
   closed / wrong" reports feeding a review queue.
 - [ ] **Chat v2.** Streaming replies (Lambda function URL), "ask about this area", saved
   conversations once sign-in exists, natural-language search ("quiet, near good coffee,

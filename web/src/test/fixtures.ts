@@ -110,6 +110,9 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getMapCells: unexpected("getMapCells"),
     getMapTop: unexpected("getMapTop"),
     chat: unexpected("chat"),
+    getMapScores: unexpected("getMapScores"),
+    getSources: unexpected("getSources"),
+    sendFeedback: async () => {},
     ...overrides,
   };
 }
