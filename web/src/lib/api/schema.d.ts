@@ -105,7 +105,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+         * Ask Benri, a tool-using chat assistant grounded in our own data.
          * @description The client keeps the conversation and sends it each time; only the last 6 messages (each cut to 2,000 characters) are used. The assistant can only call read-only tools (geocode, area_score, nearby_places, improve, similar, search_areas, optimize_location). `results` is built from tool output, not by the model; `reply` is checked against the tool output and replaced by a deterministic summary (`limited: true`) when it cannot be grounded. Each visitor gets 15 messages a day.
          */
         post: operations["chat"];

@@ -14,7 +14,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
-| `POST /chat` | Ask BenriSpace: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
+| `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
@@ -470,7 +470,7 @@ Errors:
 
 ## `POST /chat`
 
-"Ask BenriSpace": a short chat that finds and explains neighborhoods. The model (Claude Haiku 4.5) can only call our own read-only tools (`geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `optimize_location`) and may only state what their results, or the user's own messages, contain. The client keeps the conversation and sends it with every request; only the last 6 messages (each cut to 2,000 characters) are used.
+"Ask Benri": a short chat that finds and explains neighborhoods. The model (Claude Haiku 4.5) can only call our own read-only tools (`geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `find_places`, `optimize_location`) and may only state what their results, or the user's own messages, contain. The client keeps the conversation and sends it with every request; only the last 6 messages (each cut to 2,000 characters) are used.
 
 Request body (JSON):
 

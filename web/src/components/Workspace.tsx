@@ -64,7 +64,6 @@ import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { CompareDrawer } from "./CompareDrawer";
-import { ChatDock } from "./chat/ChatDock";
 import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
@@ -125,8 +124,6 @@ const SHEET_OFFSET: Record<SheetSnap, string> = {
 
 interface LayoutProps {
   panel: ReactNode;
-  /** Desktop only: pinned to the bottom of the side column. */
-  dock?: ReactNode;
   map: ReactNode;
   panelRef?: Ref<HTMLElement>;
   snap?: SheetSnap;
@@ -135,7 +132,6 @@ interface LayoutProps {
 
 function Layout({
   panel,
-  dock,
   map,
   panelRef,
   snap,
@@ -174,7 +170,6 @@ function Layout({
           tabIndex={-1}
         >
           <div className={styles.panelScroll}>{content}</div>
-          {dock}
         </aside>
       )}
       <section className={styles.mapArea} aria-label="Map">
@@ -210,14 +205,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const rawAddress = params.get(ADDRESS_PARAM);
   const { target: urlTarget, error: urlError } = resolveTarget(params);
   const [picked, setPicked] = useState<Picked | null>(null);
-  // The URL only carries lat/lon, so a best-areas pick is re-marked as
-  // cell-based here; a shared link or reload resolves the area instead.
-  const target: ScoreTarget | null =
-    urlTarget?.kind === "coordinates" &&
-    picked?.kind === "top" &&
-    picked.key === targetKey(urlTarget)
-      ? { ...urlTarget, precision: "cell" }
-      : urlTarget;
+  // Every selection resolves the road-bounded area, like a map click.
+  const target: ScoreTarget | null = urlTarget;
   // A clicked point is labelled with coordinates until its street address is looked up.
   const readableAddress = useReverseGeocode(
     needsReadableAddress(target) ? { lat: target.lat, lon: target.lon } : null,
@@ -239,9 +228,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
-  // "Ask BenriSpace" opens beside the result and filter cards: a dock under
-  // the side column on desktop, a section under the search bar on phones.
-  // `/app?chat=1` (the home page's "Ask BenriSpace") opens it on load; `ask=`
+  // "Ask Benri" expands in place where its button sits (side panel and phone
+  // sheet alike), with its own scrolling log. `/app?chat=1` (the home page's
+  // "Ask Benri") opens it on load; `ask=`
   // pre-fills the search box and the chat context without scoring anything.
   const [chatOpen, setChatOpen] = useState(() => params.get("chat") === "1");
   const [askPrefill, setAskPrefill] = useState(
@@ -567,8 +556,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       lat: result.latitude,
       lon: result.longitude,
       label: areaTitle(result),
-      // The ranked square is the unit the list is scored on; stay cell-based.
-      precision: "cell",
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "top", geohash: result.geohash, key: targetKey(next) });
@@ -619,7 +606,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
   });
 
-  const mobile = useIsMobile();
   const chatProps = {
     client,
     context: {
@@ -674,7 +660,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
       {chatOpen ? null : (
         <button type="button" className={styles.ask} onClick={openChat}>
-          Ask BenriSpace
+          Ask Benri
         </button>
       )}
 
@@ -686,7 +672,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         {announcement(state)}
       </p>
 
-      {chatOpen && mobile ? <ChatPanel {...chatProps} /> : null}
+      {chatOpen ? <ChatPanel {...chatProps} /> : null}
 
       {target ? (
         <section
@@ -884,7 +870,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     <Layout
       panelRef={panelRef}
       panel={panel}
-      dock={chatOpen && !mobile ? <ChatDock {...chatProps} /> : null}
       map={map}
       snap={snap}
       onSnapChange={setSnap}

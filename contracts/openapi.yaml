@@ -258,7 +258,7 @@ paths:
 
   /chat:
     post:
-      summary: Ask BenriSpace, a tool-using chat assistant grounded in our own data.
+      summary: Ask Benri, a tool-using chat assistant grounded in our own data.
       description: >
         The client keeps the conversation and sends it each time; only the last
         6 messages (each cut to 2,000 characters) are used. The assistant can only

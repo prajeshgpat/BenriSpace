@@ -219,7 +219,7 @@ export interface AreaScore {
   explanation: string;
 }
 
-/** One turn of an "Ask BenriSpace" conversation, as the API takes it. */
+/** One turn of an "Ask Benri" conversation, as the API takes it. */
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;

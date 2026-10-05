@@ -39,7 +39,7 @@ multi-destination solver, not a lookup tool.
 | Scoring built | `v2.1-handtuned`, 13 pills; full ingestion in progress; cutover pending owner approval |
 | Areas | 49,158 road-bounded areas capped at 0.8 sq mi, with neighborhood names (migration 0008 applied) |
 | Features live | score, area click, address search, Best areas, improve-this-area, similar areas, places, AI explanations, multi-destination optimizer, map, mobile sheet, Home page |
-| In progress | Ask BenriSpace chat (`/v1/chat`, migration 0010 not applied) |
+| In progress | Ask Benri chat (`/v1/chat`, migration 0010 not applied) |
 | Planned | Valhalla routing precompute, imperial column rename, scoring v3, auth and tiers |
 
 ## Done
@@ -87,7 +87,7 @@ multi-destination solver, not a lookup tool.
 - **v2.1 full ingestion and cutover.** Ingestion for the new columns is running;
   the cutover (set `scoring_weights_version` to `v2.1-handtuned` and apply)
   waits for owner approval.
-- **Ask BenriSpace chat.** `/v1/chat`, a tool-using Haiku assistant limited to
+- **Ask Benri chat.** `/v1/chat`, a tool-using Haiku assistant limited to
   read-only tools, with grounding validation, budget cap and a per-visitor daily
   cap. Migration 0010 (`chat_usage`) is not applied; the API skips the limit
   while the table is missing.

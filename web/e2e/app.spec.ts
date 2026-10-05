@@ -68,8 +68,8 @@ test("falls back to the API when the score file is unavailable", async ({ page }
 test("chat panel opens", async ({ page }) => {
   await mockApi(page);
   await page.goto("/app");
-  await page.getByRole("button", { name: "Ask BenriSpace" }).click();
-  await expect(page.getByRole("region", { name: "Ask BenriSpace" })).toBeVisible();
+  await page.getByRole("button", { name: "Ask Benri" }).click();
+  await expect(page.getByRole("region", { name: "Ask Benri" })).toBeVisible();
   await page.getByLabel("Your question").fill("Where is quiet?");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Try the Upper West Side.")).toBeVisible();
@@ -79,19 +79,22 @@ test("chat panel opens", async ({ page }) => {
   await expect(page.getByText("Thanks, that helps us improve.")).toBeVisible();
 });
 
-test("chat docks beside the filters, which stay usable", async ({ page }) => {
+test("chat opens inline, filters stay usable, close returns the button", async ({ page }) => {
   await mockApi(page);
   await page.goto("/app?chat=1");
-  const dock = page.getByRole("region", { name: "Ask BenriSpace" });
-  await expect(dock).toBeVisible();
+  const chat = page.getByRole("region", { name: "Ask Benri" });
+  await expect(chat).toBeVisible();
   await expect(page.getByLabel("Your question")).toBeFocused();
   await expect(page.getByRole("heading", { name: "Factors" })).toBeVisible();
   await page.getByRole("checkbox", { name: /Cafes/ }).click();
   await expect(page.getByRole("checkbox", { name: /Cafes/ })).not.toBeChecked();
-  await page.getByLabel("Your question").press("Escape");
-  await expect(page.getByLabel("Your question")).toBeHidden();
-  await dock.getByRole("button", { name: "Expand" }).click();
-  await expect(page.getByLabel("Your question")).toBeVisible();
+  const log = chat.getByRole("log", { name: "Conversation" });
+  const box = await log.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box!.height).toBeLessThanOrEqual(Math.min(0.55 * viewport!.height, 520) + 1);
+  await chat.getByRole("button", { name: "Close chat" }).click();
+  await expect(chat).toBeHidden();
+  await expect(page.getByRole("button", { name: "Ask Benri" })).toBeVisible();
 });
 
 test("data sources page lists sources", async ({ page }) => {

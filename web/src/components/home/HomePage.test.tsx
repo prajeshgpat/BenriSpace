@@ -98,9 +98,9 @@ describe("HomePage", () => {
     expect(screen.getByText(/Built from OpenStreetMap/)).toBeInTheDocument();
   });
 
-  it("offers Ask BenriSpace, carrying typed text without scoring it", async () => {
+  it("offers Ask Benri, carrying typed text without scoring it", async () => {
     render(<HomePage />);
-    const ask = screen.getByRole("link", { name: "Ask BenriSpace" });
+    const ask = screen.getByRole("link", { name: "Ask Benri" });
     expect(ask).toHaveAttribute("href", "/app?chat=1");
     await userEvent.type(
       screen.getByRole("combobox", { name: "Address" }),

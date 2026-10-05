@@ -27,6 +27,37 @@
   gap: 0.25rem 0.75rem;
 }
 
+.closeButton {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  background: var(--surface-sunken);
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.closeButton svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 .textButton,
 .action {
   min-height: 2.5rem;
@@ -61,9 +92,9 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  /* The phone section: a fixed-height log that scrolls on its own. */
-  height: 50vh;
-  height: 50dvh;
+  /* Inline in the panel: capped height, the log scrolls on its own. */
+  min-height: 8rem;
+  max-height: min(55vh, 520px);
   overflow-y: auto;
   padding: 0.25rem;
   overscroll-behavior: contain;
@@ -282,26 +313,6 @@
 .send:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* In the dock the log takes whatever height the dock has left. */
-.chat[data-variant="dock"] {
-  flex: 1;
-  gap: 0.5rem;
-  height: 100%;
-}
-
-/* New chat sits in the dock's title bar, left of Collapse and Close. */
-.chat[data-variant="dock"] .header {
-  position: absolute;
-  top: -2.6rem;
-  right: 10rem;
-}
-
-.chat[data-variant="dock"] .log {
-  flex: 1;
-  height: auto;
-  min-height: 0;
 }
 
 .note {

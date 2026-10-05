@@ -106,7 +106,7 @@ export function useScoreLookup(
     (async () => {
       // The area is the better answer for a point, but it is an upgrade, not
       // a requirement: any failure quietly falls back to the grid square.
-      if (current.kind === "coordinates" && current.precision !== "cell") {
+      if (current.kind === "coordinates") {
         try {
           const result = await client.getAreaByCoordinates(
             { lat: current.lat, lon: current.lon },

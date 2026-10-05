@@ -755,7 +755,7 @@ def post_optimize(body: OptimizeRequest):
     responses={400: {"model": Error}, 429: {"model": Error}, 503: {"model": Error}},
 )
 def post_chat(body: ChatRequest, request: Request):
-    """Ask BenriSpace: a tool-using assistant grounded in our own data."""
+    """Ask Benri: a tool-using assistant grounded in our own data."""
     try:
         return handle_chat(
             body,

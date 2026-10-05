@@ -8,7 +8,7 @@ import { APP_PATH } from "@/lib/site";
 import styles from "./HomePage.module.css";
 import { HomeSearch } from "./HomeSearch";
 
-/** Where "Ask BenriSpace" goes: the chat opens, the typed text is only handed over. */
+/** Where "Ask Benri" goes: the chat opens, the typed text is only handed over. */
 export function askHref(text: string): string {
   const trimmed = text.trim();
   return trimmed
@@ -43,7 +43,7 @@ export function HeroSearch() {
           >
             <path d="M4 5h16v11H9l-5 4z" />
           </svg>
-          Ask BenriSpace
+          Ask Benri
         </Link>
       </div>
     </>

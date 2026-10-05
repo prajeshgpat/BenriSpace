@@ -44,11 +44,6 @@ export type ScoreTarget =
       lat: number;
       lon: number;
       label: string;
-      /**
-       * `"cell"` pins the lookup to the grid square (a best-areas pick);
-       * otherwise the secondary-road area around the point is tried first.
-       */
-      precision?: "cell";
     };
 
 /** Display text for the target; the heading of the result card. */

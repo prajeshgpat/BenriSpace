@@ -42,17 +42,10 @@ export interface ChatPanelProps {
   onShowOnMap: (result: ChatResult) => void;
   /** Make a found area the selected location. */
   onScoreArea: (result: ChatResult) => void;
-  /** Close the chat (the section variant's own button). */
+  /** Collapse the chat back to its button (the × in the header). */
   onClose?: () => void;
-  /**
-   * "section" is a self-contained region with its own title (phones);
-   * "dock" lives inside ChatDock, which supplies the region and header.
-   */
-  variant?: "section" | "dock";
   /** The selected place, for the "Now looking at" notes in the log. */
   place?: { key: string | null; label: string | null };
-  /** Called when an assistant reply lands (the dock's unread dot). */
-  onReply?: () => void;
 }
 
 type Failure = { text: string; retryable: boolean };
@@ -146,9 +139,7 @@ export function ChatPanel({
   onShowOnMap,
   onScoreArea,
   onClose,
-  variant = "section",
   place,
-  onReply,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -160,10 +151,6 @@ export function ChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   const inputId = useId();
   const counterId = useId();
-  const onReplyRef = useRef(onReply);
-  useEffect(() => {
-    onReplyRef.current = onReply;
-  });
   const seenPlace = useRef<{ key: string | null; noteId: string | null }>({
     key: place?.key ?? null,
     noteId: null,
@@ -244,7 +231,6 @@ export function ChatPanel({
             ...(reply.results.length > 0 ? { results: reply.results } : {}),
           },
         ]);
-        onReplyRef.current?.();
       } catch (cause) {
         if (controller.signal.aborted) return;
         setFailure(failureFor(cause));
@@ -299,17 +285,10 @@ export function ChatPanel({
   const empty = hydrated && !messages.some((m) => m.role !== "note");
   const nearLimit = input.length >= CHAT_INPUT_LIMIT - 100;
 
-  const Root = variant === "section" ? "section" : "div";
   return (
-    <Root
-      className={styles.chat}
-      data-variant={variant}
-      {...(variant === "section" ? { "aria-label": "Ask BenriSpace" } : {})}
-    >
+    <section className={styles.chat} aria-label="Ask Benri">
       <header className={styles.header}>
-        {variant === "section" ? (
-          <h2 className={styles.title}>Ask BenriSpace</h2>
-        ) : null}
+        <h2 className={styles.title}>Ask Benri</h2>
         <div className={styles.headerActions}>
           <button
             type="button"
@@ -321,13 +300,16 @@ export function ChatPanel({
           >
             New chat
           </button>
-          {onClose && variant === "section" ? (
+          {onClose ? (
             <button
               type="button"
-              className={styles.textButton}
+              className={styles.closeButton}
               onClick={onClose}
+              aria-label="Close chat"
             >
-              Close chat
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
             </button>
           ) : null}
         </div>
@@ -489,6 +471,6 @@ export function ChatPanel({
           </button>
         </div>
       </form>
-    </Root>
+    </section>
   );
 }

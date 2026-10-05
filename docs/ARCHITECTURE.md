@@ -23,7 +23,7 @@ Diagrams are [Mermaid](https://mermaid.js.org/) and render on GitHub.
   approval.
 - Neighborhood names (migration 0008) are applied. Areas are capped at 0.8 sq mi
   and there are 49,158 of them.
-- Chat ("Ask BenriSpace", `POST /v1/chat`) is in progress; migration 0010 is not
+- Chat ("Ask Benri", `POST /v1/chat`) is in progress; migration 0010 is not
   applied yet.
 - Valhalla routing precompute and the v3 scoring model are planned, not built.
 
@@ -85,7 +85,7 @@ app's generated TypeScript types) and implemented in `api/main.py`. Full guide:
 | `GET /map/top` | Best, well-separated areas for the chosen factors (with neighborhood names) |
 | `POST /triangulate` | Best locations for several commute anchors (placeholder geometry, see below) |
 | `POST /optimize` | Multi-destination optimizer: minimise weekly travel to work, a store brand, a gym... |
-| `POST /chat` | "Ask BenriSpace", a tool-using Haiku assistant (in progress) |
+| `POST /chat` | "Ask Benri", a tool-using Haiku assistant (in progress) |
 
 Behavior worth knowing:
 

@@ -4,7 +4,7 @@
 
 *Benri* (便利) means "convenient". BenriSpace scores any address in the New York metro area (NYC, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County, CT) on how convenient daily life is there, and shows where the convenient places are on a map. The idea: your 10-minute radius dictates your life, so see what is around any address.
 
-**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask BenriSpace" chat is in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask Benri" chat is in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features (shipped today)
 

@@ -1,4 +1,4 @@
-"""POST /v1/chat: "Ask BenriSpace", a tool-using Haiku assistant.
+"""POST /v1/chat: "Ask Benri", a tool-using Haiku assistant.
 
 The model never sees the database. It can only call the read-only tools below,
 which run our own code in-process (the same functions the REST routes use), and
@@ -65,7 +65,7 @@ RATE_LIMIT_MESSAGE = (
 FACTOR_KEYS = list(FACTOR_COLUMNS)
 
 SYSTEM = (
-    "You are Ask BenriSpace, a helper inside BenriSpace, a website that scores "
+    "You are Ask Benri, a helper inside BenriSpace, a website that scores "
     "neighborhoods in the New York City metro area (NYC, northern and central New Jersey, "
     "southwestern Connecticut) on 13 everyday-convenience factors: "
     + ", ".join(FACTOR_KEYS)
@@ -100,7 +100,14 @@ SYSTEM = (
     "9. Factor hints: quiet or noise means traffic and emergencyCorridor (the noise corridor "
     "score; higher is quieter); walkable means transit, grocery, cafe and restaurant; "
     "parks or outdoors means recreation.\n"
-    "10. Selected factors from the context are the user's priorities; pass them as `factors` "
+    "10. When the user names a chain, brand or specific store (Planet Fitness, Trader Joe's, "
+    "Whole Foods, Starbucks), ALWAYS look it up by name: find_places for where branches are, "
+    "near_brands on search_areas to rank areas by distance to the brand, or a brand anchor in "
+    "optimize_location. Never substitute a generic category (gym, grocery) for a named brand. "
+    "If no branch is found nearby, say so explicitly. When the user names a town or city "
+    "(Jersey City), geocode it first and pass near_latitude/near_longitude (radiusMi about 3) "
+    "to search_areas so results stay there.\n"
+    "11. Selected factors from the context are the user's priorities; pass them as `factors` "
     "to tools when the user asks about 'my priorities' or does not name factors.\n"
 )
 
@@ -183,7 +190,9 @@ TOOLS: list[dict] = [
         "name": "search_areas",
         "description": (
             "Rank areas by their score on the chosen factors (like the map's Best areas), "
-            "optionally within a radius of a point."
+            "optionally within a radius of a point. near_brands lists chains the user wants "
+            "close by (Planet Fitness): each area gets the nearest branch and areas far from a "
+            "branch rank lower."
         ),
         "input_schema": {
             "type": "object",
@@ -194,8 +203,31 @@ TOOLS: list[dict] = [
                 "near_longitude": _LON,
                 "radiusMi": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 8},
+                "near_brands": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {"type": "string", "maxLength": 100},
+                },
             },
             "required": [],
+        },
+    },
+    {
+        "name": "find_places",
+        "description": (
+            "Find named places (a chain or store such as Planet Fitness, or any place name) by "
+            "name, nearest first, with distance and direction from the given point."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "maxLength": 100},
+                "near_latitude": _LAT,
+                "near_longitude": _LON,
+                "radiusMi": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -568,12 +600,12 @@ def tool_search_areas(args: dict, context: ChatContext | None) -> dict:
             bbox = parse_bbox(_bbox_around(near[0], near[1], radius))
     except InvalidMapRequest as exc:
         raise ToolError(str(exc)) from None
+    brands = _brand_list(args.get("near_brands"))
+    pool = min(limit * 3, 24) if brands else limit
     with get_connection() as conn:
-        top = find_top(conn, spec, bbox, limit, 2.0 * 1.609344)
-    data = top.model_dump(by_alias=True, mode="json")
-    return {
-        "basedOnFactors": data["factors"],
-        "results": [
+        top = find_top(conn, spec, bbox, pool, 2.0 * 1.609344)
+        data = top.model_dump(by_alias=True, mode="json")
+        results = [
             {
                 "neighborhood": r.get("neighborhood"),
                 "latitude": r["latitude"],
@@ -582,7 +614,118 @@ def tool_search_areas(args: dict, context: ChatContext | None) -> dict:
                 "factorScores": _scores_for(r["subScores"], data["factors"]),
             }
             for r in data["results"]
+        ]
+        if brands:
+            results = rank_by_brand_distance(conn, results, brands)[:limit]
+    out = {"basedOnFactors": data["factors"], "results": results}
+    if brands:
+        out["rankingNote"] = (
+            f"Ranked by score minus {BRAND_PENALTY_PER_MI} points per mile to the nearest "
+            f"branch of each brand (up to {BRAND_PENALTY_MAX} points; "
+            f"{BRAND_PENALTY_MAX} when none is within {BRAND_SEARCH_MI} miles)."
+        )
+    return out
+
+
+# near_brands ranking: rankScore = score - sum over brands of
+# min(BRAND_PENALTY_MAX, BRAND_PENALTY_PER_MI * miles to the nearest branch);
+# a brand with no branch within BRAND_SEARCH_MI costs the full BRAND_PENALTY_MAX.
+BRAND_PENALTY_PER_MI = 6
+BRAND_PENALTY_MAX = 30
+BRAND_SEARCH_MI = 5.0
+
+
+def _brand_list(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ToolError("near_brands must be a list of brand names")
+    out = [str(b).strip()[:100] for b in raw if str(b).strip()]
+    return out[:3]
+
+
+def nearest_places_by_name(
+    conn, query: str, lat: float, lon: float, radius_mi: float, limit: int = 1
+) -> list[dict]:
+    """Branches/places matching `query` by name or brand within radius_mi of a
+    point, nearest first, each with distance_m and compass direction."""
+    from common.geo import haversine_m
+    from common.places import bbox_around, compass, places_by_brand_in_box
+
+    radius_m = radius_mi * M_PER_MI
+    box = bbox_around(lat, lon, radius_m)
+    found = []
+    for p in places_by_brand_in_box(conn, query, *box):
+        d = haversine_m(lat, lon, p["latitude"], p["longitude"])
+        if d <= radius_m:
+            found.append({**p, "distance_m": d,
+                          "direction": compass(lat, lon, p["latitude"], p["longitude"])})  # fmt: skip
+    found.sort(key=lambda p: p["distance_m"])
+    return found[:limit]
+
+
+def rank_by_brand_distance(conn, results: list[dict], brands: list[str]) -> list[dict]:
+    """Attaches `nearBrands` (nearest branch per brand) to each area and
+    re-ranks by score minus a distance penalty (see BRAND_PENALTY_*)."""
+    from common.units import format_distance
+
+    ranked = []
+    for r in results:
+        penalty = 0.0
+        near = []
+        for brand in brands:
+            hit = nearest_places_by_name(
+                conn, brand, r["latitude"], r["longitude"], BRAND_SEARCH_MI
+            )
+            if not hit:
+                penalty += BRAND_PENALTY_MAX
+                near.append({"brand": brand, "found": False,
+                             "note": f"No {brand} within {BRAND_SEARCH_MI:g} miles"})  # fmt: skip
+                continue
+            b = hit[0]
+            miles = b["distance_m"] / M_PER_MI
+            penalty += min(BRAND_PENALTY_MAX, BRAND_PENALTY_PER_MI * miles)
+            near.append({"brand": brand, "found": True, "name": b["name"],
+                         "distanceLabel": format_distance(b["distance_m"]),
+                         "direction": b["direction"]})  # fmt: skip
+        ranked.append(({**r, "nearBrands": near}, r["score"] - penalty))
+    ranked.sort(key=lambda t: -t[1])
+    return [r for r, _ in ranked]
+
+
+def tool_find_places(args: dict, context: ChatContext | None) -> dict:
+    from common.units import format_distance
+
+    query = str(args.get("query") or "").strip()[:100]
+    if not query:
+        raise ToolError("query is required")
+    if args.get("near_latitude") is not None or args.get("near_longitude") is not None:
+        lat, lon = _point(args, "near_latitude", "near_longitude")
+    elif context is not None and context.latitude is not None and context.longitude is not None:
+        lat, lon = context.latitude, context.longitude
+    else:
+        raise ToolError("near_latitude and near_longitude are required (geocode an address first)")
+    radius = float(args.get("radiusMi") or 5.0)
+    if not 0 < radius <= 30:
+        raise ToolError("radiusMi must be between 0 and 30")
+    limit = max(1, min(int(args.get("limit") or 5), 10))
+    with get_connection() as conn:
+        hits = nearest_places_by_name(conn, query, lat, lon, radius, limit)
+    return {
+        "query": query,
+        "radiusMi": radius,
+        "places": [
+            {
+                "name": h["name"],
+                "category": h["category"],
+                "latitude": h["latitude"],
+                "longitude": h["longitude"],
+                "distance": format_distance(h["distance_m"]),
+                "direction": h["direction"],
+            }
+            for h in hits
         ],
+        **({} if hits else {"note": f"No place matching {query!r} within {radius:g} miles."}),
     }
 
 
@@ -643,6 +786,7 @@ TOOL_IMPL = {
     "improve": tool_improve,
     "similar": tool_similar,
     "search_areas": tool_search_areas,
+    "find_places": tool_find_places,
     "optimize_location": tool_optimize_location,
 }
 
@@ -693,11 +837,18 @@ def _results_from(tool: str, payload: dict) -> list[ChatResult]:
             names = ", ".join(
                 f"{FACTOR_LABELS.get(_snake(k), k)} {v}" for k, v in list(scores.items())[:4]
             )
+            brands = "; ".join(
+                f"{b['name']} {b['distanceLabel']} {b['direction']}"
+                for b in r.get("nearBrands") or []
+                if b.get("found")
+            )
             out.append(
                 ChatResult(
                     label=label, latitude=r["latitude"], longitude=r["longitude"],
                     score=r.get("score"),
-                    why=f"Scores {r.get('score')} on your factors" + (f" ({names})." if names else "."),
+                    why=f"Scores {r.get('score')} on your factors"
+                    + (f" ({names})." if names else ".")
+                    + (f" Nearest: {brands}." if brands else ""),
                 )
             )  # fmt: skip
         elif tool == "similar":
@@ -730,6 +881,8 @@ def _source_summary(name: str, args: dict, payload: Any, is_error: bool) -> str:
         return f"{len(payload['results'])} similar areas"
     if name == "search_areas":
         return f"{len(payload['results'])} top areas"
+    if name == "find_places":
+        return f"{len(payload['places'])} places named {payload['query']}"
     if name == "optimize_location":
         return f"{len(payload['results'])} areas ranked by weekly travel time"
     return name

@@ -48,7 +48,7 @@
   outline: none;
 }
 
-/* The desktop column scrolls here, so the chat dock under it stays put. */
+/* The desktop column scrolls here, with the inline chat inside it. */
 .panelScroll {
   display: flex;
   flex: 1;

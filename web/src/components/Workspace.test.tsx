@@ -1091,17 +1091,27 @@ describe("area polygon", () => {
     await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
   });
 
-  it("keeps a best-areas pick cell-based, with no area request", async () => {
+  it("shows the road polygon, not the rectangle, for a best-areas pick", async () => {
     const user = userEvent.setup();
     const { areaMock } = setup("", liveApi, {}, areaApi);
     await mapReady();
 
     await user.click(await screen.findByRole("button", { name: /Rank 1/ }));
 
+    await waitFor(() => expect(map().areaGeometry).toMatchObject({ type: "Polygon" }));
+    expect(areaMock).toHaveBeenCalled();
+  });
+
+  it("falls back to the rectangle when the area is not found", async () => {
+    const user = userEvent.setup();
+    setup("", liveApi, {}, noArea);
+    await mapReady();
+
+    await user.click(await screen.findByRole("button", { name: /Rank 1/ }));
+
     expect(await screen.findByTestId("composite-score")).toBeInTheDocument();
-    expect(areaMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(map().highlightGeohash).toBe("dr5ru7"));
     expect(map().areaGeometry ?? null).toBeNull();
-    expect(map().highlightGeohash).toBe("dr5ru7");
   });
 
   it("clears the polygon when the result is closed", async () => {

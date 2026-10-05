@@ -127,7 +127,7 @@ export interface ApiClient {
   getSources(options?: RequestOptions): Promise<DataSource[]>;
   /** Thumbs and "wrong place" reports. Callers ignore failures. */
   sendFeedback(feedback: Feedback, options?: RequestOptions): Promise<void>;
-  /** "Ask BenriSpace": send the conversation so far; it must end with a user turn. */
+  /** "Ask Benri": send the conversation so far; it must end with a user turn. */
   chat(
     messages: readonly ChatTurn[],
     context?: ChatContext,
