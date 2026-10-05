@@ -382,6 +382,14 @@ drive is OSM maxspeed (or highway-class defaults) x 0.8, free flow.
 - **Address train trip** = walk to a station within 1.5 mi (straight line x 1.3 at 3 mph) + `rail_matrix`
   ride + walk from a station near the destination, best of up to 6 stations at each end.
 
+### Measured (laptop, Jersey City + Hoboken sample, walk, 2026-10-05)
+
+Tiles of 10 x 8 cells (about 6 x 8 km) plus a 3 km pad held 100k to 220k nodes each: 21 s, 236 s and 96 s
+per tile, 490 to 940 MB peak RSS, almost all of it Overpass download time (the public server was
+returning 504s; compute is a few seconds per tile). Train matrix: 933 stations, 273k connections,
+fetch 4.5 s + build 0.2 s + 2,800 scans 12 s, 190 MB. A walk isochrone request over the stored graph
+takes about 2 ms of Dijkstra plus one query; a 45 minute rail isochrone about 30 ms.
+
 ### Scaling to a 5 hour radius
 
 Work grows with cells (about 25x the current 64k at 5 h), not with memory. Drive-time cell graphs at
