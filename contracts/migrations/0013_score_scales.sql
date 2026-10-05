@@ -1,5 +1,5 @@
 -- BenriSpace migration 0013: per-metro factor scales for on-demand (precision=point) scoring.
--- NOT yet applied to production. Additive only, idempotent. Mirrored into contracts/schema.sql.
+-- Applied to production on 2026-10-05. Additive only, idempotent. Mirrored into contracts/schema.sql.
 -- Run by hand after review; the API works without it (it computes the scales once per
 -- Lambda instance from feature_store and caches them, see api/point_score.py).
 --
