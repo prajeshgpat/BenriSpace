@@ -150,6 +150,24 @@ Behavior worth knowing:
   `benrispace-v1.pmtiles`); set `NEXT_PUBLIC_PMTILES_URL` in Amplify and redeploy.
   `next.config.ts` adds that origin to the CSP `connect-src` automatically. Rebuild
   the tiles only when the grid or area polygons change, not when scores do.
+- **Static files on R2 (opt-in, `NEXT_PUBLIC_STATIC_URL`).** When set (for example
+  `https://tiles.benrispace.com`, same CORS and CSP rules as the tiles URL), the app
+  fetches `manifest.json` once per page (4 s timeout, `web/src/lib/static/manifest.ts`)
+  and uses what it lists, each piece independently: `scores` (the same bytes as
+  `GET /map/scores`, so `decodeScoreMatrix` is reused; `loadScoreMatrix` tries R2 first),
+  `areaScores` (every road-bounded area's 13 sub-scores, centre, neighbourhood and metro,
+  decoded by `lib/static/areaScores.ts`, binary-searched by area id) and `tiles` (the
+  PMTiles archive; `NEXT_PUBLIC_PMTILES_URL` still wins when set). A missing manifest or
+  piece, a network or CORS error, or a decode error silently means "ask the API as
+  before"; with the variable unset nothing changes. Two things use the area file: a map
+  click that lands in exactly one area (an invisible `areas` fill layer in the tiles is
+  queried) shows that area's sub-scores and its overall score, computed with the same
+  `cellComposite` as the cells for the selected filters, while `GET /area` loads, and the
+  API's answer then replaces them; and similar areas are computed in the browser
+  (`lib/static/similar.ts`, mirroring `api/similar.py`: same metro, per-metro z-scores,
+  L2 over the 13 factors, overfetch then re-rank on selected factors, spread-out) with the
+  API as fallback. Candidates are areas where the API's are grid cells, so ranks can
+  differ slightly; the response shape is identical.
 - **Compare places.** Pin 2-4 places (`useCompare`, kept in `sessionStorage`);
   `CompareDrawer` shows factor rings side by side, marks the best value in each
   row, shows how many points each place trails the best, and lists the three

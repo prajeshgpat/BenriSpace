@@ -17,7 +17,8 @@ import styles from "./ScoreResult.module.css";
 
 interface ScoreHeaderProps {
   address: string;
-  score: Score;
+  /** A provisional score from the static file carries only these. */
+  score: Pick<Score, "compositeScore" | "neighborhood"> & Partial<Pick<Score, "precision">>;
   /** Present when the score is for a secondary-road area rather than a grid square. */
   area?: AreaInfo | null;
   /** Pin this place for the compare view. */

@@ -82,6 +82,8 @@ export interface CellClick {
   score: number;
   lat: number;
   lon: number;
+  /** Tile map only: the id of the one area under the click, if it can be told. */
+  areaId?: number;
 }
 
 export interface MarkerSpec {

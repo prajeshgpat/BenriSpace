@@ -4,7 +4,7 @@ import { addProtocol, type Map as MaplibreMap } from "maplibre-gl";
 import { useEffect, useRef, type RefObject } from "react";
 
 import { useLatest } from "@/hooks/useLatest";
-import { PMTILES_URL } from "@/lib/config";
+import { useTilesUrl } from "@/hooks/useStaticData";
 import { CELL_OPACITY, RAMP_STOPS } from "@/lib/map/colors";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
 import {
@@ -24,6 +24,8 @@ const OUTLINE = "tiles-cells-outline";
 const HIGHLIGHT_CASING = "tiles-highlight-casing";
 const HIGHLIGHT = "tiles-highlight";
 const AREAS_LINE = "tiles-areas-line";
+// Invisible: only there so a click can ask which area it landed in.
+const AREAS_HIT = "tiles-areas-hit";
 
 type TileLayerName = keyof typeof FILL;
 
@@ -102,6 +104,17 @@ function addTileLayers(map: MaplibreMap, theme: ResolvedTheme, url: string) {
     },
     anchor,
   );
+  map.addLayer(
+    {
+      id: AREAS_HIT,
+      type: "fill",
+      source: SOURCE,
+      "source-layer": "areas",
+      minzoom: 11,
+      paint: { "fill-color": "#000000", "fill-opacity": 0 },
+    },
+    anchor,
+  );
   const none = ["==", ["get", "g"], ""] as never;
   map.addLayer({
     id: HIGHLIGHT_CASING,
@@ -119,6 +132,23 @@ function addTileLayers(map: MaplibreMap, theme: ResolvedTheme, url: string) {
     filter: none,
     paint: { "line-color": "#ffffff", "line-width": 2.5 },
   });
+}
+
+/** The one area under a screen point, or `undefined` when there is none or it is ambiguous. */
+function areaIdAt(map: MaplibreMap, point: { x: number; y: number }): number | undefined {
+  try {
+    if (!map.getLayer(AREAS_HIT)) return undefined;
+    const ids = new Set(
+      map
+        .queryRenderedFeatures(point as never, { layers: [AREAS_HIT] })
+        .map((feature) => Number(feature.properties?.id ?? feature.id)),
+    );
+    if (ids.size !== 1) return undefined;
+    const [id] = ids;
+    return Number.isInteger(id) ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface Applied {
@@ -161,7 +191,8 @@ interface Options {
 }
 
 /**
- * Draws the cell grid from a PMTiles archive (`NEXT_PUBLIC_PMTILES_URL`) and
+ * Draws the cell grid from a PMTiles archive (`NEXT_PUBLIC_PMTILES_URL`, or
+ * the static manifest's `tiles`) and
  * colours it by feature-state from scores computed in the browser. Does
  * nothing unless the flag is set and the tiles' scores are known; on a tile
  * error it calls `onFailed` so the GeoJSON layers take over again.
@@ -175,7 +206,8 @@ export function usePmtilesCells({
   onCellClick,
   onFailed,
 }: Options) {
-  const active = Boolean(PMTILES_URL) && tileCells !== null;
+  const tilesUrl = useTilesUrl();
+  const active = Boolean(tilesUrl) && tileCells !== null;
   const latest = useLatest({ tileCells, highlightGeohash, onCellClick, onFailed });
   const applied = useRef<Applied>({
     layer: "cells",
@@ -185,7 +217,7 @@ export function usePmtilesCells({
   // Layers, the click handler and failure handling: (re)built with the style.
   useEffect(() => {
     const map = mapRef.current;
-    const url = PMTILES_URL;
+    const url = tilesUrl;
     if (!ready || !map || !url || !active) return;
     let cancelled = false;
 
@@ -210,6 +242,7 @@ export function usePmtilesCells({
     const onClick = (event: {
       features?: { properties?: Record<string, unknown>; state?: Record<string, unknown> }[];
       lngLat: { lat: number; lng: number };
+      point: { x: number; y: number };
     }) => {
       const feature = event.features?.[0];
       const geohash = feature?.properties?.g;
@@ -217,6 +250,7 @@ export function usePmtilesCells({
       if (typeof geohash !== "string" || !Number.isFinite(score)) return;
       latest.current.onCellClick({
         geohash,
+        areaId: areaIdAt(map, event.point),
         score,
         lat: event.lngLat.lat,
         lon: event.lngLat.lng,
@@ -246,7 +280,7 @@ export function usePmtilesCells({
         map.off("click", FILL.cells, onClick);
         map.off("mouseenter", FILL.cells, enter);
         map.off("mouseleave", FILL.cells, leave);
-        for (const id of [HIGHLIGHT, HIGHLIGHT_CASING, AREAS_LINE, OUTLINE, FILL.cells, FILL.parents]) {
+        for (const id of [HIGHLIGHT, HIGHLIGHT_CASING, AREAS_HIT, AREAS_LINE, OUTLINE, FILL.cells, FILL.parents]) {
           if (map.getLayer(id)) map.removeLayer(id);
         }
         if (map.getSource(SOURCE)) map.removeSource(SOURCE);
@@ -254,7 +288,7 @@ export function usePmtilesCells({
         // The map is already gone.
       }
     };
-  }, [mapRef, ready, active, theme, latest]);
+  }, [mapRef, ready, active, theme, latest, tilesUrl]);
 
   // New scores for the view.
   useEffect(() => {

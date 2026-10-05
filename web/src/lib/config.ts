@@ -64,6 +64,18 @@ export function resolveTilesUrl(value: string | undefined): string | undefined {
 export const PMTILES_URL = resolveTilesUrl(process.env.NEXT_PUBLIC_PMTILES_URL);
 
 /**
+ * Optional origin of the static files on R2 (manifest.json, the score file, the
+ * area-score file and the PMTiles archive; see lib/static/). Unset means every
+ * one of them comes from the API / NEXT_PUBLIC_PMTILES_URL as before. Same
+ * rules as the tiles URL; the trailing slash is dropped.
+ */
+export function resolveStaticUrl(value: string | undefined): string | undefined {
+  const resolved = resolveTilesUrl(value);
+  return resolved?.replace(/\/+$/, "");
+}
+export const STATIC_URL = resolveStaticUrl(process.env.NEXT_PUBLIC_STATIC_URL);
+
+/**
  * Every host the map needs lives here: the style JSON, vector tiles, glyphs
  * and sprites are all served from this one origin. next.config.ts builds the
  * Content-Security-Policy from it, so changing the basemap provider is a

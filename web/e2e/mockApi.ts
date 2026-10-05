@@ -100,6 +100,10 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       body: JSON.stringify({ version: 8, sources: {}, layers: [] }),
     }),
   );
+  // The build sets NEXT_PUBLIC_STATIC_URL to a host that does not exist, so
+  // every run also proves the fallback: the manifest fetch fails and the app
+  // works from the API alone.
+  await page.route("https://static.e2e.test/**", (route) => route.abort("failed"));
   await page.route(`${API}/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());

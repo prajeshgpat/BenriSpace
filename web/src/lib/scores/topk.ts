@@ -14,7 +14,7 @@ const MILES_PER_DEGREE_LAT = 69.0;
 /** Grid cells must never be narrower than the spacing anywhere in the metro. */
 const WIDEST_LATITUDE = 42.5;
 
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number) {
+export function haversineM(lat1: number, lon1: number, lat2: number, lon2: number) {
   const toRad = Math.PI / 180;
   const phi1 = lat1 * toRad;
   const phi2 = lat2 * toRad;
