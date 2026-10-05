@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -95,6 +96,17 @@ describe("HomePage", () => {
     }
     expect(screen.getByText(/New York, New Jersey and Connecticut/)).toBeInTheDocument();
     expect(screen.getByText(/Built from OpenStreetMap/)).toBeInTheDocument();
+  });
+
+  it("offers Ask BenriSpace, carrying typed text without scoring it", async () => {
+    render(<HomePage />);
+    const ask = screen.getByRole("link", { name: "Ask BenriSpace" });
+    expect(ask).toHaveAttribute("href", "/app?chat=1");
+    await userEvent.type(
+      screen.getByRole("combobox", { name: "Address" }),
+      "12 Elm St",
+    );
+    expect(ask).toHaveAttribute("href", "/app?chat=1&ask=12+Elm+St");
   });
 
   it("links to the app from the hero and the closing call to action", () => {

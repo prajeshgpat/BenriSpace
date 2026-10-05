@@ -57,8 +57,8 @@ const REPLY: ChatReply = {
   limited: false,
 };
 
-function setup() {
-  navigation.search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857";
+function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
+  navigation.search = search;
   const fetchMock = vi.fn<typeof fetch>(async (input) =>
     String(input).includes("/explanation")
       ? jsonResponse(liveExplanationBody)
@@ -145,5 +145,31 @@ describe("Workspace: Ask BenriSpace", () => {
     expect(window.history.pushState).toHaveBeenCalled();
     expect(navigation.search).toContain("lat=41.07");
     expect(screen.queryByRole("region", { name: "Ask BenriSpace" })).not.toBeInTheDocument();
+  });
+
+  it("sends the typed, unsubmitted search text as the chat address when nothing is scored", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup("");
+    await user.type(screen.getByRole("combobox", { name: "Address" }), "10 Main St, Stamford");
+    await user.click(screen.getByRole("button", { name: "Ask BenriSpace" }));
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).toEqual({ address: "10 Main St, Stamford" });
+  });
+
+  it("opens the chat on load for ?chat=1 and pre-fills ?ask= without scoring", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup("chat=1&ask=12+Elm+St");
+    expect(screen.getByRole("region", { name: "Ask BenriSpace" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("12 Elm St");
+    expect(window.history.pushState).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).toEqual({ address: "12 Elm St" });
+  });
+
+  it("opens the chat on load for a bare ?chat=1", () => {
+    setup("chat=1");
+    expect(screen.getByRole("region", { name: "Ask BenriSpace" })).toBeInTheDocument();
   });
 });

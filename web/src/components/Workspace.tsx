@@ -233,7 +233,18 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
   // "Ask BenriSpace" replaces the result and filter cards while it is open.
-  const [chatOpen, setChatOpen] = useState(false);
+  // `/app?chat=1` (the home page's "Ask BenriSpace") opens it on load; `ask=`
+  // pre-fills the search box and the chat context without scoring anything.
+  const [chatOpen, setChatOpen] = useState(() => params.get("chat") === "1");
+  const [askPrefill, setAskPrefill] = useState(() => params.get("ask")?.trim() ?? "");
+  // What is in the search box right now, submitted or not.
+  const [typedText, setTypedText] = useState(askPrefill);
+  const [typedKey, setTypedKey] = useState(placeKey);
+  if (typedKey !== placeKey) {
+    setTypedKey(placeKey);
+    setTypedText("");
+    setAskPrefill("");
+  }
 
   const [start] = useState(() => {
     const view = initialView(initial);
@@ -249,7 +260,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
   // Phones show the panel as a bottom sheet: collapsed until there is a place
   // to show, and back to collapsed when it is closed.
-  const [snap, setSnap] = useState<SheetSnap>(initial.target ? "half" : "peek");
+  const [snap, setSnap] = useState<SheetSnap>(
+    chatOpen ? "full" : initial.target ? "half" : "peek",
+  );
   const [sheetKey, setSheetKey] = useState(placeKey);
   if (sheetKey !== placeKey) {
     setSheetKey(placeKey);
@@ -598,7 +611,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     <>
       <div ref={searchRef} className={styles.search}>
         <AddressSearch
-          initialValue={rawAddress ?? address ?? ""}
+          initialValue={rawAddress ?? address ?? askPrefill}
+          onTextChange={setTypedText}
           initialError={urlError}
           onSearch={handleSearch}
           onSelectSuggestion={handleSelectSuggestion}
@@ -645,7 +659,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         <ChatPanel
           client={client}
           context={{
-            ...(target && address ? { address } : {}),
+            ...(target && address
+              ? { address }
+              : typedText.trim()
+                ? { address: typedText.trim().slice(0, 300) }
+                : {}),
             ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
             ...(priorities.factors ? { factors: priorities.factors } : {}),
             ...(priorities.weights ? { weights: priorities.weights } : {}),

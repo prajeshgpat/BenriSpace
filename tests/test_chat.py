@@ -255,6 +255,48 @@ def test_context_reaches_prompt_and_defaults_factors(db, monkeypatch):
     assert "5 Main St, Hoboken NJ" in client.calls[0]["system"]
 
 
+def test_typed_address_is_geocoded_once_and_becomes_the_users_point(db, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "api.geocoding.geocode_address", lambda q, **k: calls.append(q) or (40.7357, -74.0336)
+    )
+    seen = {}
+    monkeypatch.setitem(
+        chat.TOOL_IMPL,
+        "search_areas",
+        lambda a, c: seen.update(near=(c.latitude, c.longitude)) or {"results": []},
+    )
+    client = FakeAnthropic(
+        [resp([tool("search_areas", {})], "tool_use"), resp([text("Nothing found.")])]
+    )
+    chat.run_chat(
+        body("near me?", context={"address": "5 Main St, Hoboken NJ"}), lambda timeout: client
+    )
+    assert calls == ["5 Main St, Hoboken NJ"]
+    assert seen["near"] == (40.7357, -74.0336)
+    system = client.calls[0]["system"]
+    assert "5 Main St, Hoboken NJ" in system and "40.7357" in system
+    assert "typed in the search box" in system
+
+
+def test_typed_address_that_cannot_be_geocoded_is_passed_as_text(db, monkeypatch):
+    monkeypatch.setattr("api.geocoding.geocode_address", lambda q, **k: None)
+    client = FakeAnthropic([resp([text("Which town?")])])
+    chat.run_chat(body("hi", context={"address": "Main St"}), lambda timeout: client)
+    system = client.calls[0]["system"]
+    assert "Main St" in system and "could not be located" in system
+
+
+def test_address_with_coordinates_is_not_geocoded(db, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("must not geocode")
+
+    monkeypatch.setattr("api.geocoding.geocode_address", boom)
+    client = FakeAnthropic([resp([text("ok")])])
+    ctx = {"address": "5 Main St", "latitude": 40.7, "longitude": -74.0}
+    chat.run_chat(body("hi", context=ctx), lambda timeout: client)
+
+
 # --- prompt rules -----------------------------------------------------------
 
 

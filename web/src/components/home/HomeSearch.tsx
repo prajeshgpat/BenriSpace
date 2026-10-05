@@ -36,13 +36,18 @@ const defaultClient = createApiClient({ baseUrl: API_BASE_URL });
 
 interface HomeSearchProps {
   suggestClient?: Pick<ApiClient, "suggestAddresses">;
+  /** Reports the typed text so the hero can offer it to the chat. */
+  onValueChange?: (value: string) => void;
 }
 
 /**
  * The hero search. Without JavaScript it is a plain GET form to the app; with
  * it, suggestions appear and a chosen one opens the app on its exact point.
  */
-export function HomeSearch({ suggestClient = defaultClient }: HomeSearchProps) {
+export function HomeSearch({
+  suggestClient = defaultClient,
+  onValueChange,
+}: HomeSearchProps) {
   const router = useRouter();
   const id = useId();
   const listboxId = `${id}-listbox`;
@@ -77,6 +82,7 @@ export function HomeSearch({ suggestClient = defaultClient }: HomeSearchProps) {
 
   function select(suggestion: Suggestion) {
     setValue(suggestion.label);
+    onValueChange?.(suggestion.label);
     suggestions.reset();
     router.push(
       resultHref(suggestion.label, {
@@ -136,6 +142,7 @@ export function HomeSearch({ suggestClient = defaultClient }: HomeSearchProps) {
             value={value}
             onChange={(event) => {
               setValue(event.target.value);
+              onValueChange?.(event.target.value);
               if (error) setError(null);
               suggestions.handleInput(event.target.value);
             }}

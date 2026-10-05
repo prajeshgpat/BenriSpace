@@ -7,7 +7,7 @@ import { scoreColor } from "@/lib/map/colors";
 import { FACTORS, FACTOR_GROUPS, type FactorGroup } from "@/lib/score/factors";
 import { APP_PATH } from "@/lib/site";
 
-import { HomeSearch } from "./HomeSearch";
+import { HeroSearch } from "./HeroSearch";
 import styles from "./HomePage.module.css";
 
 const STEPS = [
@@ -119,18 +119,7 @@ export function HomePage() {
             See what is around any address in the New York metro area, scored
             out of 100.
           </p>
-          <HomeSearch />
-          <Link className={styles.explore} href={APP_PATH} prefetch={false}>
-            <svg
-              className={styles.exploreIcon}
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5zM9 4v13.5M15 6.5V20" />
-            </svg>
-            Explore the map
-          </Link>
+          <HeroSearch />
         </header>
 
         <section className={styles.section} aria-labelledby="what-you-get">
