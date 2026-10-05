@@ -143,13 +143,10 @@ Behavior worth knowing:
   (`components/map/usePmtilesCells.ts`): a filter change updates only the cells
   whose score moved. If a tile request fails the map falls back to GeoJSON cells.
   Unset (the default), nothing changes and the `pmtiles` library is not loaded.
-  Owner steps to turn it on: create a Cloudflare R2 bucket with a public custom
-  domain (or r2.dev) and a CORS rule allowing `GET`/`HEAD` with the `Range`
-  header from the site origins; upload `build/tiles/benrispace.pmtiles` (cache
-  `public, max-age=31536000, immutable` under a versioned name such as
-  `benrispace-v1.pmtiles`); set `NEXT_PUBLIC_PMTILES_URL` in Amplify and redeploy.
-  `next.config.ts` adds that origin to the CSP `connect-src` automatically. Rebuild
-  the tiles only when the grid or area polygons change, not when scores do.
+  The archive is served from R2 (next section); the web app finds it through
+  `manifest.json` (`NEXT_PUBLIC_STATIC_URL`). Rebuild the tiles only when the grid
+  or area polygons change, not when scores do. Tiles read the FULL-detail polygons
+  from the local build table; production Postgres keeps only simplified outlines.
 - **Compare places.** Pin 2-4 places (`useCompare`, kept in `sessionStorage`);
   `CompareDrawer` shows factor rings side by side, marks the best value in each
   row, shows how many points each place trails the best, and lists the three
@@ -172,6 +169,89 @@ Behavior worth knowing:
   `chat_stream_adapter_layer_arn`, apply, then set `NEXT_PUBLIC_CHAT_STREAM_URL`
   to the `chat_stream_url` output plus `v1/chat/stream`. The function URL is
   public and shares the per-visitor daily limit and monthly budget with `/chat`.
+
+### Static files on R2 (`benrispace-static`)
+
+Static data is served from a private Cloudflare R2 bucket behind
+`https://tiles.benrispace.com` (web env `NEXT_PUBLIC_STATIC_URL`), so the browser does not
+call the API for it. Everything is content-addressed and immutable except the manifest:
+
+| Key | Content | Headers |
+| --- | --- | --- |
+| `manifest.json` | the pointer to the current files, written LAST | `Cache-Control: public, max-age=60`, `application/json` |
+| `scores/<version>.<sha12>.bin` | the `GET /map/scores` body (`api/scorefile.py`, format 1) | `max-age=31536000, immutable`, gzip `Content-Encoding`, `application/octet-stream` |
+| `areas/<version>.<sha12>.bin` | every road-bounded area's centroid, name, metro and 13 sub-scores (`api/areafile.py`, format 1) | same as scores |
+| `tiles/benrispace.<sha12>.pmtiles` | the vector tiles, uploaded raw (range requests) | `immutable`, `application/vnd.pmtiles`, no `Content-Encoding` |
+
+`sha12` is the first 12 hex characters of the SHA-256 of the UNCOMPRESSED bytes. The manifest:
+
+```json
+{"format": 1, "weightsVersion": "v2.1-handtuned", "generatedAt": "2026-10-05T16:00:00+00:00",
+ "scores":     {"path": "scores/v2.1-handtuned.<sha12>.bin", "bytes": 1234567, "sha256": "<hex>"},
+ "areaScores": {"path": "areas/v2.1-handtuned.<sha12>.bin",  "bytes": 1234567, "sha256": "<hex>"},
+ "tiles":      {"path": "tiles/benrispace.<sha12>.pmtiles",  "bytes": 1234567, "sha256": "<hex>"}}
+```
+
+Any of the three may be absent; paths are relative to the manifest; `bytes` is the
+uncompressed size. A republish merges with the manifest already in the bucket, so entries
+that are not rebuilt stay (scores and areaScores of a different weights version are dropped).
+
+**areaScores format 1** (little-endian): `uint32 header_length`; header JSON padded with
+spaces so `4 + header_length` is a multiple of 4: `{"format":1,"kind":"areaScores",
+"version","factors":[13 keys],"count":N,"generatedAt","metros":[...],"names":[...]}`; then
+`N*4` uint32 area ids (ascending), `N*4` int32 centroid latitude x 1e5, `N*4` int32 centroid
+longitude x 1e5, `N*2` uint16 index into `names` (65535 = none), `N*1` uint8 index into
+`metros` (255 = none), `N*13` uint8 sub-scores area-major (0-100, 255 = none). Trailing
+bytes are ignored. The scores are what `GET /area?precision=point` returns for the area
+(`scripts/build_area_scores.py`: the same sample points, `score_points_cells` and
+`area_aggregate_from_points`); the centroid is `ST_PointOnSurface` of the area polygon.
+Areas outside every scored cell's reach have all 255.
+
+Scores are published by CI after the scoring job (`ingestion.yml`, `--scores-only`). Area
+scores and tiles need the local areas database and are a manual step for now.
+
+#### Runbook: R2 static files
+
+Credentials (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`) and `DATABASE_URL`
+come from `.env`; the build only reads production. Run from the repo root with the venv.
+
+```bash
+# once: CORS (GET/HEAD, Range, the site origins and localhost:3000)
+python scripts/publish_static.py --setup-bucket
+
+# area scores (about an hour; resumable from build/area_scores.<version>.jsonl)
+export PATH=$HOME/.local/bin:$HOME/.local/opt/lima/bin:$PATH; colima start; docker start benri-postgis
+python scripts/build_area_scores.py            # AREAS_DATABASE_URL defaults to the local Docker DB
+
+# tiles (needs the local DB to hold scored cells and areas_slim, and Docker)
+python scripts/build_tiles.py --out build/tiles
+
+# publish: plan first, then for real; the manifest is uploaded last
+python scripts/publish_static.py --dry-run --tiles build/tiles/benrispace.pmtiles
+python scripts/publish_static.py --tiles build/tiles/benrispace.pmtiles
+python scripts/publish_static.py --scores-only   # what CI runs: only the score file
+
+# housekeeping: list, then delete, unreferenced objects older than 7 days
+python scripts/publish_static.py --prune
+python scripts/publish_static.py --prune --yes
+```
+
+Uploads only happen for keys `head_object` reports missing, so reruns are cheap. To check a
+publish, fetch `manifest.json` and one file with boto3 and decode it (`api.areafile.decode`,
+or the decoder in `docs/api.md` for scores). Owner steps to go live: attach the custom
+domain `tiles.benrispace.com` to the bucket in Cloudflare, set `NEXT_PUBLIC_STATIC_URL` in
+Amplify and redeploy.
+
+#### Simplified polygons in Postgres
+
+Production `areas_slim` holds simplified outlines only (Douglas-Peucker at 3e-5 degrees, about
+3 m, snapped to a 1e-5 degree grid, made valid); the PMTiles carry the full detail. The local
+build table keeps the 1e-5 degree geometry that the tiles read. Copy with
+`python scripts/copy_areas_slim.py --target-url <url>` (`--dry-run` measures only; the target
+is never taken from `DATABASE_URL`). Measured on the local 35,943 areas: vertices 1,448,855 to
+1,059,776 (-27 percent), geometry bytes 24.9 MB to 18.7 MB, table with a fresh index 28 MB
+(the build table's own index is bloated by its inserts: 86 MB total), and 2,946 of 2,946
+random point-in-polygon lookups returned the same area id.
 
 ## 2. Data pipeline: how scores are produced
 

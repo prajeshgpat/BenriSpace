@@ -119,3 +119,11 @@ jobs:
       - run: python -m scoring.run
       # Persist the compact score file (/v1/map/scores) so cold API requests skip the rebuild.
       - run: python -m api.scorefile
+      # Publish the score file to R2 (manifest.json last). Area scores and tiles need the local
+      # areas database and stay a manual step: see docs/ARCHITECTURE.md, "Static files on R2".
+      - run: pip install boto3 && python scripts/publish_static.py --scores-only
+        if: ${{ env.R2_ACCESS_KEY_ID != '' }}
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}

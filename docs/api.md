@@ -926,7 +926,7 @@ Errors: the same `400 invalid_request` cases as `/map/cells` for `bbox`, `factor
 
 ## `GET /map/scores`
 
-Every cell's 13 sub-scores for the configured weights version in one compact binary file, so a browser can recompute the composite locally for any factor or importance change with no further API calls. `version` is optional; if given it must equal the served weights version (otherwise 404). Cached for a day (`Cache-Control: public, max-age=86400`); `ETag` is `"<version>-<max computed_at as unix seconds>"` and a matching `If-None-Match` returns `304`. Sent gzip-encoded when the client accepts it (`Vary: Accept-Encoding`). About 1.2 MB raw for 64,320 cells (19 bytes a cell), built from one SQL query and cached per server process by ETag.
+Every cell's 13 sub-scores for the configured weights version in one compact binary file, so a browser can recompute the composite locally for any factor or importance change with no further API calls. `version` is optional; if given it must equal the served weights version (otherwise 404). Cached for a day (`Cache-Control: public, max-age=86400`); `ETag` is `"<version>-<max computed_at as unix seconds>"` and a matching `If-None-Match` returns `304`. Sent gzip-encoded when the client accepts it (`Vary: Accept-Encoding`). About 1.2 MB raw for 64,320 cells (19 bytes a cell), built from one SQL query and cached per server process by ETag. The same bytes are also published to R2 as `scores/<version>.<sha12>.bin` (see `docs/ARCHITECTURE.md`, "Static files on R2"), together with the area-scores file `areas/<version>.<sha12>.bin`.
 
 `Content-Type: application/octet-stream`. All integers are little-endian. Layout:
 
