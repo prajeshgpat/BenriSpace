@@ -36,6 +36,7 @@ import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
 import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
 import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
 import { provisionalArea } from "@/lib/static/provisional";
+import { round1, subScoresComposite } from "@/lib/scores/matrix";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
   YOUR_LOCATION_LABEL,
@@ -333,7 +334,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     [selection, weights],
   );
 
-  const { state, retry } = useScoreLookup(target, client, priorities);
+  const { state: lookup, retry } = useScoreLookup(target, client, priorities);
+  // The overall score is normalised to the selected factors and weights, with
+  // the same arithmetic as the map colours and the best-areas list.
+  const state: LookupState = useMemo(() => {
+    if (lookup.status !== "success") return lookup;
+    const composite = subScoresComposite(lookup.score.subScores, selection.factors, weights);
+    if (composite === null) return lookup;
+    return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
+  }, [lookup, selection.factors, weights]);
 
   // A map click that landed in a known area shows that area's static scores
   // while `/area` loads; the API's answer replaces them.
