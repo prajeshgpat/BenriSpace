@@ -109,7 +109,7 @@ jobs:
     env:
       # Written next to the v1 rows (unique per geo_entity + version); the API
       # keeps serving whichever version its SCORING_WEIGHTS_VERSION names.
-      SCORING_WEIGHTS_VERSION: v2-handtuned
+      SCORING_WEIGHTS_VERSION: v2.1-handtuned
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
