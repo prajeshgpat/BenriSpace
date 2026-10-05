@@ -54,11 +54,13 @@ geo = [
     "matplotlib>=3.8",
 ]
 
-# Wave 4 routing prototype (scripts/routing_prototype.py); NOT in the Lambda bundle.
+# Wave 4 routing precompute (ingestion/routing); NOT in the Lambda bundle. osmnx is only
+# used by the exploratory scripts/routing_prototype.py.
 routing = [
     "pandana>=0.7",
     "osmnx>=2.0",
     "numpy>=1.26",
+    "shapely>=2.0",
 ]
 
 [tool.ruff]

@@ -178,6 +178,42 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
+  /isochrone:
+    get:
+      summary: >
+        Area reachable from a point within N minutes by walking, driving or rail,
+        from the precomputed road-network cell graph.
+      operationId: getIsochrone
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: {type: number, format: double}
+        - name: lon
+          in: query
+          required: true
+          schema: {type: number, format: double}
+        - name: mode
+          in: query
+          schema: {type: string, enum: [walk, drive, transit], default: drive}
+        - name: minutes
+          in: query
+          description: Time budget, 1-120 (capped per mode, walk 45, drive 90, transit 120). Default 15 / 30 / 45.
+          schema: {type: integer, minimum: 1, maximum: 120}
+      responses:
+        "200":
+          description: The reachable area as a GeoJSON MultiPolygon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IsochroneResponse"
+        "400":
+          description: Invalid parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /triangulate:
     post:
       summary: >
@@ -1177,6 +1213,47 @@ components:
         compositeScore:
           type: number
 
+    IsochroneShape:
+      type: object
+      required: [mode, minutes, method, cellCount, areaSqMi]
+      description: >
+        A reachable area. `method` is `network` when computed from the precomputed
+        road-network cell graph (resolution one 0.58 x 0.38 mi cell) and `estimate` when
+        the area has no routing data yet and a straight-line circle was used.
+      properties:
+        label:
+          type: string
+          nullable: true
+        mode:
+          type: string
+          enum: [drive, transit, walk]
+        minutes:
+          type: integer
+        method:
+          type: string
+          enum: [network, estimate]
+        cellCount:
+          type: integer
+        areaSqMi:
+          type: number
+        geometry:
+          type: object
+          nullable: true
+          description: GeoJSON MultiPolygon, coordinates [lon, lat].
+
+    IsochroneResponse:
+      type: object
+      required: [latitude, longitude, isochrone]
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+        isochrone:
+          $ref: "#/components/schemas/IsochroneShape"
+
     TriangulateResponse:
       type: object
       required: [results]
@@ -1185,6 +1262,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RankedAddress"
+        isochrones:
+          type: array
+          description: One reachable area per anchor, in request order.
+          items:
+            $ref: "#/components/schemas/IsochroneShape"
+        combined:
+          $ref: "#/components/schemas/IsochroneShape"
 
     OptimizeAnchor:
       type: object

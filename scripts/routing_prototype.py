@@ -1,4 +1,4 @@
-"""Wave 4 routing prototype (exploratory; read-only DB, no writes).
+"""Wave 4 routing prototype (exploratory; read-only DB, no writes). Superseded by ingestion/routing.
 
 Walk minutes from every node of a small OSM walk network to the nearest 3 grocery places in
 ONE multi-source search (Pandana k-nearest POIs), mapped to the geohash6 cells in the bbox.

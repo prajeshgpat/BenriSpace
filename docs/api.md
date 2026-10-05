@@ -12,7 +12,8 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
-| `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
+| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) as a GeoJSON polygon | built, needs migration 0022 and the routing precompute |
+| `POST /triangulate` | Best locations that satisfy several commute anchors, with the isochrone polygons | live; real isochrones once migration 0022 data exists, straight-line circles otherwise |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
 | `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
 | `POST /chat/stream` | The same chat as server-sent events (progress, then the reply) | built, not deployed |
@@ -322,11 +323,46 @@ Errors: `400 invalid_request` if the id is not a UUID, `404 not_found` if no sco
 
 ---
 
+## `GET /isochrone`
+
+The area reachable from a point within a time budget, as a GeoJSON `MultiPolygon` (coordinates `[lon, lat]`).
+
+| Parameter | Description |
+| --- | --- |
+| `lat`, `lon` | Origin (required) |
+| `mode` | `walk`, `drive` or `transit` (rail). Default `drive` |
+| `minutes` | 1-120, capped per mode: walk 45, drive 90, transit 120. Default 15 / 30 / 45 |
+
+```bash
+curl "https://api.benrispace.com/v1/isochrone?lat=40.7178&lon=-74.0431&mode=walk&minutes=20"
+```
+
+```json
+{
+  "latitude": 40.7178,
+  "longitude": -74.0431,
+  "isochrone": {
+    "mode": "walk",
+    "minutes": 20,
+    "method": "network",
+    "cellCount": 14,
+    "areaSqMi": 2.9,
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[[-74.0549, 40.7141], "..."]]] }
+  }
+}
+```
+
+How it is computed: the road network is folded ahead of time into a graph of the 0.58 x 0.38 mi grid cells (travel minutes from each cell to its 8 neighbours, measured on OpenStreetMap roads and paths; table `cell_graph`). A request runs Dijkstra over that graph, then traces the reached cells into a smoothed polygon. Rail trips walk to nearby stations on the walk graph, add the precomputed station-to-station ride (`rail_matrix`, a weekday AM-peak timetable from the MTA, LIRR, Metro-North, PATH and NJ Transit rail feeds, median over three departures, so it includes the wait), then walk out from every station reached. Resolution is one cell, so treat it as a commute-scale answer: good for 15+ minutes, coarse for a 5 minute walk. Walking is 3 mph; driving is free-flow road speeds x 0.8 with no live traffic.
+
+`method` is `network` when the area has precomputed routing, and `estimate` when it does not (a straight-line circle, drive 25 mph / transit 15 mph / walk 3 mph, the old placeholder). Responses carry `Cache-Control: public, max-age=300`.
+
+---
+
 ## `POST /triangulate`
 
-Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score. Candidate cells are prefiltered with a bounding box derived from the anchor circles.
+Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score, plus each anchor's isochrone polygon and the combined polygon.
 
-**This endpoint is live but uses placeholder geometry.** There is no routing engine yet (Valhalla arrives with Phase 2), so each anchor's reachable area is a straight-line circle, with radius = `maxTravelMinutes` x an assumed average speed for the mode (drive 25 mph, transit 15.5 mph, walk 3 mph). Ignoring rivers, bridges, highways and real transit lines, it can be off by a lot, particularly across water. Real isochrones will replace it; the request and response shapes are not expected to change.
+Each anchor becomes a set of reachable cells (the same method as `GET /isochrone`); `intersect` and `union` are exact set operations on those cells and the ranking reads the precomputed scores of the cells inside. An anchor whose area has no routing data yet falls back to a straight-line circle (`method: "estimate"`), so the endpoint always answers; the circle ignores rivers, bridges and real transit lines and can be off by a lot.
 
 Request body (JSON):
 
@@ -378,9 +414,16 @@ curl -X POST "https://api.benrispace.com/v1/triangulate" \
       "longitude": -73.9960000000001,
       "compositeScore": 77.093630662023
     }
-  ]
+  ],
+  "isochrones": [
+    { "label": "Work", "mode": "transit", "minutes": 20, "method": "network", "cellCount": 31, "areaSqMi": 6.4, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } },
+    { "label": "Gym", "mode": "walk", "minutes": 15, "method": "network", "cellCount": 9, "areaSqMi": 1.9, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } }
+  ],
+  "combined": { "mode": "transit", "minutes": 15, "method": "network", "cellCount": 6, "areaSqMi": 1.3, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } }
 }
 ```
+
+`isochrones` is in request order; `combined` is the intersection (or union) polygon (its `mode` and `minutes` are the first anchor's mode and the smallest budget; use `cellCount` / `areaSqMi` for size).
 
 Errors:
 
@@ -396,6 +439,8 @@ Errors:
 ---
 
 ## `POST /optimize`
+
+> **Travel times.** Where the routing precompute exists the optimizer uses stored minutes instead of estimates: category anchors on walk / drive read the cell's nearest-place minutes (`cell_travel`), the `airport` category reads the drive time to the nearest airport (`cell_hubs`), and a single-address transit anchor uses walk + rail ride + walk from the station matrix. Those results report `approx: false`. Candidate cells are first narrowed by an exact lower-bound prune seeded at the weighted geometric median (Weiszfeld) of the anchors.
 
 Finds the places to live that minimise your weekly travel to several destinations, for example "near my work (123 Main St, Stamford), a Trader Joe's and a Planet Fitness". Each anchor is an `address` (geocoded, or pass `latitude`/`longitude`), a `brand` (case-insensitive match on a place's name or brand, so `trader joe` finds "Trader Joe's") or a `category` (`grocery`, `gym`, `cafe`, `restaurant`, `bar`, `transit`, `school`, `gas_station`, `convenience_store`, plus synonyms such as `coffee`, `groceries`, `gas`). For brands and categories each candidate uses its nearest matching place.
 

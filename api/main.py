@@ -79,6 +79,8 @@ from api.schemas import (
     Error,
     ExplanationResponse,
     ImproveResponse,
+    IsochroneResponse,
+    IsochroneShape,
     MapCellsResponse,
     MapTopResponse,
     PlacesResponse,
@@ -94,8 +96,8 @@ from api.schemas import (
 from api.similar import build_similar, fetch_neighbours, fetch_target, overfetch_limit
 from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses
-from api.triangulate import anchor_to_circle, rank_candidates
-from api.triangulate_sql import combined_bbox, get_scored_candidates_in_box
+from api.triangulate import anchor_cells, cells_box, rank_in_cells, shape_for
+from api.triangulate_sql import get_scored_candidates_in_box
 from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
 
 # Requests reuse one pooled connection per process (common.db.api_connection); the name
@@ -299,7 +301,9 @@ def get_score_explanation(
     responses={400: {"model": Error}},
 )
 def triangulate(body: TriangulateRequest):
-    circles = []
+    from api import isochrone
+
+    points = []
     for anchor in body.anchors:
         latlon = _resolve_anchor_latlon(anchor)
         if latlon is None:
@@ -308,21 +312,24 @@ def triangulate(body: TriangulateRequest):
                 "invalid_anchor",
                 f"Anchor {anchor.label!r} needs a resolvable address or lat/lon.",
             )
-        lat, lon = latlon
-        # Phase 1 straight-line-circle placeholder, see api/triangulate.py.
-        circles.append(anchor_to_circle(lat, lon, anchor.max_travel_minutes, anchor.mode))
+        points.append((anchor, *latlon))
 
     with get_connection() as conn:
-        # Bounding-box prefilter: only cells near the circles leave the DB;
-        # rank_candidates still does the exact haversine test.
-        candidates = get_scored_candidates_in_box(
-            conn, combined_bbox(circles, body.combine_mode), SCORING_WEIGHTS_VERSION
+        per_anchor = []
+        for anchor, lat, lon in points:
+            cells, mins, method = anchor_cells(
+                conn, lat, lon, anchor.mode, anchor.max_travel_minutes
+            )
+            per_anchor.append((anchor, lat, lon, cells, mins, method))
+        combined = isochrone.combine([p[3] for p in per_anchor], body.combine_mode)
+        box = cells_box(combined)
+        candidates = (
+            get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
         )
 
     for c in candidates:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-
-    ranked = rank_candidates(candidates, circles, combine_mode=body.combine_mode, limit=body.limit)
+    ranked = rank_in_cells(candidates, combined, body.limit)
 
     results = [
         RankedAddress(
@@ -334,7 +341,45 @@ def triangulate(body: TriangulateRequest):
         )
         for r in ranked
     ]
-    return TriangulateResponse(results=results)
+    shapes = [
+        IsochroneShape(**shape_for(cells, a.label, a.mode, mins, method, lat))
+        for a, lat, lon, cells, mins, method in per_anchor
+    ]
+    mid_lat = sum(p[1] for p in points) / len(points)
+    combined_shape = IsochroneShape(
+        **shape_for(
+            combined,
+            None,
+            body.anchors[0].mode,
+            min(s.minutes for s in shapes),
+            "network" if all(s.method == "network" for s in shapes) else "estimate",
+            mid_lat,
+        )
+    )
+    return TriangulateResponse(results=results, isochrones=shapes, combined=combined_shape)
+
+
+@app.get(
+    "/v1/isochrone",
+    response_model=IsochroneResponse,
+    responses={400: {"model": Error}, 404: {"model": Error}},
+)
+def get_isochrone(
+    lat: float = Query(ge=-90, le=90),
+    lon: float = Query(ge=-180, le=180),
+    mode: Literal["walk", "drive", "transit"] = "drive",
+    minutes: int | None = Query(default=None, ge=1, le=120),
+    response: Response = None,
+):
+    """Area reachable from a point within `minutes`, from the precomputed cell graph."""
+    with get_connection() as conn:
+        cells, mins, method = anchor_cells(conn, lat, lon, mode, minutes)
+    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+    return IsochroneResponse(
+        latitude=lat,
+        longitude=lon,
+        isochrone=IsochroneShape(**shape_for(cells, None, mode, mins, method, lat)),
+    )
 
 
 CACHE_CONTROL_5_MIN = "public, max-age=300"
