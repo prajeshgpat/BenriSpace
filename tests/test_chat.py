@@ -2,6 +2,7 @@
 (fake Anthropic client and fake database: no network, no Postgres)."""
 
 import contextlib
+import json
 from types import SimpleNamespace
 
 import psycopg
@@ -435,6 +436,53 @@ def test_route_shapes(db, monkeypatch):
     db.count = 99
     limited = http.post("/v1/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert limited.status_code == 429 and limited.json()["code"] == "rate_limited"
+
+
+# --- streaming --------------------------------------------------------------
+
+
+def _frames(text_body):
+    out = []
+    for frame in text_body.strip().split("\n\n"):
+        if frame.startswith(":"):
+            continue
+        event, data = frame.split("\n", 1)
+        out.append((event.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
+    return out
+
+
+def test_stream_emits_status_then_the_same_reply(db, optimize_tool, monkeypatch):
+    anchors = [{"kind": "address", "query": "1 Stamford Forum, Stamford CT"}]
+    client = FakeAnthropic(
+        [
+            resp([tool("optimize_location", {"anchors": anchors})], "tool_use"),
+            resp([text("Darien, Connecticut looks best: about 140 minutes of travel a week.")]),
+        ]
+    )
+    monkeypatch.setattr(chat, "make_client", lambda t: client)
+    http = TestClient(main.app)
+    payload = {"messages": [{"role": "user", "content": "Find a place near my work"}]}
+    streamed = http.post("/v1/chat/stream", json=payload)
+    assert streamed.status_code == 200
+    assert streamed.headers["content-type"].startswith("text/event-stream")
+    frames = _frames(streamed.text)
+    kinds = [k for k, _ in frames]
+    assert kinds[-1] == "reply" and kinds.count("reply") == 1 and "error" not in kinds
+    statuses = [d for k, d in frames if k == "status"]
+    assert any(d.get("tool") == "optimize_location" for d in statuses)
+    assert frames[-1][1]["reply"].startswith("Darien, Connecticut looks best")
+    assert frames[-1][1]["results"][0]["latitude"] == 41.07
+
+
+def test_stream_reports_errors_as_events(db, monkeypatch):
+    db.count = 99
+    http = TestClient(main.app)
+    streamed = http.post("/v1/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert streamed.status_code == 200
+    ((kind, data),) = _frames(streamed.text)[-1:]
+    assert kind == "error" and data["status"] == 429 and data["code"] == "rate_limited"
+    bad = http.post("/v1/chat/stream", json={"messages": []})
+    assert bad.status_code == 400
 
 
 # --- tools on the real functions -------------------------------------------

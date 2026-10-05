@@ -256,6 +256,39 @@ paths:
         "429":
           $ref: "#/components/responses/TooManyRequests"
 
+  /chat/stream:
+    post:
+      summary: The same chat as /chat, delivered as server-sent events.
+      description: >
+        Takes the same body as `/chat`. The response is `text/event-stream`:
+        `status` frames (`{text, tool?}`) while the assistant works, then exactly
+        one `reply` frame (the `/chat` JSON body) or one `error` frame
+        (`{status, code, message}` using the codes of `/chat`). The reply text is
+        sent whole after grounding validation, never as unvalidated tokens. A
+        malformed body is rejected with a plain 400 before the stream starts.
+        Behind API Gateway the frames arrive together at the end; true streaming
+        needs a Lambda function URL (docs/ARCHITECTURE.md, Chat streaming).
+      operationId: chatStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: A server-sent event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /chat:
     post:
       summary: Ask Benri, a tool-using chat assistant grounded in our own data.

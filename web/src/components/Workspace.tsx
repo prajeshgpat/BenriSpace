@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,6 +16,7 @@ import {
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useCompare } from "@/hooks/useCompare";
+import { useLatest } from "@/hooks/useLatest";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
@@ -31,7 +33,7 @@ import {
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
 import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
-import { API_BASE_URL } from "@/lib/config";
+import { API_BASE_URL, CHAT_STREAM_URL, PMTILES_URL } from "@/lib/config";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
   YOUR_LOCATION_LABEL,
@@ -63,8 +65,6 @@ import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
-import { CompareDrawer } from "./CompareDrawer";
-import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
 import { FactorControls } from "./map/FactorControls";
@@ -81,7 +81,33 @@ const MapCanvas = dynamic(
   { ssr: false, loading: () => <MapPlaceholder /> },
 );
 
-const defaultClient = createApiClient({ baseUrl: API_BASE_URL });
+// Chat and the compare table are opened on demand, so their code is fetched
+// on first use instead of with the first paint.
+const ChatPanel = dynamic(
+  () => import("./chat/ChatPanel").then((module) => module.ChatPanel),
+  { ssr: false },
+);
+const CompareDrawer = dynamic(
+  () => import("./CompareDrawer").then((module) => module.CompareDrawer),
+  { ssr: false },
+);
+
+const defaultClient = createApiClient({
+  baseUrl: API_BASE_URL,
+  chatStreamUrl: CHAT_STREAM_URL,
+});
+
+function topPlace(r: MapTopResult): ComparePlace {
+  return {
+    id: placeId(r.latitude, r.longitude),
+    label: areaTitle(r),
+    neighborhood: r.neighborhood?.trim() || null,
+    score: r.score,
+    subScores: r.subScores,
+    lat: r.latitude,
+    lon: r.longitude,
+  };
+}
 
 /** Zoom for an entry of the best-areas list: a few neighbourhoods across. */
 const AREA_ZOOM = 12;
@@ -281,19 +307,37 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const searchRef = useRef<HTMLDivElement>(null);
   const flownKey = useRef<string | null>(start.key);
 
-  const { noFactors, cells, top, features, range, topResults, weights } =
+  // The vector-tile grid is opt-in (NEXT_PUBLIC_PMTILES_URL); a tile error
+  // switches back to GeoJSON cells for the rest of the visit.
+  const [tilesFailed, setTilesFailed] = useState(false);
+  const tilesOn = Boolean(PMTILES_URL) && !tilesFailed;
+  const { noFactors, cells, top, features, range, topResults, weights, tileCells } =
     useMapData({
       client,
       selection,
       viewport,
       topViewport,
+      tiles: tilesOn,
     });
   // The same selection the map sends, so every card talks about the factors
   // the colours are drawn from.
-  const priorities = priorityQuery(selection, weights);
+  const priorities = useMemo(
+    () => priorityQuery(selection, weights),
+    [selection, weights],
+  );
 
   const { state, retry } = useScoreLookup(target, client, priorities);
   const compare = useCompare();
+  // Fetch the chat code once the page is idle, so "Ask Benri" opens at once.
+  useEffect(() => {
+    const warm = () => void import("./chat/ChatPanel").catch(() => {});
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const handle = window.setTimeout(warm, 2000);
+    return () => window.clearTimeout(handle);
+  }, []);
   const currentPlace: ComparePlace | null =
     state.status === "success"
       ? {
@@ -306,15 +350,37 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           lon: state.score.longitude,
         }
       : null;
-  const topPlace = (r: MapTopResult): ComparePlace => ({
-    id: placeId(r.latitude, r.longitude),
-    label: areaTitle(r),
-    neighborhood: r.neighborhood?.trim() || null,
-    score: r.score,
-    subScores: r.subScores,
-    lat: r.latitude,
-    lon: r.longitude,
-  });
+
+  // Stable handlers and props, so the memoized panels below skip the renders
+  // that map panning causes.
+  const showPreviewRef = useLatest(showPreview);
+  const selectTopRef = useLatest(selectTop);
+  const onPreview = useCallback(
+    (next: Preview) => showPreviewRef.current(next),
+    [showPreviewRef],
+  );
+  const onSelectTop = useCallback(
+    (result: MapTopResult) => selectTopRef.current(result),
+    [selectTopRef],
+  );
+  const { places: pinned, full: compareFull, toggle: toggleCompare } = compare;
+  const topCompare = useMemo(
+    () => ({
+      isPinned: (r: MapTopResult) =>
+        pinned.some((p) => p.id === placeId(r.latitude, r.longitude)),
+      full: compareFull,
+      onToggle: (r: MapTopResult) => toggleCompare(topPlace(r)),
+    }),
+    [pinned, compareFull, toggleCompare],
+  );
+  const successScore = state.status === "success" ? state.score : null;
+  const scoreCoordinates = useMemo(
+    () =>
+      successScore
+        ? { lat: successScore.latitude, lon: successScore.longitude }
+        : null,
+    [successScore],
+  );
 
   const point: LatLon | null =
     target?.kind === "coordinates"
@@ -734,22 +800,16 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               target={readableAddress ?? state.address}
             />
             <ImproveCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
+              coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
               client={client}
               priorities={priorities}
-              onPreview={showPreview}
+              onPreview={onPreview}
             />
             <SimilarCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
+              coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
               client={client}
               priorities={priorities}
-              onPreview={showPreview}
+              onPreview={onPreview}
             />
           </>
         ) : null}
@@ -759,27 +819,22 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           error={top.error}
           selectedFactors={selection.factors}
           activeGeohash={activeTop?.geohash ?? null}
-          onSelect={selectTop}
+          onSelect={onSelectTop}
           onRetry={top.retry}
-          compare={{
-            isPinned: (r) =>
-              compare.places.some(
-                (p) => p.id === placeId(r.latitude, r.longitude),
-              ),
-            full: compare.full,
-            onToggle: (r) => compare.toggle(topPlace(r)),
-          }}
+          compare={topCompare}
           feedbackClient={client}
         />
       </div>
       <p className="sr-only" role="status">
         {mapStatus}
       </p>
-      <CompareDrawer
-        places={compare.places}
-        onRemove={compare.remove}
-        onClear={compare.clear}
-      />
+      {compare.places.length > 0 ? (
+        <CompareDrawer
+          places={compare.places}
+          onRemove={compare.remove}
+          onClear={compare.clear}
+        />
+      ) : null}
     </>
   );
 
@@ -800,6 +855,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           markers={markers}
           activeMarkerId={activeTop?.geohash ?? null}
           highlightGeohash={highlightGeohash}
+          tileCells={tilesOn ? tileCells : null}
+          onTilesFailed={() => setTilesFailed(true)}
           areaGeometry={
             state.status === "success" ? (state.area?.geometry ?? null) : null
           }

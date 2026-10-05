@@ -38,6 +38,9 @@ describe("CompareDrawer", () => {
     // 13 factors + overall
     expect(within(table).getAllByRole("rowheader")).toHaveLength(14);
 
+    expect(screen.getByRole("region", { name: "Biggest differences" })).toHaveTextContent(
+      "Groceries: Place b leads by 12 points",
+    );
     await userEvent.click(screen.getByRole("button", { name: "Remove Place a from compare" }));
     expect(onRemove).toHaveBeenCalledWith("a");
     await userEvent.click(screen.getByRole("button", { name: "Clear all" }));

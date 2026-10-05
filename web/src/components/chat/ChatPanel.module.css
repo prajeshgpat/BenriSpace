@@ -321,3 +321,9 @@
   font-size: 0.8125rem;
   text-align: center;
 }
+
+.status {
+  margin-left: 0.25rem;
+  color: var(--text-subtle);
+  font-size: 0.8125rem;
+}

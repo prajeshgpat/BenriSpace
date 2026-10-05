@@ -24,10 +24,12 @@ import {
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
+import type { TileCells } from "@/lib/map/tileScores";
 import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
+import { usePmtilesCells } from "./usePmtilesCells";
 
 // See scripts/copy-maplibre-worker.mjs for why the worker is served by us.
 setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
@@ -113,6 +115,12 @@ interface MapCanvasProps {
   /** A previewed (not selected) area: drawn dashed, in orange. */
   previewAreaGeometry?: AreaGeometry | null;
   previewPin?: PinSpec | null;
+  /**
+   * Local scores for the view, to colour the PMTiles grid (only used when
+   * NEXT_PUBLIC_PMTILES_URL is set); `null` keeps the GeoJSON cells.
+   */
+  tileCells?: TileCells | null;
+  onTilesFailed?: () => void;
   theme: ResolvedTheme;
   pin: PinSpec | null;
   flyRequest: FlyRequest | null;
@@ -121,6 +129,8 @@ interface MapCanvasProps {
   onMarkerClick: (id: string) => void;
   onUnavailable: () => void;
 }
+
+const noopTilesFailed = () => {};
 
 /** Fade-in for the area polygon fill. */
 const AREA_FADE_MS = 250;
@@ -316,6 +326,8 @@ export function MapCanvas({
   areaGeometry = null,
   previewAreaGeometry = null,
   previewPin = null,
+  tileCells = null,
+  onTilesFailed,
   theme,
   pin,
   flyRequest,
@@ -606,6 +618,16 @@ export function MapCanvas({
       else delete button.dataset.active;
     });
   }, [activeMarkerId, markers, ready]);
+
+  usePmtilesCells({
+    mapRef,
+    ready,
+    theme,
+    tileCells,
+    highlightGeohash: areaGeometry ? null : highlightGeohash,
+    onCellClick,
+    onFailed: onTilesFailed ?? noopTilesFailed,
+  });
 
   const pinLat = pin?.lat;
   const pinLon = pin?.lon;

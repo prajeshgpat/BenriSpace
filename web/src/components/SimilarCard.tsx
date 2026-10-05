@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, memo } from "react";
 
 import { useSimilar } from "@/hooks/useSimilar";
 import type { ApiClient } from "@/lib/api/client";
@@ -40,7 +40,7 @@ function Chip({ difference }: { difference: SimilarDifference }) {
   );
 }
 
-export function SimilarCard({
+function SimilarCardImpl({
   coordinates,
   client,
   priorities,
@@ -137,3 +137,6 @@ export function SimilarCard({
     </section>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const SimilarCard = memo(SimilarCardImpl);

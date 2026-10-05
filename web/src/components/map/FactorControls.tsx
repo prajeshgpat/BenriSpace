@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, memo } from "react";
 
 import type { FactorKey } from "@/lib/api/types";
 import {
@@ -72,7 +72,7 @@ function ScoreBadge({ value }: { value: number | null }) {
   );
 }
 
-export function FactorControls({
+function FactorControlsImpl({
   selection,
   onChange,
   scores = null,
@@ -195,3 +195,6 @@ function ImportanceRow({ factor, selection, onChange }: ImportanceRowProps) {
     </div>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const FactorControls = memo(FactorControlsImpl);

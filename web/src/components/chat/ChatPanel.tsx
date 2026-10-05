@@ -145,6 +145,8 @@ export function ChatPanel({
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
+  // What the server says it is doing, when streaming is on.
+  const [status, setStatus] = useState<string | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -209,6 +211,7 @@ export function ChatPanel({
       const controller = new AbortController();
       abortRef.current = controller;
       setPending(true);
+      setStatus(null);
       setFailure(null);
       try {
         const reply = await client.chat(
@@ -219,7 +222,7 @@ export function ChatPanel({
               content,
             })),
           context,
-          { signal: controller.signal },
+          { signal: controller.signal, onStatus: setStatus },
         );
         if (controller.signal.aborted) return;
         setMessages((current) => [
@@ -421,6 +424,7 @@ export function ChatPanel({
             <span className={styles.dot} aria-hidden="true" />
             <span className={styles.dot} aria-hidden="true" />
             <span className={styles.dot} aria-hidden="true" />
+            {status ? <span className={styles.status}>{status}&hellip;</span> : null}
           </div>
         ) : null}
 
