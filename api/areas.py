@@ -9,7 +9,7 @@ from datetime import datetime
 from itertools import pairwise
 
 from api.explain import build_explanation, nearest_m_by_factor
-from api.lookup import school_info_from_rows, sub_scores_from_score_row
+from api.lookup import school_info_from_rows, sub_scores_from_score_row, travel_mode_of
 from api.schemas import AreaInfo, AreaScoreResponse
 from scoring.engine import CATEGORY_SPECS
 
@@ -106,7 +106,9 @@ def usable_areas(candidates: list[dict]) -> list[dict]:
     return [c for c in candidates if not area_too_big(c)]
 
 
-def pick_area(lat: float, lon: float, candidates: list[dict], snap_m: float = SNAP_M) -> dict | None:
+def pick_area(
+    lat: float, lon: float, candidates: list[dict], snap_m: float = SNAP_M
+) -> dict | None:
     """The candidate (needs 'geometry', 'area_sq_m') containing the point; the
     smallest wins when several do. Otherwise the nearest candidate within
     `snap_m` metres of its boundary (a click on the road line itself), else None."""
@@ -185,7 +187,9 @@ def bounded_by_text(names: list[str]) -> str:
     return f"Area bounded by {', '.join(names[:-1])} and {names[-1]}"
 
 
-def area_explanation(sub_scores, feature_row: dict | None, priorities: list[str] | None = None) -> str:
+def area_explanation(
+    sub_scores, feature_row: dict | None, priorities: list[str] | None = None
+) -> str:
     text = build_explanation(sub_scores, nearest_m_by_factor(feature_row), priorities)
     text = text.replace("This location's", "This area's", 1)
     return text.replace("Nearest feature:", "Nearest feature from this spot:")
@@ -215,6 +219,7 @@ def build_area_response(
         computed_at=computed_at,
         school=school_info_from_rows(aggregate, feature_row),
         neighborhood=area.get("neighborhood") or (geo_entity or {}).get("neighborhood"),
+        travel_mode=travel_mode_of(feature_row),
         area_id=area["id"],
         area=AreaInfo(
             geometry=area["geometry"],

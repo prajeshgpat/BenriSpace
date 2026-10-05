@@ -57,6 +57,37 @@
   font-weight: 650;
 }
 
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.step {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.value {
+  min-width: 4.5rem;
+  text-align: center;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 .meta {
   margin: 0;
   color: var(--text-secondary);

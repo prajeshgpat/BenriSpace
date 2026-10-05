@@ -105,6 +105,11 @@ def school_info_from_rows(score_row: dict, feature_row: dict | None) -> SchoolIn
     )
 
 
+def travel_mode_of(feature_row: dict | None) -> str | None:
+    mode = (feature_row or {}).get("travel_mode")
+    return mode if mode in ("walk", "drive") else None
+
+
 def build_score_response(
     geo_entity: dict, score_row: dict, feature_row: dict | None = None
 ) -> ScoreResponse:
@@ -127,4 +132,5 @@ def build_score_response(
         computed_at=score_row["computed_at"],
         school=school_info_from_rows(score_row, feature_row),
         neighborhood=geo_entity.get("neighborhood"),
+        travel_mode=travel_mode_of(feature_row),
     )

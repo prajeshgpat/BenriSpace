@@ -1072,6 +1072,14 @@ components:
           description: >
             `point` when scored on demand at the exact location (`?precision=point`),
             `grid` when it is the stored score of the containing cell.
+        travelMode:
+          type: string
+          nullable: true
+          enum: [walk, drive]
+          description: >
+            How people here usually get around, from population density: `walk` at
+            10,000 or more people per square mile, otherwise `drive`. Null when the
+            density is unknown. Clients use it to pick a default travel mode.
 
     AreaScoreResponse:
       description: >

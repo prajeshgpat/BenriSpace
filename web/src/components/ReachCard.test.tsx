@@ -66,6 +66,48 @@ describe("ReachCard", () => {
     );
   });
 
+  it("defaults to walking where people walk, stepping by 5 minutes from 5", async () => {
+    const getReach = vi.fn().mockResolvedValue(reach({ mode: "walk" }));
+    render(
+      <ReachCard
+        coordinates={{ lat: 40.7, lon: -74 }}
+        travelMode="walk"
+        client={{ getReach }}
+        onReach={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
+    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 15]));
+    const fewer = screen.getByRole("button", { name: "Fewer minutes" });
+    fireEvent.click(fewer);
+    fireEvent.click(fewer);
+    expect(screen.getByText("5 min")).toBeTruthy();
+    expect((fewer as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
+    expect(screen.getByText("10 min")).toBeTruthy();
+  });
+
+  it("steps train and drive times 5, 10, 15, 30, 45, then every 15", () => {
+    render(
+      <ReachCard
+        coordinates={{ lat: 40.7, lon: -74 }}
+        client={{ getReach: vi.fn().mockResolvedValue(reach()) }}
+        onReach={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Train" }));
+    const seen = [];
+    const fewer = screen.getByRole("button", { name: "Fewer minutes" });
+    while (!(fewer as HTMLButtonElement).disabled) fireEvent.click(fewer);
+    const more = screen.getByRole("button", { name: "More minutes" });
+    for (;;) {
+      seen.push(Number(screen.getByText(/^\d+ min$/).textContent?.split(" ")[0]));
+      if ((more as HTMLButtonElement).disabled) break;
+      fireEvent.click(more);
+    }
+    expect(seen).toEqual([5, 10, 15, 30, 45, 60, 75, 90, 105, 120]);
+  });
+
   it("clears the map when turned off and shows an error", async () => {
     const getReach = vi.fn().mockRejectedValue(new Error("boom"));
     const onReach = vi.fn();

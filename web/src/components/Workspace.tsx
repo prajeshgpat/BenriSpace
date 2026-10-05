@@ -316,6 +316,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // switches back to GeoJSON cells for the rest of the visit.
   const [tilesFailed, setTilesFailed] = useState(false);
   const tilesOn = Boolean(useTilesUrl()) && !tilesFailed;
+  const areaScores = useAreaScores();
   const { noFactors, cells, top, features, range, topResults, weights, tileCells } =
     useMapData({
       client,
@@ -323,6 +324,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       viewport,
       topViewport,
       tiles: tilesOn,
+      areaScores,
     });
   // The same selection the map sends, so every card talks about the factors
   // the colours are drawn from.
@@ -335,7 +337,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
   // A map click that landed in a known area shows that area's static scores
   // while `/area` loads; the API's answer replaces them.
-  const areaScores = useAreaScores();
   const [areaHint, setAreaHint] = useState<{ key: string; areaId: number } | null>(null);
   const provisional = useMemo(
     () =>
@@ -654,6 +655,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     };
     flownKey.current = targetKey(next);
     setPicked({ kind: "top", geohash: result.geohash, key: targetKey(next) });
+    setAreaHint(
+      result.areaId === undefined ? null : { key: targetKey(next), areaId: result.areaId },
+    );
     setFlyRequest({
       lat: result.latitude,
       lon: result.longitude,
@@ -851,6 +855,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
                 lat: state.score.latitude,
                 lon: state.score.longitude,
               }}
+              travelMode={state.score.travelMode}
               client={client}
               onReach={setReachGeometry}
             />

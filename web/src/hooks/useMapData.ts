@@ -10,6 +10,8 @@ import {
   localCells,
 } from "@/lib/scores/matrix";
 import { localTop } from "@/lib/scores/topk";
+import type { AreaScores } from "@/lib/static/areaScores";
+import { areaComposites, localTopAreas } from "@/lib/static/topAreas";
 import type { MapCells, MapTopResult } from "@/lib/api/types";
 import { boundsToFeatures } from "@/lib/map/features";
 
@@ -53,6 +55,11 @@ interface MapDataInput {
    * GeoJSON (the map reads `tileCells` instead).
    */
   tiles?: boolean;
+  /**
+   * Every road-bounded area's sub-scores (R2). When present the best-areas
+   * list ranks areas, not cells, so a marker's score is the score its card shows.
+   */
+  areaScores?: AreaScores | null;
 }
 
 /** The colored cells for the viewport and the ranked best areas. */
@@ -62,6 +69,7 @@ export function useMapData({
   viewport,
   topViewport,
   tiles = false,
+  areaScores = null,
 }: MapDataInput) {
   const [defaults, setDefaults] = useState<DefaultWeights>({});
   const [names, setNames] = useState<Names>({});
@@ -120,18 +128,28 @@ export function useMapData({
   const viewKey = viewBbox ? bboxKey(viewBbox) : "metro";
   // Ranking is local once the score file is in, so the API is asked only for
   // names, and only when a ranked area has not been named yet.
+  const areaComposite = useMemo(() => {
+    if (!areaScores || selection.factors.length === 0) return null;
+    return areaComposites(areaScores, selection.factors, weights, defaults);
+  }, [areaScores, selection.factors, weights, defaults]);
   const localResults = useMemo(() => {
-    if (!matrix || !composites) return null;
-    return localTop(matrix, composites, {
+    const options = {
       bbox: viewBbox,
       limit: TOP_LIMIT,
       minSeparationMi: viewBbox ? VIEW_SEPARATION_MI : METRO_SEPARATION_MI,
-    });
+    };
+    // Areas carry their own names, so ranking them needs no API call at all.
+    if (areaScores && areaComposite) {
+      return localTopAreas(areaScores, areaComposite, options);
+    }
+    if (!matrix || !composites) return null;
+    return localTop(matrix, composites, options);
     // viewBbox is rebuilt each render; its key is the identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matrix, composites, viewKey]);
+  }, [matrix, composites, areaScores, areaComposite, viewKey]);
   const needsNames =
-    localResults !== null && localResults.some((r) => !(r.geohash in names));
+    localResults !== null &&
+    localResults.some((r) => r.areaId === undefined && !(r.geohash in names));
   const topKey = noFactors || (localResults !== null && !needsNames)
     ? null
     : `${viewKey}|${selectionKey}`;
@@ -214,6 +232,7 @@ export function useMapData({
     if (!localResults) return top.data?.results ?? null;
     const lookupDone = top.status === "ready" || top.status === "error";
     return localResults.map((r) => {
+      if (r.areaId !== undefined) return r;
       const known = names[r.geohash];
       if (known) return { ...r, ...known };
       return lookupDone ? r : { ...r, namePending: true };

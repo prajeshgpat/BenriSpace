@@ -9,20 +9,35 @@ import styles from "./ReachCard.module.css";
 
 export interface ReachCardProps {
   coordinates: { lat: number; lon: number } | null;
+  /** How people here usually travel (from density); walk in the city, else drive. */
+  travelMode?: "walk" | "drive" | null;
   client: Pick<ApiClient, "getReach">;
   /** The polygon to draw on the map, or null to clear it. */
   onReach: (geometry: AreaGeometry | null) => void;
 }
 
+/** 5, 10, 15, 30, 45, then every 15 minutes up to the API's 2 hour cap. */
+const LONG_STEPS = [5, 10, 15, 30, 45, 60, 75, 90, 105, 120] as const;
+
 const OPTIONS: ReadonlyArray<{
   mode: ReachMode;
   label: string;
   minutes: readonly number[];
+  initial: number;
 }> = [
-  { mode: "walk", label: "Walk", minutes: [10, 15, 20, 30] },
-  { mode: "drive", label: "Drive", minutes: [15, 30, 45, 60] },
-  { mode: "transit", label: "Train", minutes: [30, 45, 60, 90] },
+  {
+    mode: "walk",
+    label: "Walk",
+    minutes: Array.from({ length: 12 }, (_, i) => (i + 1) * 5),
+    initial: 15,
+  },
+  { mode: "transit", label: "Train", minutes: LONG_STEPS, initial: 30 },
+  { mode: "drive", label: "Drive", minutes: LONG_STEPS, initial: 30 },
 ];
+
+function optionFor(mode: ReachMode) {
+  return OPTIONS.find((o) => o.mode === mode) ?? OPTIONS[2];
+}
 
 type State =
   | { status: "off" }
@@ -31,9 +46,17 @@ type State =
   | { status: "error" };
 
 /** "How far can I get in N minutes": draws the reachable area on the map. */
-export function ReachCard({ coordinates, client, onReach }: ReachCardProps) {
-  const [mode, setMode] = useState<ReachMode>("drive");
-  const [minutes, setMinutes] = useState(30);
+export function ReachCard({ coordinates, travelMode, client, onReach }: ReachCardProps) {
+  const startMode: ReachMode = travelMode === "walk" ? "walk" : "drive";
+  const [mode, setMode] = useState<ReachMode>(startMode);
+  const [minutes, setMinutes] = useState(optionFor(startMode).initial);
+  // A new place starts from its own default: walking in the city, driving elsewhere.
+  const [seenMode, setSeenMode] = useState(startMode);
+  if (seenMode !== startMode) {
+    setSeenMode(startMode);
+    setMode(startMode);
+    setMinutes(optionFor(startMode).initial);
+  }
   const [on, setOn] = useState(false);
   const [state, setState] = useState<State>({ status: "off" });
   const lat = coordinates?.lat;
@@ -69,7 +92,8 @@ export function ReachCard({ coordinates, client, onReach }: ReachCardProps) {
   useEffect(() => () => onReach(null), [onReach]);
 
   if (!coordinates) return null;
-  const current = OPTIONS.find((o) => o.mode === mode) ?? OPTIONS[1];
+  const current = optionFor(mode);
+  const step = current.minutes.indexOf(minutes);
 
   return (
     <section className={styles.card} aria-label="Reachable area">
@@ -93,25 +117,37 @@ export function ReachCard({ coordinates, client, onReach }: ReachCardProps) {
             aria-pressed={o.mode === mode}
             onClick={() => {
               setMode(o.mode);
-              setMinutes(o.minutes[1]);
+              setMinutes(o.initial);
             }}
           >
             {o.label}
           </button>
         ))}
       </div>
-      <div className={styles.row} role="group" aria-label="Minutes">
-        {current.minutes.map((m) => (
-          <button
-            key={m}
-            type="button"
-            className={m === minutes ? styles.chipOn : styles.chip}
-            aria-pressed={m === minutes}
-            onClick={() => setMinutes(m)}
-          >
-            {m} min
-          </button>
-        ))}
+      <div className={styles.stepper} role="group" aria-label="Minutes">
+        <button
+          type="button"
+          className={styles.step}
+          aria-label="Fewer minutes"
+          disabled={step <= 0}
+          onClick={() => setMinutes(current.minutes[Math.max(step - 1, 0)])}
+        >
+          &minus;
+        </button>
+        <span className={styles.value} aria-live="polite">
+          {minutes} min
+        </span>
+        <button
+          type="button"
+          className={styles.step}
+          aria-label="More minutes"
+          disabled={step >= current.minutes.length - 1}
+          onClick={() =>
+            setMinutes(current.minutes[Math.min(step + 1, current.minutes.length - 1)])
+          }
+        >
+          +
+        </button>
       </div>
       {state.status === "loading" ? (
         <p className={styles.meta} role="status">

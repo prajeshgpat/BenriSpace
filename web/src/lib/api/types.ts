@@ -177,6 +177,8 @@ export type MapTopResult = Omit<Schemas["MapTopResult"], "subScores"> & {
   neighborhood?: string | null;
   /** Set on a locally ranked area whose name is still being looked up. */
   namePending?: boolean;
+  /** Set when the result is a road-bounded area (ranked from the area file), not a cell. */
+  areaId?: number;
 };
 
 export interface MapTop {

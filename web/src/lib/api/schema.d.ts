@@ -112,6 +112,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The same chat as /chat, delivered as server-sent events.
+         * @description Takes the same body as `/chat`. The response is `text/event-stream`: `status` frames (`{text, tool?}`) while the assistant works, then exactly one `reply` frame (the `/chat` JSON body) or one `error` frame (`{status, code, message}` using the codes of `/chat`). The reply text is sent whole after grounding validation, never as unvalidated tokens. A malformed body is rejected with a plain 400 before the stream starts. Behind API Gateway the frames arrive together at the end; true streaming needs a Lambda function URL (docs/ARCHITECTURE.md, Chat streaming).
+         */
+        post: operations["chatStream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat": {
         parameters: {
             query?: never;
@@ -385,6 +405,11 @@ export interface components {
              * @enum {string}
              */
             precision: "grid" | "point";
+            /**
+             * @description How people here usually get around, from population density: `walk` at 10,000 or more people per square mile, otherwise `drive`. Null when the density is unknown. Clients use it to pick a default travel mode.
+             * @enum {string|null}
+             */
+            travelMode?: "walk" | "drive" | null;
         };
         /** @description A `ScoreResponse` for a road-bounded area. `geoEntityId` is the representative grid cell (the one under the clicked point); `latitude`/`longitude` echo the clicked point; `address` is the area's label ("Area bounded by ..."). */
         AreaScoreResponse: components["schemas"]["ScoreResponse"] & {
@@ -1066,6 +1091,39 @@ export interface operations {
                 };
             };
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    chatStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description A server-sent event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     chat: {

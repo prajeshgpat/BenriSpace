@@ -77,6 +77,9 @@ class ScoreResponse(CamelModel):
     # 'point' when scored on demand at the exact location (?precision=point),
     # 'grid' when it is the stored score of the containing grid cell (default).
     precision: Literal["point", "grid"] = "grid"
+    # How people here usually get around, from population density: 'walk' at
+    # 10,000+ people / sq mi, else 'drive'. Null when density is unknown.
+    travel_mode: Literal["walk", "drive"] | None = None
 
 
 class ExplanationResponse(CamelModel):

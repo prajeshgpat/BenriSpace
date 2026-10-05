@@ -172,7 +172,10 @@ export function cellComposite(
 }
 
 /** One composite per cell; `NaN` where the cell has no selected score. */
-export function compositeAll(matrix: ScoreMatrix, spec: CompositeSpec): Float64Array {
+export function compositeAll(
+  matrix: Pick<ScoreMatrix, "count" | "scores" | "factors">,
+  spec: CompositeSpec,
+): Float64Array {
   const out = new Float64Array(matrix.count);
   for (let i = 0; i < matrix.count; i++) {
     out[i] = cellComposite(matrix, i, spec) ?? Number.NaN;
@@ -185,7 +188,10 @@ export function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-export function subScoresOf(matrix: ScoreMatrix, index: number): SubScores {
+export function subScoresOf(
+  matrix: Pick<ScoreMatrix, "factors" | "scores">,
+  index: number,
+): SubScores {
   const width = matrix.factors.length;
   return Object.fromEntries(
     FACTOR_KEY_LIST.map((key) => {
@@ -200,7 +206,10 @@ export function subScoresOf(matrix: ScoreMatrix, index: number): SubScores {
 export type Bbox4 = readonly [number, number, number, number];
 
 /** Indexes of the cells whose centre is inside the box (west, south, east, north). */
-export function cellsInBbox(matrix: ScoreMatrix, bbox: Bbox4): number[] {
+export function cellsInBbox(
+  matrix: Pick<ScoreMatrix, "count" | "lat" | "lon">,
+  bbox: Bbox4,
+): number[] {
   const [west, south, east, north] = bbox;
   const out: number[] = [];
   for (let i = 0; i < matrix.count; i++) {
