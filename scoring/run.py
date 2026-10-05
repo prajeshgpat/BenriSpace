@@ -5,10 +5,34 @@ lives in engine.py and is covered by tests/test_scoring_engine.py.
 
 import sys
 
+import psycopg
+
 from common.config import SCORING_WEIGHTS_VERSION
 from common.db import get_connection
 from common.ingestion_log import ingestion_job
 from scoring.engine import all_score_columns, score_metro_cohort
+from scoring.scales import Scales, compute_scales, scales_to_rows
+
+SCALES_UPSERT_SQL = """
+    insert into score_scales (weights_version, metro_area, factor, component, lo, hi, n)
+    values (%s, %s, %s, %s, %s, %s, %s)
+    on conflict (weights_version, metro_area, factor, component) do update
+    set lo = excluded.lo, hi = excluded.hi, n = excluded.n, computed_at = now()
+"""
+
+
+def write_scales(conn, weights_version: str, metro_area: str, scales: Scales) -> int:
+    """Upserts a metro's factor scales (migration 0013). Returns rows written, or 0 when
+    the score_scales table does not exist yet (the API then computes them itself)."""
+    rows = scales_to_rows(weights_version, metro_area, scales)
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(SCALES_UPSERT_SQL, rows)
+        conn.commit()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return 0
+    return len(rows)
 
 
 def run() -> None:
@@ -56,6 +80,17 @@ def run() -> None:
                     )
             conn.commit()
             total_written += len(scored)
+
+            # Keep the normalization constants so a point that is not a cell can be
+            # scored on demand the same way (api/point_score.py).
+            n_scales = write_scales(
+                conn,
+                SCORING_WEIGHTS_VERSION,
+                metro_area,
+                compute_scales(rows, SCORING_WEIGHTS_VERSION),
+            )
+            if not n_scales:
+                print("score_scales table missing (migration 0013); skipped.", file=sys.stderr)
 
         ctx.rows_affected = total_written
 

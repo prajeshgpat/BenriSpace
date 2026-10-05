@@ -321,3 +321,16 @@ create table if not exists road_segments (
 create index if not exists road_segments_geom_idx on road_segments using gist (geom);
 
 create index if not exists road_segments_osm_id_idx on road_segments (osm_id);
+
+-- Per-metro factor scales for on-demand point scoring (migration 0013, not yet applied).
+create table if not exists score_scales (
+    weights_version text             not null,
+    metro_area      text             not null,
+    factor          text             not null,
+    component       text             not null,
+    lo              double precision not null,
+    hi              double precision not null,
+    n               integer          not null default 0,
+    computed_at     timestamptz      not null default now(),
+    primary key (weights_version, metro_area, factor, component)
+);
