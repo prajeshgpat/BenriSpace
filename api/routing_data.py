@@ -10,6 +10,8 @@ import logging
 import math
 import time
 
+import psycopg
+
 from api.isochrone import Graph
 from common.cellgrid import cell_index
 from common.geo import haversine_m
@@ -28,7 +30,9 @@ _hubs_cache: dict[str, tuple[float, list[tuple]]] = {}
 HUBS_TTL_S = 3600.0
 
 
-def graph_box(lat: float, lon: float, minutes: float, mode: str) -> tuple[float, float, float, float]:
+def graph_box(
+    lat: float, lon: float, minutes: float, mode: str
+) -> tuple[float, float, float, float]:
     """(min_lat, max_lat, min_lon, max_lon) around the origin that the search can reach."""
     miles = minutes * MAX_MI_PER_MIN[mode]
     d_lat = miles / 69.0
@@ -46,15 +50,18 @@ def load_graph(conn, mode: str, box: tuple[float, float, float, float]) -> Graph
                 (mode, min_lat, max_lat, min_lon, max_lon),
             )
             rows = cur.fetchall()
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "cell_graph")
+        return {}
     except Exception:
         log.warning("cell_graph unavailable", exc_info=True)
         _rollback(conn)
         return {}
     graph: Graph = {}
     for row in rows:
-        lat, lon, edges = (row["latitude"], row["longitude"], row["edges_dm"]) if isinstance(
-            row, dict
-        ) else row
+        lat, lon, edges = (
+            (row["latitude"], row["longitude"], row["edges_dm"]) if isinstance(row, dict) else row
+        )
         graph[cell_index(lat, lon)] = list(edges)
     return graph
 
@@ -64,6 +71,18 @@ def _rollback(conn) -> None:
         conn.rollback()
     except Exception:
         log.debug("rollback failed", exc_info=True)
+
+
+_warned: set[str] = set()
+
+
+def _missing(conn, table: str) -> None:
+    """A routing table is absent (migration 0022 not applied): roll back and warn once per
+    process, without a traceback. The caller returns its usual fallback."""
+    _rollback(conn)
+    if table not in _warned:
+        _warned.add(table)
+        log.warning("%s unavailable: routing migration 0022 is not applied", table)
 
 
 def rail_stations(conn) -> list[tuple[int, str, float, float]]:
@@ -78,9 +97,14 @@ def rail_stations(conn) -> list[tuple[int, str, float, float]]:
                 " where kind = 'rail' order by id"
             )
             rows = [
-                (r["id"], r["name"], r["latitude"], r["longitude"]) if isinstance(r, dict) else tuple(r)
+                (r["id"], r["name"], r["latitude"], r["longitude"])
+                if isinstance(r, dict)
+                else tuple(r)
                 for r in cur.fetchall()
             ]
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "routing_hubs")
+        return []
     except Exception:
         log.warning("routing_hubs unavailable", exc_info=True)
         _rollback(conn)
@@ -91,6 +115,7 @@ def rail_stations(conn) -> list[tuple[int, str, float, float]]:
 
 def clear_cache() -> None:
     _hubs_cache.clear()
+    _warned.clear()
 
 
 def nearby_stations(
@@ -125,6 +150,9 @@ def rail_rows(conn, origin_ids: list[int]) -> dict[int, list[int]]:
                 )
                 for r in cur.fetchall()
             }
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "rail_matrix")
+        return {}
     except Exception:
         log.warning("rail_matrix unavailable", exc_info=True)
         _rollback(conn)
@@ -160,7 +188,9 @@ def rail_trip_minutes(
     return best
 
 
-def travel_slots(conn, geohashes: list[str], category: str, k: int = 1) -> dict[str, tuple[str, float]]:
+def travel_slots(
+    conn, geohashes: list[str], category: str, k: int = 1
+) -> dict[str, tuple[str, float]]:
     """geohash -> (mode, minutes to the k-th nearest place of `category`) from cell_travel."""
     if not geohashes:
         return {}
@@ -173,6 +203,9 @@ def travel_slots(conn, geohashes: list[str], category: str, k: int = 1) -> dict[
                 (slot, geohashes),
             )
             rows = cur.fetchall()
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "cell_travel")
+        return {}
     except Exception:
         log.warning("cell_travel unavailable", exc_info=True)
         _rollback(conn)
@@ -198,6 +231,9 @@ def hub_minutes(conn, geohashes: list[str], kind: str) -> dict[str, tuple[int, f
                 (kind, geohashes),
             )
             rows = cur.fetchall()
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "cell_hubs")
+        return {}
     except Exception:
         log.warning("cell_hubs unavailable", exc_info=True)
         _rollback(conn)
@@ -243,8 +279,13 @@ def rail_trips(
 def airport_targets(conn) -> list[tuple[str, float, float]]:
     try:
         with conn.cursor() as cur:
-            cur.execute("select code, name, latitude, longitude from routing_hubs where kind = 'airport'")
+            cur.execute(
+                "select code, name, latitude, longitude from routing_hubs where kind = 'airport'"
+            )
             rows = cur.fetchall()
+    except psycopg.errors.UndefinedTable:
+        _missing(conn, "routing_hubs")
+        return []
     except Exception:
         log.warning("routing_hubs unavailable", exc_info=True)
         _rollback(conn)
