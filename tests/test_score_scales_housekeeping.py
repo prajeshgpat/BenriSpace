@@ -63,7 +63,6 @@ def test_write_scales_skips_quietly_before_the_migration():
 def test_migration_0013_is_additive_idempotent_and_mirrored():
     sql = (ROOT / "contracts/migrations/0013_score_scales.sql").read_text()
     schema = (ROOT / "contracts/schema.sql").read_text()
-    assert "NOT yet applied" in sql
     body = "\n".join(line for line in sql.splitlines() if not line.startswith("--"))
     assert "create table if not exists score_scales" in body
     for forbidden in ("drop ", "delete ", "truncate", "alter table scores"):
