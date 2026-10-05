@@ -35,6 +35,18 @@ describe("ScoreHeader", () => {
     expect(screen.queryByText("40.74920,-73.98500")).not.toBeInTheDocument();
   });
 
+  it("captions an exact-point score and says nothing for a grid score", () => {
+    const { rerender } = render(
+      <ScoreHeader address="x" score={makeScore({ precision: "point" })} />,
+    );
+    expect(screen.getByText("Exact-point score")).toBeInTheDocument();
+
+    rerender(<ScoreHeader address="x" score={makeScore({ precision: "grid" })} />);
+    expect(screen.queryByText("Exact-point score")).not.toBeInTheDocument();
+    rerender(<ScoreHeader address="x" score={makeScore()} />);
+    expect(screen.queryByText("Exact-point score")).not.toBeInTheDocument();
+  });
+
   it("shows the rounded composite score and its band, and nothing else", () => {
     render(<ScoreHeader address="x" score={makeScore()} />);
 

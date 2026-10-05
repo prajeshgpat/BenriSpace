@@ -1,3 +1,4 @@
+import { SCORE_PRECISION, type ScorePrecision } from "@/lib/config";
 import {
   ALL_FACTOR_KEYS,
   LEGACY_FACTOR_ALIASES,
@@ -45,6 +46,8 @@ export const DEFAULT_TIMEOUT_MS = 20_000;
 
 export interface ApiClientOptions {
   baseUrl: string;
+  /** `point` adds `precision=point` to /score and /area; defaults to NEXT_PUBLIC_SCORE_PRECISION. */
+  scorePrecision?: ScorePrecision;
   fetch?: typeof fetch;
   timeoutMs?: number;
 }
@@ -213,6 +216,7 @@ export function parseScore(body: unknown): Score {
     weightsVersion: body.weightsVersion,
     computedAt: body.computedAt,
     neighborhood: parseNeighborhood(body.neighborhood),
+    precision: body.precision === "point" ? "point" : "grid",
     ...parseSchool(body.school),
   };
 }
@@ -756,8 +760,13 @@ export function createApiClient({
   baseUrl,
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  scorePrecision = SCORE_PRECISION,
 }: ApiClientOptions): ApiClient {
   const root = baseUrl.replace(/\/+$/, "");
+  const withPrecision = (params: URLSearchParams) => {
+    if (scorePrecision === "point") params.set("precision", "point");
+    return params;
+  };
 
   async function requestJson(
     path: string,
@@ -799,17 +808,21 @@ export function createApiClient({
   return {
     async getScore(address, options) {
       const query: ScoreQuery = { address };
-      const params = new URLSearchParams(query as Record<string, string>);
+      const params = withPrecision(new URLSearchParams(query as Record<string, string>));
       return parseScore(await getJson(`/score?${params}`, options));
     },
 
     async getScoreByCoordinates({ lat, lon }, options) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      const params = withPrecision(
+        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
+      );
       return parseScore(await getJson(`/score?${params}`, options));
     },
 
     async getAreaByCoordinates({ lat, lon }, options) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+      const params = withPrecision(
+        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
+      );
       return parseAreaScore(await getJson(`/area?${params}`, options));
     },
 

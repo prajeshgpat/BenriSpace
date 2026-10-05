@@ -75,6 +75,7 @@ export function makeScore(overrides: Partial<Score> = {}): Score {
     subScores: { ...emptySubScores, airport: 62.79 },
     weightsVersion: "v1-handtuned",
     computedAt: "2026-09-29T03:12:03.491922Z",
+    precision: "grid",
     ...overrides,
   };
 }

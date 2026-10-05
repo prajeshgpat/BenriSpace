@@ -863,3 +863,41 @@ describe("v1.4 factor keys and neighborhoods", () => {
     expect(top.results[0].neighborhood).toBe("Chelsea, Manhattan");
   });
 });
+
+describe("score precision", () => {
+  function precisionClient(scorePrecision?: "grid" | "point") {
+    const fetchMock = vi.fn<typeof fetch>(async (input) =>
+      String(input).includes("/area?")
+        ? jsonResponse(makeAreaBody())
+        : jsonResponse(liveScoreBody),
+    );
+    const client = createApiClient({ baseUrl: BASE_URL, fetch: fetchMock, scorePrecision });
+    return { client, urls: () => fetchMock.mock.calls.map(([url]) => String(url)) };
+  }
+
+  it("sends no precision parameter by default", async () => {
+    const { client, urls } = precisionClient();
+    await client.getScoreByCoordinates({ lat: 40.7, lon: -73.9 });
+    await client.getAreaByCoordinates({ lat: 40.7, lon: -73.9 });
+    await client.getScore("1 Main St");
+    expect(urls().every((url) => !url.includes("precision"))).toBe(true);
+  });
+
+  it("adds precision=point to /score and /area when configured", async () => {
+    const { client, urls } = precisionClient("point");
+    await client.getScoreByCoordinates({ lat: 40.7, lon: -73.9 });
+    await client.getAreaByCoordinates({ lat: 40.7, lon: -73.9 });
+    await client.getScore("1 Main St");
+    expect(urls()).toEqual([
+      `${BASE_URL}/score?lat=40.7&lon=-73.9&precision=point`,
+      `${BASE_URL}/area?lat=40.7&lon=-73.9&precision=point`,
+      `${BASE_URL}/score?address=1+Main+St&precision=point`,
+    ]);
+  });
+
+  it("reads the response's precision, defaulting to grid", () => {
+    expect(parseScore({ ...liveScoreBody, precision: "point" }).precision).toBe("point");
+    expect(parseScore(liveScoreBody).precision).toBe("grid");
+    expect(parseScore({ ...liveScoreBody, precision: "bogus" }).precision).toBe("grid");
+  });
+});

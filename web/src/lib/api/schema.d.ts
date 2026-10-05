@@ -362,6 +362,12 @@ export interface components {
             school?: components["schemas"]["SchoolInfo"];
             /** @description Human neighborhood name such as "Park Slope, Brooklyn" or "Montclair, NJ" (OpenStreetMap place nodes); null until the neighborhoods job has run or when nothing is nearby. For an area, the area's own label, else the representative cell's. */
             neighborhood?: string | null;
+            /**
+             * @description `point` when scored on demand at the exact location (`?precision=point`), `grid` when it is the stored score of the containing cell.
+             * @default grid
+             * @enum {string}
+             */
+            precision: "grid" | "point";
         };
         /** @description A `ScoreResponse` for a road-bounded area. `geoEntityId` is the representative grid cell (the one under the clicked point); `latitude`/`longitude` echo the clicked point; `address` is the area's label ("Area bounded by ..."). */
         AreaScoreResponse: components["schemas"]["ScoreResponse"] & {
@@ -768,6 +774,8 @@ export interface operations {
             query: {
                 lat: number;
                 lon: number;
+                /** @description `grid` (default) returns the stored score of the containing grid cell. `point` scores the exact location on demand (an area: the mean of up to five sample points inside it) from live place queries and the metro's factor scales, and falls back to `grid` on any error. The response's `precision` says which was served. */
+                precision?: "grid" | "point";
             };
             header?: never;
             path?: never;
@@ -820,6 +828,8 @@ export interface operations {
                 address?: string;
                 lat?: number;
                 lon?: number;
+                /** @description `grid` (default) returns the stored score of the containing grid cell. `point` scores the exact location on demand (an area: the mean of up to five sample points inside it) from live place queries and the metro's factor scales, and falls back to `grid` on any error. The response's `precision` says which was served. */
+                precision?: "grid" | "point";
             };
             header?: never;
             path?: never;

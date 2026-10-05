@@ -80,6 +80,9 @@ export function ScoreHeader({
         <p id="result-subtitle" className={styles.location} title={subtitle}>
           {subtitle}
         </p>
+        {score.precision === "point" ? (
+          <p className={styles.precisionNote}>Exact-point score</p>
+        ) : null}
         <div className={styles.actions}>
           <CopyLinkButton />
           {compare ? (
