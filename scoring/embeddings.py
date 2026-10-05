@@ -9,6 +9,7 @@ Pure functions up top; run() is the DB wiring (needs Postgres + migration 0007).
 """
 
 import math
+import os
 import sys
 
 # The one ordered list of dimensions. The API (api/similar.py) reads the same
@@ -101,6 +102,13 @@ def top_neighbours(
     return out
 
 
+# Off by default: 20 uuid rows per cell is ~190 MB per weights version, too large
+# for the free database tier, and /v1/similar is ~0.15 s on the HNSW index alone.
+# Re-enable (SIMILAR_CELLS=1) once neighbours are stored compactly (one int array
+# per cell).
+WRITE_SIMILAR_CELLS = os.environ.get("SIMILAR_CELLS") == "1"
+
+
 def write_similar_cells(conn, weights_version: str, neighbours: dict) -> int:
     """Replaces the weights version's rows of similar_cells (migration 0011) in one
     transaction. Returns rows written, or 0 when the table does not exist yet."""
@@ -171,10 +179,11 @@ def run() -> None:
                     )
                 conn.commit()
             total += len(items)
-            try:
-                neighbours.update(top_neighbours([g for g, _ in items], [v for _, v in items]))
-            except ImportError:
-                print("numpy missing; similar_cells not computed.", file=sys.stderr)
+            if WRITE_SIMILAR_CELLS:
+                try:
+                    neighbours.update(top_neighbours([g for g, _ in items], [v for _, v in items]))
+                except ImportError:
+                    print("numpy missing; similar_cells not computed.", file=sys.stderr)
         ctx.rows_affected = total
         if neighbours:
             n = write_similar_cells(conn, SCORING_WEIGHTS_VERSION, neighbours)
