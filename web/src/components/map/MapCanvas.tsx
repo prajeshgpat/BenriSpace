@@ -25,11 +25,13 @@ import {
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
+import type { KeyedPin } from "@/lib/map/placePins";
 import type { TileCells } from "@/lib/map/tileScores";
 import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
+import { PlacePins } from "./PlacePins";
 import { usePmtilesCells } from "./usePmtilesCells";
 
 // See scripts/copy-maplibre-worker.mjs for why the worker is served by us.
@@ -125,6 +127,8 @@ interface MapCanvasProps {
   /** The area reachable from the selected place (isochrone): dashed teal. */
   reachGeometry?: AreaGeometry | null;
   previewPin?: PinSpec | null;
+  /** Places behind the selected factors near the shown result; clustered into pins. */
+  placePins?: readonly KeyedPin[];
   /**
    * Local scores for the view, to colour the PMTiles grid (only used when
    * NEXT_PUBLIC_PMTILES_URL is set); `null` keeps the GeoJSON cells.
@@ -141,6 +145,7 @@ interface MapCanvasProps {
 }
 
 const noopTilesFailed = () => {};
+const NO_PLACE_PINS: readonly KeyedPin[] = [];
 
 /** Fade-in for the area polygon fill. */
 const AREA_FADE_MS = 250;
@@ -384,6 +389,7 @@ export function MapCanvas({
   previewAreaGeometry = null,
   reachGeometry = null,
   previewPin = null,
+  placePins = NO_PLACE_PINS,
   tileCells = null,
   onTilesFailed,
   theme,
@@ -397,6 +403,8 @@ export function MapCanvas({
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaplibreMap | null>(null);
   const [ready, setReady] = useState(false);
+  // The same map as mapRef, as state so the pins re-render when it appears.
+  const [liveMap, setLiveMap] = useState<MaplibreMap | null>(null);
 
   const callbacks = useLatest({
     onViewportChange,
@@ -539,6 +547,7 @@ export function MapCanvas({
         map.getCanvas().style.cursor = "";
       });
       callbacks.current.onViewportChange(readViewport(map, false));
+      setLiveMap(map);
       setReady(true);
     });
 
@@ -547,6 +556,7 @@ export function MapCanvas({
       // container), then the map. Later effect cleanups find nothing to do.
       clearTimeout(timer);
       setReady(false);
+      setLiveMap(null);
       mapRef.current = null;
       const markers = Array.from(registry);
       registry.clear();
@@ -744,6 +754,7 @@ export function MapCanvas({
   return (
     <div className={styles.wrapper}>
       <div ref={container} className={styles.map} />
+      <PlacePins map={liveMap} pins={placePins} />
     </div>
   );
 }

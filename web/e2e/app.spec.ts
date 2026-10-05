@@ -32,6 +32,18 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("a result draws place pins, clustering nearby ones into one", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/app");
+  await page.getByRole("combobox").first().fill("350 5th");
+  await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
+  await expect(page.getByTestId("composite-score")).toHaveText("77");
+  await expect(
+    page.getByRole("button", { name: "5 places: 4 restaurants, 1 bar" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Joe · Cafe · 0\.3 mi$/ })).toBeVisible();
+});
+
 test("toggling a factor recolours the map and re-ranks best areas", async ({ page }) => {
   await mockApi(page);
   await page.goto("/app?center=40.75,-73.97&z=12");

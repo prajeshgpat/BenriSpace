@@ -15,6 +15,7 @@ import {
   createApiClient,
   normalizeSubScores,
   parseMapTop,
+  parsePlacesAround,
   parseScore,
 } from "./client";
 import { ApiError } from "./errors";
@@ -503,6 +504,55 @@ describe("getMapTop", () => {
   it("rejects a body without results", async () => {
     const { client } = clientReturning(jsonResponse({ factors: [] }));
     expect((await rejection(client.getMapTop({}))).kind).toBe("invalid-response");
+  });
+});
+
+describe("getPlacesAround", () => {
+  const body = {
+    radiusMi: 0.5,
+    places: [
+      {
+        factor: "cafe",
+        name: "Joe",
+        brand: null,
+        category: "cafe",
+        latitude: 40.7,
+        longitude: -73.9,
+        distanceMi: 0.1,
+      },
+      { factor: "nope", name: "X", category: "cafe", latitude: 1, longitude: 2, distanceMi: 0 },
+      { factor: "bar", name: "", category: "bar", latitude: 1, longitude: 2, distanceMi: 0 },
+    ],
+  };
+
+  it("sends factors, radius and perFactor and keeps only valid places", async () => {
+    const { client, fetchMock } = clientReturning(jsonResponse(body));
+    const result = await client.getPlacesAround(40.7, -73.9, {
+      factors: ["cafe", "bar"],
+      radiusMi: 0.5,
+      perFactor: 12,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/v1/places/around");
+    expect(url.searchParams.get("factors")).toBe("cafe,bar");
+    expect(url.searchParams.get("radiusMi")).toBe("0.5");
+    expect(url.searchParams.get("perFactor")).toBe("12");
+    expect(result.places).toEqual([
+      {
+        factor: "cafe",
+        name: "Joe",
+        brand: null,
+        category: "cafe",
+        latitude: 40.7,
+        longitude: -73.9,
+        distanceMi: 0.1,
+      },
+    ]);
+  });
+
+  it("rejects a malformed body", () => {
+    expect(() => parsePlacesAround({ places: [] })).toThrow(ApiError);
+    expect(parsePlacesAround({ radiusMi: 1, places: [] }).places).toEqual([]);
   });
 });
 
