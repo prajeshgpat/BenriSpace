@@ -170,11 +170,15 @@ def store(conn, version: str) -> int:
 
 
 def main() -> None:
-    from common.config import SCORING_WEIGHTS_VERSION
-    from common.db import get_connection
+    from psycopg.rows import dict_row
 
+    from common.config import DATABASE_URL, SCORING_WEIGHTS_VERSION
+
+    # A plain connection, not common.db.get_connection(): that one runs in pipeline
+    # mode, where the single ~700 KB bytea insert stalls (the server sits in
+    # ClientRead waiting for the rest of the message). Two statements need no batching.
     try:
-        with get_connection() as conn:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
             size = store(conn, SCORING_WEIGHTS_VERSION)
     except psycopg.errors.UndefinedTable:
         print("score_files missing (migration 0019 not applied); skipped.", file=sys.stderr)
