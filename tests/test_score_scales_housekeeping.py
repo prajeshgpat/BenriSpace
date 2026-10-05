@@ -171,7 +171,7 @@ def test_yes_deletes_in_batches_and_reports(script, capsys):
     assert script.main(["--version", "v2-handtuned", "--yes", "--batch-size", "5000"]) == 0
     conn = script.conns[0]
     assert [p for _, p in deletes(conn)] == [("v2-handtuned", 5000)] * 4  # 5000, 5000, 2000, 0
-    assert conn.remaining == 0 and conn.commits == 4
+    assert conn.remaining == 0 and conn.commits == 5  # 4 batches + score_scales
     out = capsys.readouterr().out
     assert "before" in out and "after" in out and "Deleted 12,000 rows" in out
 

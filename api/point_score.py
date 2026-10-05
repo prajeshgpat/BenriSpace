@@ -208,7 +208,7 @@ def score_points_cells(
         with conn.cursor() as cell_cur, conn.cursor() as live_cur:
             cell_cur.execute(_cell_query(True), (sorted({*geohashes, *extra_geohashes}),))
             execute_live(live_cur, live_points, anchor)
-            cells = {r["geohash"]: r for r in cell_cur.fetchall()}
+            cells = {r["geohash"]: from_db_row(r) for r in cell_cur.fetchall()}
             live = read_live(live_cur)
     except psycopg.errors.UndefinedColumn:  # neighborhood column (migration 0008) missing
         conn.rollback()
