@@ -105,7 +105,7 @@ describe("Workspace: Ask Benri", () => {
 
     // The button became the chat, in the same place (before the result card).
     expect(screen.queryByRole("button", { name: "Ask Benri" })).not.toBeInTheDocument();
-    const region = screen.getByRole("region", { name: "Ask Benri" });
+    const region = await screen.findByRole("region", { name: "Ask Benri" });
     expect(
       region.compareDocumentPosition(screen.getByTestId("composite-score")) &
         Node.DOCUMENT_POSITION_FOLLOWING,

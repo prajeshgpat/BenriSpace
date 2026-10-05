@@ -18,9 +18,12 @@ import hashlib
 import json
 import math
 import os
+import queue
 import re
 import sys
+import threading
 import time
+from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
 from fastapi import Response
@@ -1139,10 +1142,40 @@ def make_client(timeout: float):
     return anthropic.Anthropic(api_key=llm.api_key(), timeout=timeout, max_retries=1)
 
 
+ChatEvent = Callable[[dict], None]
+
+#: What the streaming endpoint shows while each tool runs.
+TOOL_STATUS = {
+    "geocode": "Finding the address",
+    "area_score": "Scoring the area",
+    "nearby_places": "Looking at nearby places",
+    "improve": "Looking for nearby improvements",
+    "similar": "Finding similar areas",
+    "search_areas": "Searching areas",
+    "optimize_location": "Weighing trips between your places",
+}
+
+
+def _emit(on_event: ChatEvent | None, event: dict) -> None:
+    if on_event is None:
+        return
+    try:
+        on_event(event)
+    except Exception as exc:  # noqa: BLE001 - a broken listener must never break the answer
+        print(f"chat: event listener failed ({type(exc).__name__})", file=sys.stderr)
+
+
 def run_chat(
-    body: ChatRequest, client_factory=None, deadline_s: float | None = None
+    body: ChatRequest,
+    client_factory=None,
+    deadline_s: float | None = None,
+    on_event: ChatEvent | None = None,
 ) -> ChatResponse:
-    """The tool loop. `client_factory(timeout)` builds the Anthropic client."""
+    """The tool loop. `client_factory(timeout)` builds the Anthropic client.
+
+    `on_event` (streaming endpoint only) is told `{"type": "status", ...}` as
+    the loop advances; the answer itself is still validated as a whole.
+    """
     client_factory = client_factory or make_client
     started = time.monotonic()
     budget_s = (
@@ -1174,6 +1207,13 @@ def run_chat(
         kwargs: dict[str, Any] = {}
         if round_no == MAX_TOOL_ROUNDS:
             kwargs["tool_choice"] = {"type": "none"}
+        _emit(
+            on_event,
+            {
+                "type": "status",
+                "text": "Thinking" if round_no == 0 else "Putting the answer together",
+            },
+        )
         client = client_factory(min(CALL_TIMEOUT_S, max(3.0, remaining)))
         response = client.messages.create(
             model=llm.MODEL, max_tokens=MAX_TOKENS, system=system, tools=TOOLS,
@@ -1195,6 +1235,14 @@ def run_chat(
             break
         result_blocks = []
         for block in tool_blocks:
+            _emit(
+                on_event,
+                {
+                    "type": "status",
+                    "tool": block.name,
+                    "text": TOOL_STATUS.get(block.name, "Working"),
+                },
+            )
             payload, is_error = run_tool(block.name, block.input, context)
             payloads.append(payload)
             sources.append(
@@ -1243,6 +1291,7 @@ def handle_chat(
     forwarded_for: str | None,
     client_host: str | None,
     client_factory=None,
+    on_event: ChatEvent | None = None,
 ) -> ChatResponse:
     """Everything /v1/chat does; raises ChatHttpError for 400/429/503."""
     if llm.api_key() is None:
@@ -1252,9 +1301,82 @@ def handle_chat(
     if over_budget():
         return ChatResponse(reply=PAUSED_REPLY, limited=True)
     try:
-        return run_chat(body, client_factory)
+        return run_chat(body, client_factory, on_event=on_event)
     except ChatHttpError:
         raise
     except Exception as exc:  # noqa: BLE001 - timeouts, API errors
         print(f"chat: model call failed ({type(exc).__name__})", file=sys.stderr)
         raise ChatHttpError(503, "chat_unavailable", "Chat is unavailable.") from None
+
+
+# --------------------------------------------------------------------- streaming
+
+HEARTBEAT_S = 10.0
+_DONE = object()
+
+
+def sse(event: str, data: Any) -> str:
+    """One server-sent event frame."""
+    return (
+        f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
+    )
+
+
+def stream_chat(
+    body: ChatRequest,
+    forwarded_for: str | None,
+    client_host: str | None,
+    client_factory=None,
+) -> Iterator[str]:
+    """`handle_chat` as server-sent events, for POST /v1/chat/stream.
+
+    Frames: `status` ({text, tool?}) while it works, then exactly one of
+    `reply` (the same JSON as POST /v1/chat) or `error` ({status, code,
+    message}). A `: keep-alive` comment goes out while a model call is slow.
+    The reply text is delivered whole, after grounding validation: streaming
+    unvalidated tokens would show claims the validator may then replace.
+    """
+    events: queue.Queue = queue.Queue()
+
+    def work() -> None:
+        try:
+            response = handle_chat(
+                body, forwarded_for, client_host, client_factory, on_event=events.put
+            )
+            events.put(
+                {"type": "reply", "body": response.model_dump(by_alias=True, exclude_none=True)}
+            )
+        except ChatHttpError as exc:
+            events.put(
+                {"type": "error", "status": exc.status, "code": exc.code, "message": exc.message}
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"chat: stream failed ({type(exc).__name__})", file=sys.stderr)
+            events.put(
+                {
+                    "type": "error",
+                    "status": 503,
+                    "code": "chat_unavailable",
+                    "message": "Chat is unavailable.",
+                }
+            )
+        finally:
+            events.put(_DONE)
+
+    threading.Thread(target=work, daemon=True).start()
+    yield ": open\n\n"
+    while True:
+        try:
+            item = events.get(timeout=HEARTBEAT_S)
+        except queue.Empty:
+            yield ": keep-alive\n\n"
+            continue
+        if item is _DONE:
+            return
+        kind = item["type"]
+        if kind == "status":
+            yield sse("status", {k: v for k, v in item.items() if k != "type"})
+        elif kind == "reply":
+            yield sse("reply", item["body"])
+        else:
+            yield sse("error", {k: v for k, v in item.items() if k != "type"})

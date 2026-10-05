@@ -28,7 +28,7 @@ from uuid import UUID
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from api import area_cache, point_score, scorefile, slim_areas, sources
 from api.ai_explain import ai_explanation
@@ -40,7 +40,7 @@ from api.areas import (
     point_in_polygon,
     usable_areas,
 )
-from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat
+from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat, stream_chat
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
 from api.feedback import FeedbackRequest, record_feedback
 from api.geocoding import geocode_address
@@ -818,6 +818,24 @@ def post_chat(body: ChatRequest, request: Request):
         )
     except ChatHttpError as exc:
         return _error(exc.status, exc.code, exc.message)
+
+
+@app.post(
+    "/v1/chat/stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}, "description": "Server-sent events."}},
+)
+def post_chat_stream(body: ChatRequest, request: Request):
+    """POST /v1/chat as server-sent events: `status` frames, then one `reply` or `error`."""
+    return StreamingResponse(
+        stream_chat(
+            body,
+            request.headers.get("x-forwarded-for"),
+            request.client.host if request.client else None,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get(

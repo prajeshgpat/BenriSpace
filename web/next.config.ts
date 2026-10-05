@@ -1,10 +1,21 @@
 import type { NextConfig } from "next";
 
-import { BASEMAP_ORIGIN, resolveApiBaseUrl } from "./src/lib/config";
+import {
+  BASEMAP_ORIGIN,
+  resolveApiBaseUrl,
+  resolveChatStreamUrl,
+  resolveTilesUrl,
+} from "./src/lib/config";
 
 const apiOrigin = new URL(
   resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL),
 ).origin;
+
+// Optional extra origins: the streaming chat endpoint and the PMTiles bucket.
+const extraConnectOrigins = [
+  resolveChatStreamUrl(process.env.NEXT_PUBLIC_CHAT_STREAM_URL),
+  resolveTilesUrl(process.env.NEXT_PUBLIC_PMTILES_URL),
+].flatMap((value) => (value ? [new URL(value).origin] : []));
 
 // Statically prerendered pages cannot carry a per-request nonce, so scripts
 // and styles fall back to 'unsafe-inline'. The policy still pins network
@@ -20,7 +31,7 @@ const contentSecurityPolicy = [
   // that it starts from a Blob URL (worker-src, with child-src for Safari).
   `img-src 'self' data: blob: ${BASEMAP_ORIGIN}`,
   "font-src 'self'",
-  `connect-src 'self' ${apiOrigin} ${BASEMAP_ORIGIN}`,
+  `connect-src ${["'self'", apiOrigin, BASEMAP_ORIGIN, ...extraConnectOrigins].join(" ")}`,
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
   "object-src 'none'",

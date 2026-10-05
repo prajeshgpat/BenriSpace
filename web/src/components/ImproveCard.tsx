@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useId, memo } from "react";
 
 import { useImprove } from "@/hooks/useImprove";
 import type { ApiClient } from "@/lib/api/client";
@@ -26,7 +26,7 @@ function signed(value: number): string {
   return `${rounded >= 0 ? "+" : "−"}${Math.abs(rounded)}`;
 }
 
-export function ImproveCard({ coordinates, client, priorities, onPreview }: ImproveCardProps) {
+function ImproveCardImpl({ coordinates, client, priorities, onPreview }: ImproveCardProps) {
   const { status, data, updating } = useImprove(coordinates, client, priorities);
   const listId = useId();
   const { visible, hidden, open, toggle } = useShowMore(data?.suggestions ?? []);
@@ -149,3 +149,6 @@ export function ImproveCard({ coordinates, client, priorities, onPreview }: Impr
     </section>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const ImproveCard = memo(ImproveCardImpl);

@@ -15,6 +15,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `POST /triangulate` | Best locations that satisfy several commute anchors | live (straight-line circles until Phase 2 adds real routing, see below) |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
 | `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
+| `POST /chat/stream` | The same chat as server-sent events (progress, then the reply) | built, not deployed |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
@@ -518,6 +519,28 @@ Errors:
 | 400 | `invalid_request` | Empty `messages`, a bad factor key, or the last message is not from the user |
 | 429 | `rate_limited` | The visitor has used today's 15 messages |
 | 503 | `chat_unavailable` | No `ANTHROPIC_API_KEY` is configured, or the model call failed or timed out |
+
+---
+
+## `POST /chat/stream`
+
+The same request body, tools, limits and answer as [`POST /chat`](#post-chat), delivered as server-sent events (`Content-Type: text/event-stream`). A malformed body is rejected with a plain `400` before the stream starts; everything after that arrives as frames:
+
+```text
+event: status
+data: {"text":"Searching areas","tool":"search_areas"}
+
+event: reply
+data: {"reply":"...","results":[],"sources":[]}
+```
+
+| Event | Data | When |
+| --- | --- | --- |
+| `status` | `{text, tool?}` | Zero or more times while the assistant thinks or runs a tool |
+| `reply` | The `POST /chat` response body | Exactly once on success. The text is sent whole, after the grounding check |
+| `error` | `{status, code, message}` | Instead of `reply`, with the codes in the table above (`429`, `503`) |
+
+Lines starting with `:` are keep-alive comments. Behind API Gateway the frames arrive together when the answer is done; they stream live only through a Lambda function URL (see [ARCHITECTURE.md](ARCHITECTURE.md), "Chat streaming"). The web app uses it only when `NEXT_PUBLIC_CHAT_STREAM_URL` is set.
 
 ---
 

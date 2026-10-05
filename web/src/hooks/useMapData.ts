@@ -48,6 +48,11 @@ interface MapDataInput {
   viewport: Viewport | null;
   /** The view the user chose, which the best-areas list follows. */
   topViewport: Viewport | null;
+  /**
+   * The vector-tile grid draws the cells, so locally scored cells need no
+   * GeoJSON (the map reads `tileCells` instead).
+   */
+  tiles?: boolean;
 }
 
 /** The colored cells for the viewport and the ranked best areas. */
@@ -56,6 +61,7 @@ export function useMapData({
   selection,
   viewport,
   topViewport,
+  tiles = false,
 }: MapDataInput) {
   const [defaults, setDefaults] = useState<DefaultWeights>({});
   const [names, setNames] = useState<Names>({});
@@ -111,9 +117,24 @@ export function useMapData({
 
   const viewBbox =
     topViewport ? roundBbox(topViewport.bbox) : undefined;
-  const topKey = noFactors
+  const viewKey = viewBbox ? bboxKey(viewBbox) : "metro";
+  // Ranking is local once the score file is in, so the API is asked only for
+  // names, and only when a ranked area has not been named yet.
+  const localResults = useMemo(() => {
+    if (!matrix || !composites) return null;
+    return localTop(matrix, composites, {
+      bbox: viewBbox,
+      limit: TOP_LIMIT,
+      minSeparationMi: viewBbox ? VIEW_SEPARATION_MI : METRO_SEPARATION_MI,
+    });
+    // viewBbox is rebuilt each render; its key is the identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matrix, composites, viewKey]);
+  const needsNames =
+    localResults !== null && localResults.some((r) => !(r.geohash in names));
+  const topKey = noFactors || (localResults !== null && !needsNames)
     ? null
-    : `${viewBbox ? bboxKey(viewBbox) : "metro"}|${selectionKey}`;
+    : `${viewKey}|${selectionKey}`;
 
   const top = useResource(topKey, async (signal) => {
     const result = await client.getMapTop(
@@ -168,25 +189,25 @@ export function useMapData({
     };
   }, [localCellData, viewport, apiCells, selection.factors, weights, matrix]);
 
-  const localResults = useMemo(() => {
-    if (!matrix || !composites) return null;
-    return localTop(matrix, composites, {
-      bbox: viewBbox,
-      limit: TOP_LIMIT,
-      minSeparationMi: viewBbox ? VIEW_SEPARATION_MI : METRO_SEPARATION_MI,
-    });
-    // viewBbox is rebuilt each render; its key is the identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matrix, composites, viewBbox ? bboxKey(viewBbox) : "metro"]);
-
   const features = useMemo(() => {
     if (noFactors) return EMPTY_CELLS;
-    if (localCellData) return boundsToFeatures(localCellData);
+    if (localCellData) return tiles ? EMPTY_CELLS : boundsToFeatures(localCellData);
     return cells.data ? cellsToFeatures(cells.data) : EMPTY_CELLS;
-  }, [cells.data, noFactors, localCellData]);
+  }, [cells.data, noFactors, localCellData, tiles]);
   const range = useMemo(
     () => (cells.data && !noFactors ? scoreRange(cells.data.scores) : null),
     [cells.data, noFactors],
+  );
+  const tileCells = useMemo(
+    () =>
+      localCellData && viewport
+        ? {
+            precision: precisionForZoom(viewport.zoom),
+            geohashes: localCellData.geohashes,
+            scores: localCellData.scores,
+          }
+        : null,
+    [localCellData, viewport],
   );
   const topResults = useMemo((): MapTopResult[] | null => {
     if (noFactors) return null;
@@ -211,5 +232,6 @@ export function useMapData({
     topResults,
     weights,
     local,
+    tileCells: noFactors ? null : tileCells,
   };
 }

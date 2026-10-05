@@ -77,6 +77,9 @@ uvicorn api.main:app --port 8000
 # Road-bounded areas for click-to-polygon (manual, not in the weekly workflow)
 python -m ingestion.areas.build --source region --write --allow-network
 
+# Optional: vector tiles for the map (Docker; see docs/ARCHITECTURE.md "Vector tiles")
+python scripts/build_tiles.py --out build/tiles
+
 # Frontend (in another terminal)
 cd web
 cp .env.example .env.local      # points at http://localhost:8000/v1
@@ -84,6 +87,8 @@ npm install
 npm run dev                     # http://localhost:3000
 npm run check                   # lint + typecheck + tests + build
 ```
+
+Optional web build flags (off by default): `NEXT_PUBLIC_PMTILES_URL` draws the cell grid from a PMTiles file, and `NEXT_PUBLIC_CHAT_STREAM_URL` streams chat progress from a Lambda function URL. Both are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Ingestion queries public OpenStreetMap servers, so a full run takes about 45 minutes and should be used sparingly. The weekly GitHub Actions workflow runs the grid, then the sources one at a time, then scoring. Without a `LOCATIONIQ_API_KEY`, address autocomplete uses Photon only.
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, memo } from "react";
 
 import { CompareButton } from "@/components/CompareButton";
 import { ReportProblem } from "@/components/Feedback";
@@ -38,7 +38,7 @@ interface BestAreasProps {
   feedbackClient?: Pick<ApiClient, "sendFeedback">;
 }
 
-export function BestAreas({
+function BestAreasImpl({
   status,
   results,
   error,
@@ -197,3 +197,6 @@ function AreaItem({
     </li>
   );
 }
+
+/** Skips re-rendering while the map pans and nothing it shows has changed. */
+export const BestAreas = memo(BestAreasImpl);

@@ -5,7 +5,7 @@ import {
   canonicalFactorKey,
 } from "@/lib/score/factors";
 
-import { ApiError } from "./errors";
+import { ApiError, isApiError } from "./errors";
 import type {
   AreaGeometry,
   AreaInfo,
@@ -48,8 +48,18 @@ export interface ApiClientOptions {
   baseUrl: string;
   /** `point` adds `precision=point` to /score and /area; defaults to NEXT_PUBLIC_SCORE_PRECISION. */
   scorePrecision?: ScorePrecision;
+  /**
+   * Full URL of the streaming chat endpoint (a Lambda function URL, or
+   * `/chat/stream` on the API). Left out, chat uses plain `/chat`.
+   */
+  chatStreamUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+}
+
+export interface ChatOptions extends RequestOptions {
+  /** Told what the assistant is doing ("Searching areas") when streaming works. */
+  onStatus?: (text: string) => void;
 }
 
 export interface RequestOptions {
@@ -131,7 +141,7 @@ export interface ApiClient {
   chat(
     messages: readonly ChatTurn[],
     context?: ChatContext,
-    options?: RequestOptions,
+    options?: ChatOptions,
   ): Promise<ChatReply>;
 }
 
@@ -756,7 +766,27 @@ function errorFromResponse(
   return new ApiError("server", message, details);
 }
 
+/** Splits a server-sent-event buffer into complete frames and the unfinished rest. */
+export function splitSseFrames(buffer: string): {
+  frames: { event: string; data: string }[];
+  rest: string;
+} {
+  const parts = buffer.replace(/\r\n/g, "\n").split("\n\n");
+  const rest = parts.pop() ?? "";
+  const frames = parts.flatMap((part) => {
+    let event = "message";
+    const data: string[] = [];
+    for (const line of part.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+    }
+    return data.length > 0 ? [{ event, data: data.join("\n") }] : [];
+  });
+  return { frames, rest };
+}
+
 export function createApiClient({
+  chatStreamUrl,
   baseUrl,
   fetch: fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -800,6 +830,73 @@ export function createApiClient({
     const body = await readJson(response);
     if (!response.ok) throw errorFromResponse(response.status, body, response.headers);
     return body;
+  }
+
+  /**
+   * Chat over server-sent events. Resolves `null` when streaming is not
+   * available (endpoint missing, wrong content type, network failure, stream
+   * cut before a reply) so the caller can use plain `/chat`; a reply or a
+   * server-reported error ends it.
+   */
+  async function streamChat(
+    url: string,
+    body: unknown,
+    { signal, timeoutMs: requestTimeoutMs, onStatus }: ChatOptions,
+  ): Promise<ChatReply | null> {
+    const timeout = AbortSignal.timeout(requestTimeoutMs ?? CHAT_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      });
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+      return null;
+    }
+    if (response.status === 429 || response.status === 400 || response.status === 422) {
+      throw errorFromResponse(response.status, await readJson(response), response.headers);
+    }
+    const type = response.headers.get("Content-Type") ?? "";
+    if (!response.ok || !response.body || !type.includes("text/event-stream")) return null;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: !done });
+        const { frames, rest } = splitSseFrames(buffer);
+        buffer = rest;
+        for (const frame of frames) {
+          let data: unknown;
+          try {
+            data = JSON.parse(frame.data);
+          } catch {
+            continue;
+          }
+          if (frame.event === "status" && isObject(data) && typeof data.text === "string") {
+            onStatus?.(data.text);
+          } else if (frame.event === "reply") {
+            return parseChatReply(data);
+          } else if (frame.event === "error" && isObject(data)) {
+            throw errorFromResponse(
+              isFiniteNumber(data.status) ? data.status : 503,
+              data,
+            );
+          }
+        }
+        if (done) return null;
+      }
+    } catch (cause) {
+      if (signal?.aborted || isApiError(cause)) throw cause;
+      return null;
+    } finally {
+      reader.cancel().catch(() => {});
+    }
   }
 
   const getJson = (path: string, options?: RequestOptions) =>
@@ -933,11 +1030,16 @@ export function createApiClient({
       const turns = prepareChatTurns(messages);
       const body: Record<string, unknown> = { messages: turns };
       if (Object.keys(context).length > 0) body.context = context;
+      const { onStatus, ...request } = options ?? {};
+      if (chatStreamUrl && onStatus) {
+        const streamed = await streamChat(chatStreamUrl, body, { ...request, onStatus });
+        if (streamed) return streamed;
+      }
       return parseChatReply(
         await requestJson(
           "/chat",
           { method: "POST", body },
-          { timeoutMs: CHAT_TIMEOUT_MS, ...options },
+          { timeoutMs: CHAT_TIMEOUT_MS, ...request },
         ),
       );
     },

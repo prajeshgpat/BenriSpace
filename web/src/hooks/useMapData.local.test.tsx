@@ -66,6 +66,33 @@ describe("useMapData with the score file", () => {
     expect(getMapCells).not.toHaveBeenCalled();
   });
 
+  it("asks the API for area names once, not on every filter change", async () => {
+    const result1 = (geohash: string) => ({
+      geohash, latitude: 40.7, longitude: -74, score: 50, metroArea: "NYC",
+      subScores: {}, neighborhood: `Name ${geohash}`,
+    });
+    const getMapTop = vi.fn(async () => ({
+      factors: [], weights: {}, weightsVersion: "v",
+      results: [result1("dr5ru0"), result1("dr5ru1")],
+    }));
+    const c = client({
+      getMapTop: getMapTop as unknown as ApiClient["getMapTop"],
+      getMapScores: async () =>
+        encodeScoreFile(API_ORDER, [row("dr5ru0", 100, 0), row("dr5ru1", 0, 100)]),
+    });
+    const { result, rerender } = renderHook(
+      ({ selection }) =>
+        useMapData({ client: c, selection, viewport, topViewport: viewport }),
+      { initialProps: { selection: ALL_FACTORS } },
+    );
+    await waitFor(() => expect(result.current.topResults?.[0]?.neighborhood).toBe("Name dr5ru0"));
+    const calls = getMapTop.mock.calls.length;
+    act(() => rerender({ selection: createSelection(["transit"]) }));
+    expect(result.current.topResults?.[0].geohash).toBe("dr5ru1");
+    expect(result.current.topResults?.[0].neighborhood).toBe("Name dr5ru1");
+    expect(getMapTop.mock.calls.length).toBe(calls);
+  });
+
   it("falls back to the API when the file cannot be loaded", async () => {
     const getMapCells = vi.fn(async () => ({
       precision: 6,

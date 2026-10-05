@@ -86,6 +86,8 @@ app's generated TypeScript types) and implemented in `api/main.py`. Full guide:
 | `POST /triangulate` | Best locations for several commute anchors (placeholder geometry, see below) |
 | `POST /optimize` | Multi-destination optimizer: minimise weekly travel to work, a store brand, a gym... |
 | `POST /chat` | "Ask Benri", a tool-using Haiku assistant (in progress) |
+| `GET /map/scores` | The compact all-cells score file the browser scores from (see below) |
+| `POST /chat/stream` | The same chat as server-sent events (`status` frames, then one `reply` or `error`) |
 
 Behavior worth knowing:
 
@@ -114,6 +116,60 @@ Behavior worth knowing:
   estimate.
 - **Not on the request path:** scoring and ingestion. Requests read `scores`,
   `areas`, `area_cells`, `places` and the caches.
+
+### The web app: local scoring, vector tiles, compare, streaming chat
+
+- **Scoring in the browser.** The app downloads `GET /map/scores` once
+  (`web/src/lib/scores/`): every cell's 13 sub-scores as bytes. The overall score
+  is a weighted average, so the browser recomputes it exactly for any filter or
+  importance change (`compositeAll`), recolours the map and ranks areas with no
+  API call. While the file loads, or if it fails, the API endpoints answer as
+  before.
+- **Best areas, locally.** `localTop` (`lib/scores/topk.ts`) builds a max-heap of
+  the cells in view (O(n)), pops the best, and checks the 1-mile spacing against
+  the chosen cells in the 3 x 3 neighbouring squares of a grid hash, so selection
+  is O(n + k log n) rather than a sort plus pairwise distances. The only API
+  call left is for neighbourhood names, and it is made only when a ranked cell has
+  not been named yet (`useMapData`); names are remembered per geohash.
+- **Vector tiles (opt-in).** `scripts/build_tiles.py` turns the cell grid and the
+  `areas_slim` polygons into one PMTiles file with tippecanoe (Docker, image from
+  `scripts/tiles/Dockerfile`): layers `parents` (geohash-5, z5-9), `cells`
+  (geohash-6, z10-13) and `areas` (z9-13), carrying geometry and ids only (`g` is
+  the geohash). About 10 MB for 64,320 cells. With `NEXT_PUBLIC_PMTILES_URL` set at
+  build time the map draws that archive (HTTP range requests, no tile server) and
+  joins it to the score file by `g` through MapLibre feature-state
+  (`components/map/usePmtilesCells.ts`): a filter change updates only the cells
+  whose score moved. If a tile request fails the map falls back to GeoJSON cells.
+  Unset (the default), nothing changes and the `pmtiles` library is not loaded.
+  Owner steps to turn it on: create a Cloudflare R2 bucket with a public custom
+  domain (or r2.dev) and a CORS rule allowing `GET`/`HEAD` with the `Range`
+  header from the site origins; upload `build/tiles/benrispace.pmtiles` (cache
+  `public, max-age=31536000, immutable` under a versioned name such as
+  `benrispace-v1.pmtiles`); set `NEXT_PUBLIC_PMTILES_URL` in Amplify and redeploy.
+  `next.config.ts` adds that origin to the CSP `connect-src` automatically. Rebuild
+  the tiles only when the grid or area polygons change, not when scores do.
+- **Compare places.** Pin 2-4 places (`useCompare`, kept in `sessionStorage`);
+  `CompareDrawer` shows factor rings side by side, marks the best value in each
+  row, shows how many points each place trails the best, and lists the three
+  factors where the places differ most (`lib/compare.ts`).
+- **Chat streaming.** `POST /chat/stream` runs the same tool loop (`run_chat`
+  takes an optional `on_event` callback) and emits `status` frames ("Searching
+  areas") while it works, then the validated reply. The reply text is not sent
+  token by token: it is checked against the tool output first, and unvalidated
+  tokens could show claims the check later replaces. The web client
+  (`createApiClient({ chatStreamUrl })`) uses the stream only when
+  `NEXT_PUBLIC_CHAT_STREAM_URL` is set and falls back to plain `/chat` when the
+  stream is missing, not an event stream, or ends without a reply (a rate-limit or
+  validation error is shown, not retried). API Gateway buffers responses, so the
+  frames only arrive live through a Lambda function URL in `RESPONSE_STREAM`
+  mode. `infra/chat_stream.tf` defines that second function (same zip, uvicorn
+  behind the AWS Lambda Web Adapter via `api/run_stream.sh` and
+  `api/stream_server.py`); it is off (`chat_stream_enabled = false`) and not
+  applied. Owner steps: remove `uvicorn` from `EXCLUDED_DEPENDENCIES` in
+  `scripts/build_lambda.sh`, set `chat_stream_enabled = true` and
+  `chat_stream_adapter_layer_arn`, apply, then set `NEXT_PUBLIC_CHAT_STREAM_URL`
+  to the `chat_stream_url` output plus `v1/chat/stream`. The function URL is
+  public and shares the per-visitor daily limit and monthly budget with `/chat`.
 
 ## 2. Data pipeline: how scores are produced
 

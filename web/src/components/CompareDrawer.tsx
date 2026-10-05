@@ -7,6 +7,8 @@ import {
   COMPARE_ROWS,
   MAX_COMPARE,
   bestInRow,
+  biggestDifferences,
+  gapFromBest,
   rowValue,
   type CompareRow,
   type ComparePlace,
@@ -71,6 +73,11 @@ export function CompareDrawer({ places, onRemove, onClear }: CompareDrawerProps)
 
   if (places.length === 0) return null;
 
+  const differences = biggestDifferences(places);
+  const labelById = new Map(places.map((p) => [p.id, p.label]));
+  const nameOf = (ids: readonly string[]) =>
+    ids.map((id) => labelById.get(id) ?? id).join(" and ");
+
   // Portalled out of the panel: a bottom sheet's transform would otherwise
   // become the containing block for these fixed elements.
   return createPortal(
@@ -108,6 +115,19 @@ export function CompareDrawer({ places, onRemove, onClear }: CompareDrawerProps)
                 Pin at least one more place (up to {MAX_COMPARE}) to see which is best on each row.
               </p>
             ) : null}
+            {differences.length > 0 ? (
+              <section className={styles.differences} aria-label="Biggest differences">
+                <h3 className={styles.diffTitle}>Biggest differences</h3>
+                <ul className={styles.diffList}>
+                  {differences.map((d) => (
+                    <li key={d.row}>
+                      <strong>{FACTORS[d.row].label}</strong>: {nameOf(d.leaderIds)} leads by{" "}
+                      {d.spread} {d.spread === 1 ? "point" : "points"} over {nameOf(d.trailerIds)}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <div className={styles.scroll}>
               <table className={styles.table}>
                 <caption className="sr-only">
@@ -144,6 +164,7 @@ export function CompareDrawer({ places, onRemove, onClear }: CompareDrawerProps)
                         <th scope="row">{rowLabel(row)}</th>
                         {places.map((place) => {
                           const value = rowValue(place, row);
+                          const gap = gapFromBest(places, place, row);
                           return (
                             <td key={place.id}>
                               {value === null ? (
@@ -152,6 +173,12 @@ export function CompareDrawer({ places, onRemove, onClear }: CompareDrawerProps)
                                 <span className={styles.cell} data-best={best.has(place.id)}>
                                   <MiniRing value={value} />
                                   <span>{value}</span>
+                                  {gap ? (
+                                    <span className={styles.gap}>
+                                      <span aria-hidden="true">{`−${gap}`}</span>
+                                      <span className="sr-only">{`${gap} behind the best`}</span>
+                                    </span>
+                                  ) : null}
                                   {best.has(place.id) ? <span className="sr-only"> (best)</span> : null}
                                 </span>
                               )}
