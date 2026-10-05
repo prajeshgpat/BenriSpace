@@ -232,6 +232,15 @@ sales-assisted first; rate limiting via a Postgres counter first.
 - Confirm migration 0006 and 0007 status in production (file headers still say
   "not applied"), then update those headers.
 - Apply migration 0010 when chat is ready to ship.
+- Delete the retired v1 score rows (64,320 rows of `v1-handtuned`, kept only for
+  rollback and now dead weight) with `scripts/delete_v1_scores.py`. It is
+  owner-run: a dry run by default (row counts and database size), `--yes` deletes
+  in batches of 5,000, and it prints counts and size before and after. It refuses
+  to run if the API is configured to serve v1. File size only shrinks after
+  `vacuum full scores;`.
+- Apply migration 0013 (`score_scales`) to let `scoring/run.py` store the factor
+  scales used by on-demand point scoring (`precision=point`); until then the API
+  computes them once per Lambda instance from `feature_store` (0.2 to 2.5 s per metro).
 - Not yet verified: Safari and Firefox, screen readers, real touch devices.
 - NCES public-domain status should be verified before launch
   ([data-sources.md](data-sources.md)).
