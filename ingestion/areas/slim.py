@@ -33,6 +33,24 @@ INSERT_SLIM_SQL = (
 )
 
 
+PROD_SIMPLIFY_DEG = 3e-5  # ~3 m: what the production copy keeps (scripts/copy_areas_slim.py)
+
+
+def simplified_select_sql(tolerance_deg: float = PROD_SIMPLIFY_DEG) -> str:
+    """SELECT of every areas_slim row, columns in INSERT_SLIM_SQL parameter order, with the
+    geometry (WKB) simplified, snapped to GRID_DEG and made a valid MultiPolygon. A shape
+    that collapses to nothing (a sub-metre sliver) keeps its original geometry."""
+    shape = f"st_reduceprecision(st_simplifypreservetopology(geom, {tolerance_deg}), {GRID_DEG})"
+    polygons = "st_multi(st_collectionextract(st_makevalid({}), 3))"
+    return (
+        "select id, build_version, metro_area, "
+        f"st_asbinary(case when st_isempty({polygons.format(shape)}) "
+        f"then {polygons.format('geom')} else {polygons.format(shape)} end), "
+        "area_sq_mi, extent_mi, compactness, bounded_by, neighborhood "
+        "from areas_slim order by id"
+    )
+
+
 def slim_geometry(
     geom: BaseGeometry, simplify_deg: float = SIMPLIFY_DEG, grid_deg: float = GRID_DEG
 ) -> MultiPolygon:

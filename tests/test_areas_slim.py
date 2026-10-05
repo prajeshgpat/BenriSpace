@@ -97,3 +97,13 @@ def test_row_to_area_converts_units_and_geojson():
     )
     assert area["area_sq_m"] == pytest.approx(0.05 * 2_589_988.11)
     assert area["geometry"] == gj and area["bounded_by"] == [] and area["neighborhood"] == "X"
+
+
+def test_simplified_select_matches_insert_column_order_and_tolerance():
+    sql = slim.simplified_select_sql(3e-05)
+    assert sql.startswith("select id, build_version, metro_area, st_asbinary(")
+    assert "st_simplifypreservetopology(geom, 3e-05)" in sql and "st_reduceprecision" in sql
+    assert sql.endswith(
+        "area_sq_mi, extent_mi, compactness, bounded_by, neighborhood from areas_slim order by id"
+    )
+    assert slim.PROD_SIMPLIFY_DEG == 3e-05
