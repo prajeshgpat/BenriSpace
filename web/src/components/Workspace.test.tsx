@@ -157,10 +157,6 @@ function setup(
     getSimilar: vi.fn(async () => {
       throw new Error("similar unavailable");
     }),
-    // Map pins are optional too: no pins unless a test provides places.
-    getPlacesAround: vi.fn(async () => {
-      throw new Error("places unavailable");
-    }),
     ...overrides,
   };
   return {
@@ -1042,39 +1038,6 @@ describe("area polygon", () => {
     expect(
       fetchMock.mock.calls.filter(([url]) => !String(url).includes("/area/explanation?")),
     ).toEqual([]);
-  });
-
-  it("fetches place pins for the selected factors around the area and passes them to the map", async () => {
-    const getPlacesAround = vi.fn<ApiClient["getPlacesAround"]>(async () => ({
-      radiusMi: 0.6,
-      places: [
-        {
-          factor: "cafe",
-          name: "Joe",
-          brand: null,
-          category: "cafe",
-          latitude: 40.725,
-          longitude: -73.995,
-          distanceMi: 0.1,
-        },
-      ],
-    }));
-    setup("", liveApi, { getPlacesAround }, areaApi);
-    await mapReady();
-    expect((map() as { placePins?: unknown[] }).placePins ?? []).toEqual([]);
-
-    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7, lon: -74 }));
-
-    await waitFor(() =>
-      expect((map() as { placePins?: unknown[] }).placePins).toHaveLength(1),
-    );
-    const [lat, lon, options] = getPlacesAround.mock.calls[0];
-    // The polygon's bbox centre, not the click.
-    expect(lat).toBeCloseTo(40.725, 3);
-    expect(lon).toBeCloseTo(-73.995, 3);
-    expect(options?.factors).toContain("cafe");
-    expect(options?.factors).not.toContain("airport");
-    expect(options?.radiusMi).toBeGreaterThanOrEqual(0.25);
   });
 
   it("passes no highlight while the lookup is pending, then the polygon replaces it", async () => {

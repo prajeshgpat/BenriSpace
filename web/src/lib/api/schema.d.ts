@@ -263,26 +263,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/places/around": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Places behind several factors in and near an area, for map pins.
-         * @description One round trip for the map pins shown with a score: the nearest `perFactor` places of each requested place-based factor within `radiusMi` of the point, grouped by factor. Non-place factors (airport, traffic, emergencyCorridor) and unknown keys are ignored; omit `factors` for every place-based factor.
-         */
-        get: operations["getPlacesAround"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/map/cells": {
         parameters: {
             query?: never;
@@ -741,21 +721,6 @@ export interface components {
             factor: components["schemas"]["FactorKey"];
             radiusMi: number;
             places: components["schemas"]["Place"][];
-        };
-        PlaceAround: {
-            factor: components["schemas"]["FactorKey"];
-            name: string;
-            brand?: string | null;
-            category: string;
-            /** Format: double */
-            latitude: number;
-            /** Format: double */
-            longitude: number;
-            distanceMi: number;
-        };
-        PlacesAroundResponse: {
-            radiusMi: number;
-            places: components["schemas"]["PlaceAround"][];
         };
         ImproveBetterArea: {
             /** Format: double */
@@ -1500,52 +1465,6 @@ export interface operations {
             };
             /** @description Nothing found for this point. */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description Point outside the coverage area. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
-    getPlacesAround: {
-        parameters: {
-            query: {
-                lat: number;
-                lon: number;
-                /** @description Comma-separated factor keys. */
-                factors?: string;
-                radiusMi?: number;
-                perFactor?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK. */
-            200: {
-                headers: {
-                    "Cache-Control"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PlacesAroundResponse"];
-                };
-            };
-            /** @description Invalid parameters. */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

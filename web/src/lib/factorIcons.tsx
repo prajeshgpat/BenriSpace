@@ -154,26 +154,6 @@ export const FACTOR_ICONS: Record<FactorKey, ComponentType<FactorIconProps>> = {
   recreation: RecreationIcon,
 };
 
-/**
- * Map-pin badge colours per factor, all dark enough for a white icon
- * (WCAG contrast of at least 4.5:1 against #ffffff).
- */
-export const FACTOR_PIN_COLORS: Record<FactorKey, string> = {
-  grocery: "#15803d",
-  restaurant: "#c2410c",
-  cafe: "#92400e",
-  bar: "#7e22ce",
-  gym: "#be123c",
-  shopping: "#a21caf",
-  transit: "#1d4ed8",
-  airport: "#0369a1",
-  gasConvenience: "#475569",
-  traffic: "#854d0e",
-  school: "#0f766e",
-  emergencyCorridor: "#b91c1c",
-  recreation: "#4d7c0f",
-};
-
 /** The icon for a factor key; decorative, so it always sits next to the label. */
 export function FactorIcon({
   factor,

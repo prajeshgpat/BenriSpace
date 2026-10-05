@@ -700,32 +700,6 @@ Errors:
 
 ---
 
-## `GET /places/around`
-
-The places behind several factors around a point, in one round trip, for the pins the web app draws with a score. Per factor, the nearest `perFactor` places within `radiusMi`, nearest first, grouped by factor in the order grocery, gym, cafe, restaurant, bar, shopping, recreation, gasConvenience, transit, school. Non-place factors (`airport`, `traffic`, `emergencyCorridor`) and unknown keys are ignored; omit `factors` for all ten. Distances are miles. A point outside the covered area returns `422 out_of_coverage`; out-of-range parameters return `400 invalid_request`. Cached for 5 minutes.
-
-| Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `lat`, `lon` | number | yes | The centre, inside the covered area |
-| `factors` | string | no | Comma-separated factor keys. Default: all place-based factors |
-| `radiusMi` | number | no | 0.1 to 2. Default 0.5 |
-| `perFactor` | integer | no | 1 to 30 per factor. Default 15 |
-
-```bash
-curl "https://api.benrispace.com/v1/places/around?lat=40.6712&lon=-73.9813&factors=cafe,bar&radiusMi=0.5&perFactor=10"
-```
-
-```json
-{
-  "radiusMi": 0.5,
-  "places": [
-    { "factor": "cafe", "name": "Poetica Coffee", "brand": null, "category": "cafe", "latitude": 40.6696923, "longitude": -73.9794371, "distanceMi": 0.04 }
-  ]
-}
-```
-
----
-
 ## Priorities (`factors`)
 
 `/improve`, `/similar`, `/area/explanation` and `/score/{geoEntityId}/explanation` accept the same optional `factors` (and `weights`) query parameters as `/map/top`: the factors the user selected, for example `factors=grocery,transit,cafe`. Everything those endpoints say is then about those factors only. Weights default to the scoring weights restricted to the selected factors and renormalised, and a missing (`null`) score is ignored. Each response echoes the factors it used in `priorities`. Omitting `factors` means all 13 factors, and the endpoints keep their previous behaviour. Legacy keys (`premiumRetail`, `trailPopularity`, `road`, `gasStation`, `convenienceStore`) are accepted as aliases.

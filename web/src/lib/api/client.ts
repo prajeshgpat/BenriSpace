@@ -36,8 +36,6 @@ import type {
   MapTop,
   MapTopQuery,
   MapTopResult,
-  PlacePin,
-  PlacesAround,
   ReverseGeocode,
   Score,
   ScoreQuery,
@@ -111,16 +109,6 @@ export interface ApiClient {
     coordinates: Coordinates,
     options?: RequestOptions,
   ): Promise<ReverseGeocode>;
-  /** Places behind the given place-based factors in and near a point, for map pins. */
-  getPlacesAround(
-    lat: number,
-    lon: number,
-    options?: RequestOptions & {
-      factors?: readonly FactorKey[];
-      radiusMi?: number;
-      perFactor?: number;
-    },
-  ): Promise<PlacesAround>;
   getMapCells(query: MapCellsQuery, options?: RequestOptions): Promise<MapCells>;
   getMapTop(query: MapTopQuery, options?: RequestOptions): Promise<MapTop>;
   getScoreExplanation(
@@ -663,38 +651,6 @@ export function parseReverseGeocode(body: unknown): ReverseGeocode {
   };
 }
 
-export function parsePlacesAround(body: unknown): PlacesAround {
-  if (!isObject(body) || !isFiniteNumber(body.radiusMi) || !Array.isArray(body.places)) {
-    throw invalidResponse("places around");
-  }
-  const places = body.places.flatMap((item): PlacePin[] => {
-    const factor = isObject(item) ? canonicalFactorKey(item.factor) : null;
-    if (
-      !isObject(item) ||
-      factor === null ||
-      !isNonEmptyString(item.name) ||
-      !isNonEmptyString(item.category) ||
-      !isFiniteNumber(item.latitude) ||
-      !isFiniteNumber(item.longitude) ||
-      !isFiniteNumber(item.distanceMi)
-    ) {
-      return [];
-    }
-    return [
-      {
-        factor,
-        name: item.name,
-        brand: isNonEmptyString(item.brand) ? item.brand : null,
-        category: item.category,
-        latitude: item.latitude,
-        longitude: item.longitude,
-        distanceMi: item.distanceMi,
-      },
-    ];
-  });
-  return { radiusMi: body.radiusMi, places };
-}
-
 export function parseMapCells(body: unknown): MapCells {
   if (
     !isObject(body) ||
@@ -1071,18 +1027,6 @@ export function createApiClient({
           ...options,
         }),
       );
-    },
-
-    async getPlacesAround(
-      lat,
-      lon,
-      { factors, radiusMi, perFactor, ...options } = {},
-    ) {
-      const params = new URLSearchParams({ lat: String(lat), lon: String(lon) });
-      if (factors && factors.length > 0) params.set("factors", factors.join(","));
-      if (radiusMi !== undefined) params.set("radiusMi", String(radiusMi));
-      if (perFactor !== undefined) params.set("perFactor", String(perFactor));
-      return parsePlacesAround(await getJson(`/places/around?${params}`, options));
     },
 
     async getMapCells(query, options) {

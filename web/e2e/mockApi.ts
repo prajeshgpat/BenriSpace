@@ -149,22 +149,6 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         return json(route, { factors: WEB_FACTORS, weights: {}, weightsVersion: "v", results: [] });
       case "/improve":
         return json(route, { suggestions: [], bestNearby: null, priorities: [] });
-      case "/places/around": {
-        // Four restaurants and a bar a few metres apart (one cluster), plus a far cafe.
-        const near = (factor: string, name: string, i: number) => ({
-          factor, name, brand: null, category: factor,
-          latitude: score.latitude + i * 0.00002, longitude: score.longitude, distanceMi: 0.05,
-        });
-        return json(route, {
-          radiusMi: 0.5,
-          places: [
-            near("restaurant", "Pasta", 0), near("restaurant", "Ramen", 1),
-            near("restaurant", "Tacos", 2), near("restaurant", "Pizza", 3),
-            near("bar", "Pub", 4),
-            { ...near("cafe", "Joe", 0), latitude: score.latitude + 0.004, distanceMi: 0.3 },
-          ],
-        });
-      }
       case "/similar":
         return json(route, { minSeparationMi: 1, results: [], priorities: [] });
       case "/reverse":

@@ -18,7 +18,6 @@ import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useCompare } from "@/hooks/useCompare";
 import { useLatest } from "@/hooks/useLatest";
 import { useMapData } from "@/hooks/useMapData";
-import { usePlacePins } from "@/hooks/usePlacePins";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
 import { useTheme } from "@/hooks/useTheme";
@@ -411,13 +410,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         ? { lat: successScore.latitude, lon: successScore.longitude }
         : null,
     [successScore],
-  );
-
-  const placePins = usePlacePins(
-    scoreCoordinates,
-    state.status === "success" ? state.area?.geometry : null,
-    selection.factors,
-    client,
   );
 
   const successAreaId = state.status === "success" ? state.areaId : undefined;
@@ -935,7 +927,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
           reachGeometry={reachGeometry}
-          placePins={placePins}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}

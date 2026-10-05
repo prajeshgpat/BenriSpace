@@ -224,21 +224,6 @@ class PlacesResponse(CamelModel):
     places: list[PlaceOut]
 
 
-class PlaceAroundOut(CamelModel):
-    factor: str
-    name: str
-    brand: str | None = None
-    category: str
-    latitude: float
-    longitude: float
-    distance_mi: float
-
-
-class PlacesAroundResponse(CamelModel):
-    radius_mi: float
-    places: list[PlaceAroundOut]
-
-
 class ImprovePlace(CamelModel):
     name: str
     brand: str | None = None

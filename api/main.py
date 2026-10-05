@@ -68,7 +68,7 @@ from api.optimize import (
     OptimizeResponse,
     optimize,
 )
-from api.places import FACTOR_CATEGORIES, pin_factors, places_around, places_for_factor
+from api.places import FACTOR_CATEGORIES, places_for_factor
 from api.priorities import parse_priorities
 from api.reverse import ReverseUnavailable
 from api.reverse import reverse as reverse_geocode
@@ -83,7 +83,6 @@ from api.schemas import (
     IsochroneShape,
     MapCellsResponse,
     MapTopResponse,
-    PlacesAroundResponse,
     PlacesResponse,
     RankedAddress,
     ReverseResponse,
@@ -454,31 +453,6 @@ def get_places(
         places = places_for_factor(conn, lat, lon, factor, radius_mi, limit)
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return PlacesResponse(factor=factor, radius_mi=radius_mi, places=places)
-
-
-@app.get(
-    "/v1/places/around",
-    response_model=PlacesAroundResponse,
-    responses={422: {"model": Error}},
-)
-def get_places_around(
-    response: Response,
-    lat: float = Query(ge=-90, le=90, description="Latitude."),
-    lon: float = Query(ge=-180, le=180, description="Longitude."),
-    factors: str | None = Query(
-        default=None,
-        description="Comma-separated place-based factor keys; unknown ones are ignored. Omit for all.",
-    ),
-    radius_mi: float = Query(default=0.5, ge=0.1, le=2, alias="radiusMi"),
-    per_factor: int = Query(default=15, ge=1, le=30, alias="perFactor"),
-):
-    if not in_coverage(lat, lon):
-        return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
-    keys = pin_factors([f.strip() for f in factors.split(",")] if factors else None)
-    with get_connection() as conn:
-        places = places_around(conn, lat, lon, keys, radius_mi, per_factor)
-    response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
-    return PlacesAroundResponse(radius_mi=radius_mi, places=places)
 
 
 def _resolve_area(lat: float, lon: float, with_aggregate: bool = True, open_conn=None):

@@ -161,22 +161,6 @@ export type Suggestion = Schemas["Suggestion"];
 /** `label` is null when the point has no usable address. */
 export type ReverseGeocode = Schemas["ReverseResponse"];
 
-/** One place behind a place-based factor, for a map pin. */
-export interface PlacePin {
-  factor: FactorKey;
-  name: string;
-  brand: string | null;
-  category: string;
-  latitude: number;
-  longitude: number;
-  distanceMi: number;
-}
-
-export interface PlacesAround {
-  radiusMi: number;
-  places: PlacePin[];
-}
-
 export interface MapCells {
   precision: number;
   factors: FactorKey[];

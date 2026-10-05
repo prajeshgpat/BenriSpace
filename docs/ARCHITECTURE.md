@@ -165,14 +165,6 @@ Behavior worth knowing:
   L2 over the 13 factors, overfetch then re-rank on selected factors, spread-out) with the
   API as fallback. Candidates are areas where the API's are grid cells, so ranks can
   differ slightly; the response shape is identical.
-- **Place pins.** While a result is showing, `usePlacePins` calls `GET /places/around`
-  for the selected place-based factors (centre and radius from the area polygon's bbox,
-  `lib/map/placePins.ts`; 0.5 mi for a plain point) and `MapCanvas` hands the places to
-  `PlacePins`. Each place is a MapLibre HTML marker with the factor's icon
-  (`FACTOR_ICONS`, colour from `FACTOR_PIN_COLORS`). Pins are clustered greedily in screen
-  space (40 px) after every `moveend`, markers are diffed by key, and a cluster click
-  fits the map to its members (or lists them when they share one spot). Pins sit below
-  the ranked markers and the location pin; a failed request just shows no pins.
 - **Compare places.** Pin 2-4 places (`useCompare`, kept in `sessionStorage`);
   `CompareDrawer` shows factor rings side by side, marks the best value in each
   row, shows how many points each place trails the best, and lists the three
