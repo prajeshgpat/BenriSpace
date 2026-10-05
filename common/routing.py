@@ -7,6 +7,8 @@ api/routing_data.py and api/isochrone.py, so this module has no heavy imports.
 
 from __future__ import annotations
 
+import math
+
 from common.places import PLACE_CATEGORIES
 
 K_NEAREST = 3  # nearest, 2nd and 3rd nearest place per category
@@ -48,9 +50,9 @@ def category_slot(category: str, k: int = 1) -> int:
 
 def to_dm(minutes: float | None) -> int:
     """Minutes -> stored deci-minutes (UNREACHABLE for None / non-finite / over the ceiling)."""
-    if minutes is None or minutes != minutes or minutes < 0:
+    if minutes is None or not math.isfinite(minutes) or minutes < 0:
         return UNREACHABLE
-    dm = int(round(minutes * 10.0))
+    dm = round(minutes * 10.0)
     return dm if dm <= MAX_DM else UNREACHABLE
 
 

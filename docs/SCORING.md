@@ -188,6 +188,17 @@ A point is scored at its exact coordinates instead of reusing the stored score o
   bounding-box centre plus farthest-point picks on a 5 x 5 lattice), equal weights.
 - Validation numbers: `scripts/validate_point_scoring.py`.
 
+## A9. Routing precompute (inputs for time-based scoring)
+
+The Wave 4 precompute (`ingestion/routing/`, migration 0016, see ARCHITECTURE section 6) stores
+network minutes to the nearest, 2nd and 3rd nearest place of every category per cell (walk for
+cells at or above 10,000 people / sq mi, drive below), drive minutes to airports and rail
+stations, and rail ride times between stations. **No score reads them yet**: v2 / v2.1 still use
+straight-line distances, and the v3 time curves (Part B 1.2) will take these minutes as input.
+Optimizer and triangulate already use them. Assumptions to carry into v3: walk 3 mph;
+drive free-flow x 0.8; amenity search caps walk 30 min / drive 45 min (beyond = "not reachable",
+which a time curve should score as zero); train times are weekday AM peak and include the wait.
+
 ---
 
 # Part B: v3 framework (planned, `v3-timeaccess`)

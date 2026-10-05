@@ -132,6 +132,18 @@ export interface SimilarArea {
   summary: string;
 }
 
+export type ReachMode = "walk" | "drive" | "transit";
+
+/** The area reachable from a point (GET /isochrone), as a GeoJSON polygon. */
+export interface Reach {
+  mode: ReachMode;
+  minutes: number;
+  /** "network" = precomputed road network; "estimate" = straight-line circle. */
+  method: "network" | "estimate";
+  areaSqMi: number;
+  geometry: AreaGeometry | null;
+}
+
 export interface Similar {
   minSeparationMi: number;
   results: SimilarArea[];

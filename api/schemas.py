@@ -121,8 +121,29 @@ class RankedAddress(CamelModel):
     composite_score: float
 
 
+class IsochroneShape(CamelModel):
+    """A reachable area as GeoJSON (MultiPolygon, lon/lat). method is "network" when it comes
+    from the precomputed road-network cell graph, "estimate" for the straight-line fallback."""
+
+    label: str | None = None
+    mode: Literal["drive", "transit", "walk"]
+    minutes: int
+    method: Literal["network", "estimate"]
+    cell_count: int
+    area_sq_mi: float
+    geometry: dict | None = None
+
+
+class IsochroneResponse(CamelModel):
+    latitude: float
+    longitude: float
+    isochrone: IsochroneShape
+
+
 class TriangulateResponse(CamelModel):
     results: list[RankedAddress]
+    isochrones: list[IsochroneShape] = []
+    combined: IsochroneShape | None = None
 
 
 class Suggestion(CamelModel):

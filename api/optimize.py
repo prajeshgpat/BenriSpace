@@ -48,7 +48,10 @@ SEARCH_MARGIN_MI = 5.0  # places are searched this far beyond the candidate radi
 DEFAULT_RADIUS_MI = 15.0
 MAX_RADIUS_MI = 30.0
 MAX_ANCHORS = 6
-TRANSIT_NOTE = "Train times arrive with the transit precompute; transit minutes are estimated."
+TRANSIT_NOTE = (
+    "Transit minutes use precomputed train times (walk + ride + walk) where a rail station is "
+    "within 1.5 mi of both ends, and are estimated elsewhere."
+)
 
 CATEGORY_WORDS: dict[str, str] = {
     "grocery": "grocery", "groceries": "grocery", "grocery store": "grocery",
@@ -58,6 +61,7 @@ CATEGORY_WORDS: dict[str, str] = {
     "transit": "transit", "train": "transit", "station": "transit", "subway": "transit",
     "school": "school", "schools": "school", "gas": "gas_station",
     "gas station": "gas_station", "gas_station": "gas_station",
+    "airport": "airport", "airports": "airport",
     "convenience": "convenience_store", "convenience store": "convenience_store",
     "convenience_store": "convenience_store",
 }  # fmt: skip
@@ -159,6 +163,7 @@ class ResolvedAnchor:
     trips: float
     targets: list[Target]
     assumed_label: str | None = None  # set when trips was defaulted ("work", or the query)
+    category: str | None = None  # category anchors: the precomputed-minutes key
 
 
 def estimate_minutes(distance_m: float, mode: str) -> float:
@@ -345,14 +350,140 @@ def refine_with_ors(
     return pool
 
 
+PRUNE_KEEP = 4 * REFINE_POOL
+M_PER_DEG = 111_320.0
+
+
+def weiszfeld(
+    points: list[tuple[float, float]], weights: list[float], iters: int = 50
+) -> tuple[float, float]:
+    """Weighted geometric median of (lat, lon) points (Weiszfeld's algorithm, in a local
+    equirectangular frame): the point minimising sum(weight x distance)."""
+    lat0 = sum(p[0] for p in points) / len(points)
+    kx = math.cos(math.radians(lat0))
+    xy = [(p[1] * kx, p[0]) for p in points]
+    x = sum(w * p[0] for w, p in zip(weights, xy, strict=True)) / sum(weights)
+    y = sum(w * p[1] for w, p in zip(weights, xy, strict=True)) / sum(weights)
+    for _ in range(iters):
+        num_x = num_y = den = 0.0
+        for w, p in zip(weights, xy, strict=True):
+            d = math.hypot(p[0] - x, p[1] - y)
+            if d < 1e-9:
+                return y, x / kx
+            num_x += w * p[0] / d
+            num_y += w * p[1] / d
+            den += w / d
+        nx, ny = num_x / den, num_y / den
+        if math.hypot(nx - x, ny - y) < 1e-9:
+            x, y = nx, ny
+            break
+        x, y = nx, ny
+    return y, x / kx
+
+
+def _box_distance_m(lat: float, lon: float, box: tuple[float, float, float, float]) -> float:
+    """Straight-line metres from a point to a (min_lat, max_lat, min_lon, max_lon) box (0 inside)."""
+    clat = min(max(lat, box[0]), box[1])
+    clon = min(max(lon, box[2]), box[3])
+    return haversine_m(lat, lon, clat, clon)
+
+
+def prune_candidates(
+    candidates: list[dict], anchors: list[ResolvedAnchor], keep: int = PRUNE_KEEP
+) -> list[dict]:
+    """Exact lower-bound pruning. Seed: the `keep` candidates nearest the weighted geometric
+    median of the anchors get their full straight-line cost; the largest of those is an upper
+    bound on the keep-th best cost. Any other candidate whose lower bound (distance to each
+    anchor's target bounding box, never more than the real nearest target) already exceeds it
+    cannot reach the top `keep`, so it is dropped before the expensive evaluation."""
+    if len(candidates) <= keep or not anchors:
+        return candidates
+    centres = []
+    for a in anchors:
+        centres.append(_centroid([(t.latitude, t.longitude) for t in a.targets]))
+    median = weiszfeld(centres, [a.trips for a in anchors])
+    boxes = [
+        (
+            min(t.latitude for t in a.targets),
+            max(t.latitude for t in a.targets),
+            min(t.longitude for t in a.targets),
+            max(t.longitude for t in a.targets),
+        )
+        for a in anchors
+    ]
+
+    def lower_bound(c) -> float:
+        return sum(
+            a.trips * ROUND_TRIP * estimate_minutes(_box_distance_m(c["latitude"], c["longitude"], b), a.mode)
+            for a, b in zip(anchors, boxes, strict=True)
+        )
+
+    seeded = sorted(
+        candidates, key=lambda c: haversine_m(median[0], median[1], c["latitude"], c["longitude"])
+    )[:keep]
+    ev = evaluate(seeded, anchors)
+    threshold = max(ev.cost(anchors))
+    kept = [c for c in candidates if lower_bound(c) <= threshold]
+    return kept if len(kept) >= keep else candidates
+
+
+def apply_precomputed(
+    conn, candidates: list[dict], anchors: list[ResolvedAnchor], ev: Evaluation, pool: list[int]
+) -> None:
+    """Replace estimates with stored routing minutes where we have them (marks approx False):
+    category anchors on walk / drive from cell_travel (nearest place of the category in the cell's
+    own travel mode), airports from cell_hubs, and single-address transit anchors from the rail
+    matrix (walk + ride + walk)."""
+    from api import routing_data
+
+    hashes = {ci: candidates[ci].get("geohash") for ci in pool}
+    for ai, a in enumerate(anchors):
+        if a.mode in ("walk", "drive") and a.category:
+            gh = [h for h in hashes.values() if h]
+            overhead = DRIVE_OVERHEAD_MIN if a.mode == "drive" else 0.0
+            if a.category == "airport":
+                if a.mode != "drive":
+                    continue
+                found = routing_data.hub_minutes(conn, gh, "airport")
+                for ci in pool:
+                    hit = found.get(hashes[ci] or "")
+                    if hit:
+                        ev.minutes[ai][ci] = hit[1] + overhead
+                        ev.approx[ai][ci] = False
+                continue
+            found = routing_data.travel_slots(conn, gh, a.category, 1)
+            for ci in pool:
+                hit = found.get(hashes[ci] or "")
+                if hit and hit[0] == a.mode:
+                    ev.minutes[ai][ci] = hit[1] + overhead
+                    ev.approx[ai][ci] = False
+        elif a.mode == "transit" and len(a.targets) == 1 and a.kind == "address":
+            t = a.targets[0]
+            trips = routing_data.rail_trips(
+                conn, [(candidates[ci]["latitude"], candidates[ci]["longitude"]) for ci in pool], (t.latitude, t.longitude)
+            )
+            for ci, minutes in zip(pool, trips, strict=True):
+                if minutes is not None:
+                    ev.minutes[ai][ci] = minutes
+                    ev.approx[ai][ci] = False
+
+
 def build_results(
-    candidates: list[dict], anchors: list[ResolvedAnchor], limit: int, use_ors: bool = True
+    candidates: list[dict],
+    anchors: list[ResolvedAnchor],
+    limit: int,
+    use_ors: bool = True,
+    conn=None,
 ) -> list[OptimizeResult]:
     if not candidates or not anchors:
         return []
+    candidates = prune_candidates(candidates, anchors)
     ev = evaluate(candidates, anchors)
     order = rank_order(candidates, ev.cost(anchors))
     pool = spread(candidates, order, max(REFINE_POOL, limit))
+    if conn is not None:
+        apply_precomputed(conn, candidates, anchors, ev, pool)
+        pool = spread(candidates, rank_order(candidates, ev.cost(anchors), pool), max(REFINE_POOL, limit))
     if use_ors:
         pool = refine_with_ors(candidates, pool, anchors, ev)
         pool = spread(candidates, rank_order(candidates, ev.cost(anchors), pool), limit)
@@ -468,7 +599,7 @@ def fetch_candidates(
         cur.execute(
             """
             select distinct on (s.geo_entity_id)
-                s.*, ge.latitude, ge.longitude, ge.formatted_address,
+                s.*, ge.latitude, ge.longitude, ge.formatted_address, ge.geohash,
                 to_jsonb(ge) ->> 'neighborhood' as neighborhood
             from scores s
             join geo_entities ge on ge.id = s.geo_entity_id
@@ -485,6 +616,7 @@ def fetch_candidates(
         composite = prio.composite_from_columns(r)
         out.append(
             {
+                "geohash": r.get("geohash"),
                 "latitude": float(r["latitude"]),
                 "longitude": float(r["longitude"]),
                 "neighborhood": r.get("neighborhood"),
@@ -572,13 +704,22 @@ def resolve_anchors(
         if centre is None:
             unresolved.append(OptimizeUnresolved(query=a.query, reason="Nothing to search around."))
             continue
-        places = places_by_category_in_box(conn, category, *box)
+        if category == "airport":
+            from api import routing_data
+
+            places = [
+                {"name": n, "latitude": la, "longitude": lo}
+                for n, la, lo in routing_data.airport_targets(conn)
+            ]
+        else:
+            places = places_by_category_in_box(conn, category, *box)
         if not places:
             unresolved.append(
                 OptimizeUnresolved(query=a.query, reason="No matching places found nearby.")
             )
             continue
         make(i, a, _targets(places), category=category)
+        slots[i].category = category
 
     return [s for s in slots if s is not None], unresolved, centre
 
@@ -594,7 +735,7 @@ def optimize(conn, req: OptimizeRequest, use_ors: bool = True) -> OptimizeRespon
     if not anchors or centre is None or unresolved_address:
         return OptimizeResponse(results=[], assumptions=[], unresolved=unresolved)
     candidates = fetch_candidates(conn, centre[0], centre[1], req.radius_mi, prio)
-    results = build_results(candidates, anchors, req.limit, use_ors)
+    results = build_results(candidates, anchors, req.limit, use_ors, conn)
     return OptimizeResponse(
         results=results, assumptions=build_assumptions(anchors, results), unresolved=unresolved
     )

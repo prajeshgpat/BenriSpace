@@ -13,9 +13,11 @@ Everything here is numpy in, numpy out, so it is unit-testable with a hand-made 
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
-from common.cellgrid import NEIGHBORS, cell_center
+from common.cellgrid import NEIGHBORS
 from common.routing import (
     CAP_MIN,
     CATEGORIES,
@@ -108,7 +110,10 @@ def neighbor_minutes(
     for d, (dy, dx) in enumerate(NEIGHBORS):
         nb_idx = core_idx + dy * w + dx
         a, b = node_ids[core_idx], node_ids[nb_idx]
-        net_min = np.asarray(net.shortest_path_lengths(list(a), list(b)), dtype=np.float64)
+        with warnings.catch_warnings():
+            # Pandana warns (and returns a huge value) for pairs in disconnected components.
+            warnings.simplefilter("ignore", UserWarning)
+            net_min = np.asarray(net.shortest_path_lengths(list(a), list(b)), dtype=np.float64)
         net_min = np.where((net_min < 0) | (net_min > 1e5), np.inf, net_min)
         dlat = (lat[nb_idx] - lat[core_idx]) * M_PER_DEG_LAT
         dlon = (lon[nb_idx] - lon[core_idx]) * M_PER_DEG_LAT * np.cos(np.radians(lat[core_idx]))
@@ -117,7 +122,3 @@ def neighbor_minutes(
         ok = on_net[core_idx] & on_net[nb_idx] & np.isfinite(net_min) & (total <= cap)
         edges[:, d] = _to_dm(np.where(ok, total, 0.0), ok)
     return eys[core_idx], exs[core_idx], edges
-
-
-def cell_latlon(iy: int, ix: int) -> tuple[float, float]:
-    return cell_center(iy, ix)

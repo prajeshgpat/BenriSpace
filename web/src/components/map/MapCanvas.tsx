@@ -20,6 +20,7 @@ import {
   CELL_OPACITY,
   FILL_COLOR_EXPRESSION,
   PREVIEW_STYLE,
+  REACH_STYLE,
 } from "@/lib/map/colors";
 import { EMPTY_CELLS, type CellFeatureCollection } from "@/lib/map/features";
 import { tuneDarkStyle } from "@/lib/map/darkStyle";
@@ -49,6 +50,11 @@ const PREVIEW_SOURCE_ID = "preview-area";
 const PREVIEW_FILL_LAYER = "preview-area-fill";
 const PREVIEW_CASING_LAYER = "preview-area-outline-casing";
 const PREVIEW_LINE_LAYER = "preview-area-outline";
+
+const REACH_SOURCE_ID = "reach-area";
+const REACH_FILL_LAYER = "reach-area-fill";
+const REACH_CASING_LAYER = "reach-area-outline-casing";
+const REACH_LINE_LAYER = "reach-area-outline";
 
 const EMPTY_AREA = { type: "FeatureCollection", features: [] } as never;
 
@@ -112,6 +118,8 @@ interface MapCanvasProps {
   areaGeometry?: AreaGeometry | null;
   /** A previewed (not selected) area: drawn dashed, in orange. */
   previewAreaGeometry?: AreaGeometry | null;
+  /** The area reachable from the selected place (isochrone): dashed teal. */
+  reachGeometry?: AreaGeometry | null;
   previewPin?: PinSpec | null;
   theme: ResolvedTheme;
   pin: PinSpec | null;
@@ -250,6 +258,53 @@ function addAreaLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean)
   );
 }
 
+function addReachLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
+  const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
+  const style = REACH_STYLE[theme];
+
+  map.addSource(REACH_SOURCE_ID, { type: "geojson", data: EMPTY_AREA });
+  map.addLayer(
+    {
+      id: REACH_FILL_LAYER,
+      type: "fill",
+      source: REACH_SOURCE_ID,
+      paint: {
+        "fill-color": style.line,
+        "fill-opacity": visible ? style.fillOpacity : 0,
+        "fill-opacity-transition": {
+          duration: prefersReducedMotion() ? 0 : AREA_FADE_MS,
+          delay: 0,
+        },
+      },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: REACH_CASING_LAYER,
+      type: "line",
+      source: REACH_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: { "line-color": style.casing, "line-width": 5, "line-opacity": 0.85 },
+    },
+    firstLabel?.id,
+  );
+  map.addLayer(
+    {
+      id: REACH_LINE_LAYER,
+      type: "line",
+      source: REACH_SOURCE_ID,
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": style.line,
+        "line-width": 2.5,
+        "line-dasharray": [3, 2],
+      },
+    },
+    firstLabel?.id,
+  );
+}
+
 function addPreviewLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {
   const firstLabel = { id: overlayAnchorId(map.getStyle().layers, theme) };
   const style = PREVIEW_STYLE[theme];
@@ -315,6 +370,7 @@ export function MapCanvas({
   highlightGeohash,
   areaGeometry = null,
   previewAreaGeometry = null,
+  reachGeometry = null,
   previewPin = null,
   theme,
   pin,
@@ -342,6 +398,7 @@ export function MapCanvas({
     highlightGeohash: areaGeometry ? null : highlightGeohash,
     areaGeometry,
     previewAreaGeometry,
+    reachGeometry,
     theme,
   });
   const styleTheme = useRef(theme);
@@ -425,6 +482,10 @@ export function MapCanvas({
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
       addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
+      addReachLayers(map, styleTheme.current, Boolean(latest.current.reachGeometry));
+      (map.getSource(REACH_SOURCE_ID) as GeoJSONSource).setData(
+        areaData(latest.current.reachGeometry),
+      );
       addPreviewLayers(
         map,
         styleTheme.current,
@@ -521,6 +582,21 @@ export function MapCanvas({
       );
     }
   }, [areaGeometry, ready, latest]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    (map.getSource(REACH_SOURCE_ID) as GeoJSONSource | undefined)?.setData(
+      areaData(reachGeometry),
+    );
+    if (map.getLayer(REACH_FILL_LAYER)) {
+      map.setPaintProperty(
+        REACH_FILL_LAYER,
+        "fill-opacity",
+        reachGeometry ? REACH_STYLE[latest.current.theme].fillOpacity : 0,
+      );
+    }
+  }, [reachGeometry, ready, latest]);
 
   useEffect(() => {
     const map = mapRef.current;

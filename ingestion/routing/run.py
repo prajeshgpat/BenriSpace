@@ -131,7 +131,7 @@ def run_transit(conn, stats: Stats, dry_run: bool) -> dict:
     for o in range(n):
         for d, minutes in enumerate(transit.ride_minutes_from(tt, o)):
             if minutes is not None:
-                matrix[o, d] = int(round(minutes * 10))
+                matrix[o, d] = round(minutes * 10)
     stats.add("transit_scan", time.time() - t0)
     rows = hubs.rail_rows(tt.stations)
     if not dry_run:
@@ -189,7 +189,6 @@ def main(argv: list[str] | None = None) -> None:
     if bad:
         raise SystemExit(f"unknown steps {bad}; choose from {STEPS}")
     modes = [m for m in args.modes.split(",") if m in MODES]
-    network.configure_osmnx()
     stats = Stats()
     started = time.time()
     summary: dict = {}

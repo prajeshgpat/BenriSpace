@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from common.cellgrid import cell_index
@@ -37,7 +38,7 @@ def travel_mode(stored: str | None, density: float | None) -> str:
 def read_cells(conn, box: tuple[float, float, float, float]) -> list[Cell]:
     """Cells whose centre is inside box = (south, west, north, east)."""
     south, west, north, east = box
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             """
             select g.geohash, g.latitude, g.longitude, f.travel_mode, f.pop_density_per_sq_mi
@@ -60,7 +61,7 @@ def read_places(
     """category -> (lat array, lon array) of places inside box."""
     south, west, north, east = box
     out: dict[str, tuple[list[float], list[float]]] = {}
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             """
             select category, latitude, longitude from places
@@ -77,14 +78,14 @@ def read_places(
 
 def cell_bounds_of(conn) -> tuple[float, float, float, float]:
     """(south, west, north, east) of every cell."""
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("select min(latitude), min(longitude), max(latitude), max(longitude) from geo_entities")
         return cur.fetchone()
 
 
 def write_cell_travel(conn, cells: list[Cell], minutes: np.ndarray) -> int:
     rows = [(c.geohash, c.mode, [int(v) for v in minutes[i]]) for i, c in enumerate(cells)]
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.executemany(
             """
             insert into cell_travel (geohash, mode, minutes_dm) values (%s, %s, %s::smallint[])
@@ -101,7 +102,7 @@ def write_cell_graph(conn, cells: list[Cell], mode: str, edges: np.ndarray) -> i
     rows = [
         (c.geohash, mode, c.lat, c.lon, [int(v) for v in edges[i]]) for i, c in enumerate(cells)
     ]
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.executemany(
             """
             insert into cell_graph (geohash, mode, latitude, longitude, edges_dm)
@@ -115,7 +116,7 @@ def write_cell_graph(conn, cells: list[Cell], mode: str, edges: np.ndarray) -> i
 
 
 def write_hubs(conn, hubs: list[tuple[int, str, str, str, float, float]]) -> None:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.executemany(
             """
             insert into routing_hubs (id, kind, code, name, latitude, longitude)
@@ -129,7 +130,7 @@ def write_hubs(conn, hubs: list[tuple[int, str, str, str, float, float]]) -> Non
 
 
 def read_hubs(conn, kind: str) -> list[tuple[int, str, str, float, float]]:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             "select id, code, name, latitude, longitude from routing_hubs where kind = %s order by id",
             (kind,),
@@ -143,7 +144,7 @@ def write_cell_hubs(conn, geohashes: list[str], kind: str, ids: np.ndarray, dm: 
         keep = [s for s in range(ids.shape[1]) if ids[j][s] >= 0 and dm[j][s] >= 0]
         if keep:
             rows.append((g, kind, [int(ids[j][s]) for s in keep], [int(dm[j][s]) for s in keep]))
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.executemany(
             """
             insert into cell_hubs (geohash, kind, hub_ids, minutes_dm)
@@ -158,7 +159,7 @@ def write_cell_hubs(conn, geohashes: list[str], kind: str, ids: np.ndarray, dm: 
 
 
 def write_rail_matrix(conn, origin_ids: list[int], matrix_dm: np.ndarray) -> None:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute("delete from rail_matrix")
         cur.executemany(
             "insert into rail_matrix (origin_id, minutes_dm) values (%s, %s::smallint[])",
@@ -168,7 +169,7 @@ def write_rail_matrix(conn, origin_ids: list[int], matrix_dm: np.ndarray) -> Non
 
 
 def write_meta(conn, key: str, value: dict) -> None:
-    with conn.cursor() as cur:
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             """
             insert into routing_meta (key, value) values (%s, %s)

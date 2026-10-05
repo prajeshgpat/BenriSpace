@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import io
+import itertools
 import math
 import zipfile
 from bisect import bisect_left
@@ -112,8 +113,8 @@ def active_service_ids(zf: zipfile.ZipFile, day: date) -> set[str]:
 
 def choose_service_date(zf: zipfile.ZipFile, today: date | None = None) -> date:
     """The Tuesday nearest to today on which the feed runs a weekday timetable."""
-    today = today or date.today()
-    for offset in range(0, 400):
+    today = today or date.today()  # noqa: DTZ011
+    for offset in range(400):
         for sign in (1, -1):
             day = today + timedelta(days=sign * offset)
             if day.weekday() == 1 and active_service_ids(zf, day):
@@ -145,7 +146,7 @@ def merge_stations(stations: list[Station]) -> list[int]:
 
 
 def walk_seconds(meters: float) -> int:
-    return int(round(meters * CIRCUITY / WALK_M_PER_MIN * 60.0))
+    return round(meters * CIRCUITY / WALK_M_PER_MIN * 60.0)
 
 
 def build_links(stations: list[Station]) -> list[list[tuple[int, int]]]:
@@ -245,7 +246,7 @@ def build_timetable(feeds: list[tuple[str, dict, list]]) -> Timetable:
     trip_no = 0
     for agency, _, trips in feeds:
         for trip in trips:
-            for (s0, _, d0), (s1, a1, _) in zip(trip, trip[1:], strict=False):
+            for (s0, _, d0), (s1, a1, _) in itertools.pairwise(trip):
                 a, b = station_of.get((agency, s0)), station_of.get((agency, s1))
                 if a is None or b is None or a == b or a1 < d0:
                     continue
@@ -288,14 +289,12 @@ def earliest_arrivals(tt: Timetable, origin: int, t0: int, horizon_s: int) -> li
             s = dst[i]
             if a < arr[s]:
                 arr[s] = a
-                if a + TRANSFER_BUFFER_S < ready[s]:
-                    ready[s] = a + TRANSFER_BUFFER_S
+                ready[s] = min(ready[s], a + TRANSFER_BUFFER_S)
                 for other, w in links[s]:
                     a2 = a + w
                     if a2 < arr[other]:
                         arr[other] = a2
-                        if a2 + TRANSFER_BUFFER_S < ready[other]:
-                            ready[other] = a2 + TRANSFER_BUFFER_S
+                        ready[other] = min(ready[other], a2 + TRANSFER_BUFFER_S)
     return arr
 
 

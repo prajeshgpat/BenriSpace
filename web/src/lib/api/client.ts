@@ -26,6 +26,8 @@ import type {
   ExplanationSource,
   Position,
   PriorityQuery,
+  Reach,
+  ReachMode,
   Similar,
   SimilarArea,
   FactorKey,
@@ -121,6 +123,14 @@ export interface ApiClient {
     lon: number,
     options?: RequestOptions & PriorityQuery,
   ): Promise<Similar>;
+  /** The area reachable from a point within `minutes` by walking, driving or rail. */
+  getReach(
+    lat: number,
+    lon: number,
+    mode: ReachMode,
+    minutes: number,
+    options?: RequestOptions,
+  ): Promise<Reach>;
   /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
   getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
   /** Where the data comes from: names, licences and when each was last refreshed. */
@@ -263,6 +273,26 @@ function parseGeometry(raw: unknown): AreaGeometry {
     }
   }
   throw invalidResponse("area geometry");
+}
+
+export function parseReach(body: unknown): Reach {
+  const iso = isObject(body) && isObject(body.isochrone) ? body.isochrone : null;
+  if (
+    !iso ||
+    !isFiniteNumber(iso.minutes) ||
+    !isFiniteNumber(iso.areaSqMi) ||
+    (iso.mode !== "walk" && iso.mode !== "drive" && iso.mode !== "transit") ||
+    (iso.method !== "network" && iso.method !== "estimate")
+  ) {
+    throw invalidResponse("reachable area");
+  }
+  return {
+    mode: iso.mode,
+    minutes: iso.minutes,
+    method: iso.method,
+    areaSqMi: iso.areaSqMi,
+    geometry: iso.geometry ? parseGeometry(iso.geometry) : null,
+  };
 }
 
 export function parseAreaScore(body: unknown): AreaScore {
@@ -860,6 +890,16 @@ export function createApiClient({
         }),
       );
       return parseSimilar(await getJson(`/similar?${params}`, options));
+    },
+
+    async getReach(lat, lon, mode, minutes, options) {
+      const params = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        mode,
+        minutes: String(minutes),
+      });
+      return parseReach(await getJson(`/isochrone?${params}`, options));
     },
 
     async getScoreExplanation(geoEntityId, { factors, weights, ...options } = {}) {

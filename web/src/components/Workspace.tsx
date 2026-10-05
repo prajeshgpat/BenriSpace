@@ -61,6 +61,7 @@ import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
+import { ReachCard } from "./ReachCard";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { CompareDrawer } from "./CompareDrawer";
@@ -228,6 +229,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
+  // The reachable-area polygon from the ReachCard, drawn on the map.
+  const [reachGeometry, setReachGeometry] = useState<AreaGeometry | null>(null);
   // "Ask Benri" expands in place where its button sits (side panel and phone
   // sheet alike), with its own scrolling log. `/app?chat=1` (the home page's
   // "Ask Benri") opens it on load; `ask=`
@@ -742,6 +745,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               priorities={priorities}
               onPreview={showPreview}
             />
+            <ReachCard
+              coordinates={{
+                lat: state.score.latitude,
+                lon: state.score.longitude,
+              }}
+              client={client}
+              onReach={setReachGeometry}
+            />
             <SimilarCard
               coordinates={{
                 lat: state.score.latitude,
@@ -805,6 +816,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           }
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
+          reachGeometry={reachGeometry}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}

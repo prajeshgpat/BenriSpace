@@ -83,7 +83,8 @@ app's generated TypeScript types) and implemented in `api/main.py`. Full guide:
 | `GET /similar` | Well-separated areas with a similar factor profile (pgvector) |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors and weights |
 | `GET /map/top` | Best, well-separated areas for the chosen factors (with neighborhood names) |
-| `POST /triangulate` | Best locations for several commute anchors (placeholder geometry, see below) |
+| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) from the precomputed cell graph |
+| `POST /triangulate` | Best locations for several commute anchors: real isochrone intersection / union, with the polygons |
 | `POST /optimize` | Multi-destination optimizer: minimise weekly travel to work, a store brand, a gym... |
 | `POST /chat` | "Ask Benri", a tool-using Haiku assistant (in progress) |
 
@@ -106,8 +107,9 @@ Behavior worth knowing:
 - **Neighborhood names.** `geo_entities.neighborhood` and `areas.neighborhood`
   (migration 0008); the API tolerates the columns being absent (the name is then
   null).
-- **Triangulate** is live but uses a placeholder geometry (straight-line distance
-  circle, bbox-prefiltered in SQL) until Valhalla lands.
+- **Isochrones and triangulate** run on the precomputed cell graph (section 6): Dijkstra in
+  pure Python over `cell_graph` rows, polygon traced from the reached cells. With no routing
+  data for an area they fall back to the straight-line circle.
 - **Optimize** estimates minutes (straight line x 1.3 / mode speed) for every
   candidate cell, then refines the best candidates with openrouteservice for
   walk and drive (`common/ors.py`, best-effort, free tier). Transit stays an
@@ -295,6 +297,7 @@ after review (additive and idempotent, so old code keeps working).
 | 0008 `neighborhoods` | `neighborhood` on `geo_entities` and `areas` | applied 2026-10-04 |
 | 0009 `v2_1` | v2.1 feature_store and scores columns (imperial units) | applied 2026-10-04 |
 | 0010 `chat` | `chat_usage` (per-visitor daily message count) | not applied; the API skips the limit while the table is missing |
+| 0016 `routing` | `routing_meta`, `cell_travel`, `cell_graph`, `routing_hubs`, `cell_hubs`, `rail_matrix` (about 7 MB for the metro; smallint arrays, deci-minutes) | not applied; written by `python -m ingestion.routing.run` |
 | 0012 `density_postgis` | PostGIS; `feature_store.pop_density_per_sq_mi` and `travel_mode`; `geom` on `geo_entities`, `places`, `areas` with GiST indexes; `road_segments` | not applied; written by `ingestion.density` and `ingestion.road_segments` |
 
 ## 4. Scoring engine
@@ -338,22 +341,52 @@ Full method in [SCORING.md](SCORING.md). Summary:
 
 ## 6. Routing and optimizer
 
-- **Today.** Minutes are estimated: straight-line distance x 1.3 circuity /
-  mode speed (walk 3 mph; drive 20 mph in dense cells, 30 mph in suburban
-  cells). `/optimize` takes anchors (an address such as work, a brand such as
-  Trader Joe's, a category such as gym) with trips per week and minimises
-  `sum(tripsPerWeek x 2 x minutes)` over candidate cells, using the nearest
-  matching place per anchor; the top candidates are refined with openrouteservice
-  (40 matrix calls per minute on the free tier). Airport drive time in ingestion
-  is straight-line until routing exists (the Valhalla call is wired behind
-  `VALHALLA_URL`).
-- **Planned (decided).** Precompute walk/drive/transit minutes per cell with
-  Valhalla in a batch run: on a laptop with Docker (Docker and Colima are
-  installed locally) or a short-lived AWS spot instance. Valhalla, not OSRM,
-  because it has native isochrones. Invert the expensive direction: compute from
-  the 2-4 user anchors, not per candidate address. Live triangulation from
-  arbitrary addresses would use a hosted routing free tier. Transit minutes need
-  Valhalla with GTFS.
+### Precompute (`ingestion/routing/`, Wave 4)
+
+Run by hand or by a batch job (needs the `routing` extra: Pandana, numpy; **not** in the Lambda
+bundle). Nothing here runs on the request path.
+
+| Product (table) | What | How |
+| --- | --- | --- |
+| Amenity minutes (`cell_travel`) | For every cell, minutes to the 1st-3rd nearest place of each of the 14 categories, in the cell's own travel mode (walk at or above 10k people / sq mi, drive below) | One multi-source Pandana search per category per tile (contraction hierarchy), read at each cell's snapped node |
+| Cell graph (`cell_graph`) | Minutes from each cell to its 8 neighbours, for walk and for drive | `shortest_path_lengths` between snapped cell centres, never faster than a straight line |
+| Hub matrices (`routing_hubs`, `cell_hubs`) | Drive minutes to the 3 nearest airports (JFK, LGA, EWR, TEB, HPN, ISP, SWF, BDR) and rail stations | One arterial-only backbone network for the region (motorway to secondary), cell access leg at 15 mph |
+| Train times (`rail_matrix`) | Ride minutes between every rail station pair | Connection Scan over GTFS (subway, LIRR, Metro-North, PATH, NJ Transit rail), weekday, three AM-peak departures, median; stations within 300 m linked by walking |
+
+**Tiling.** The grid is cut into tiles of whole cells (walk 10 x 8 cells, drive 30 x 20). A tile fetches
+its network with a pad as wide as the search cap (walk 3 km; drive 6 km of full network plus 45 km of
+arterials only), computes, commits and drops everything, so peak memory is set by the tile and not
+by the region. A 5 hour radius is more tiles, not more memory. The OSM source
+(`ingestion/routing/network.py`, `fetch_network`) is the one swap point: public Overpass is fine for the
+current metro but rate limits and 504s under bulk load (responses are cached on disk and retried),
+so a 5 hour radius should read a Geofabrik extract instead.
+
+**Units and caps.** Minutes are stored as deci-minutes in `smallint[]`, -1 meaning "not within the cap"
+(walk 30 min, drive 45 min, hubs 120 min). Layout is recorded in `routing_meta`. Walk is 3 mph;
+drive is OSM maxspeed (or highway-class defaults) x 0.8, free flow.
+
+### Request time
+
+- **Isochrones** (`api/isochrone.py`, `api/reach.py`, `api/routing_data.py`): pandana, osmnx and numpy do
+  not fit the Lambda bundle (50 MB zip) and an OSM graph cannot be loaded in the 29 s cap, so the road
+  network is pre-folded into the cell graph. A request loads the `cell_graph` rows around the origin
+  (one indexed bounding-box query), runs Dijkstra in pure Python, and traces the cells into a polygon
+  (boundary tracing + two rounds of corner cutting; no shapely, no PostGIS). Resolution is one cell
+  (0.58 x 0.38 mi). `ingestion/routing/isochrone.py` builds the street-level version offline (reachable
+  nodes to buffered union or concave hull) for QA and special cases.
+- **Triangulate** ranks the precomputed scores inside the intersection or union of the anchors' cell sets.
+- **Optimize** (`api/optimize.py`): Weiszfeld geometric-median seed, exact lower-bound pruning,
+  stored times in place of estimates (cell_travel, cell_hubs, rail matrix), then openrouteservice
+  refinement of what is left (walk and drive). Estimates remain the fallback: straight line x 1.3 /
+  mode speed (walk 3 mph, drive 25 mph + 2 min parking, transit 15 mph).
+- **Address train trip** = walk to a station within 1.5 mi (straight line x 1.3 at 3 mph) + `rail_matrix`
+  ride + walk from a station near the destination, best of up to 6 stations at each end.
+
+### Scaling to a 5 hour radius
+
+Work grows with cells (about 25x the current 64k at 5 h), not with memory. Drive-time cell graphs at
+that range need coarser levels (a geohash5 graph for trips beyond about 90 minutes) because a request
+would otherwise load hundreds of thousands of rows; `reach.MAX_MINUTES` is where that cap lives.
 
 ## 7. Delivery: how code and infrastructure ship
 

@@ -58,6 +58,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/isochrone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Area reachable from a point within N minutes by walking, driving or rail, from the precomputed road-network cell graph. */
+        get: operations["getIsochrone"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/triangulate": {
         parameters: {
             query?: never;
@@ -444,8 +461,31 @@ export interface components {
             longitude: number;
             compositeScore: number;
         };
+        /** @description A reachable area. `method` is `network` when computed from the precomputed road-network cell graph (resolution one 0.58 x 0.38 mi cell) and `estimate` when the area has no routing data yet and a straight-line circle was used. */
+        IsochroneShape: {
+            label?: string | null;
+            /** @enum {string} */
+            mode: "drive" | "transit" | "walk";
+            minutes: number;
+            /** @enum {string} */
+            method: "network" | "estimate";
+            cellCount: number;
+            areaSqMi: number;
+            /** @description GeoJSON MultiPolygon, coordinates [lon, lat]. */
+            geometry?: Record<string, never> | null;
+        };
+        IsochroneResponse: {
+            /** Format: double */
+            latitude: number;
+            /** Format: double */
+            longitude: number;
+            isochrone: components["schemas"]["IsochroneShape"];
+        };
         TriangulateResponse: {
             results: components["schemas"]["RankedAddress"][];
+            /** @description One reachable area per anchor, in request order. */
+            isochrones?: components["schemas"]["IsochroneShape"][];
+            combined?: components["schemas"]["IsochroneShape"];
         };
         OptimizeAnchor: {
             /** @enum {string} */
@@ -910,6 +950,41 @@ export interface operations {
                 };
             };
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getIsochrone: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                mode?: "walk" | "drive" | "transit";
+                /** @description Time budget, 1-120 (capped per mode, walk 45, drive 90, transit 120). Default 15 / 30 / 45. */
+                minutes?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The reachable area as a GeoJSON MultiPolygon. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IsochroneResponse"];
+                };
+            };
+            /** @description Invalid parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     triangulate: {

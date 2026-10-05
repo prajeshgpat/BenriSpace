@@ -88,7 +88,6 @@ def area_sq_mi(geojson: dict, lat: float) -> float:
 
 def isochrone_from_osm(lat: float, lon: float, minutes: float, mode: str, shape: str = "buffer"):
     """Fetch the network around the point and return (geojson, n_nodes). One-off, slow."""
-    network.configure_osmnx()
     speed = WALK_M_PER_MIN if mode == "walk" else DRIVE_M_PER_MIN * 2.2
     box = tiles.pad_box((lat, lon, lat, lon), minutes * speed + 500)
     net = network.to_pandana(network.fetch_network(box, mode))

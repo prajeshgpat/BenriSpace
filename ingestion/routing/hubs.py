@@ -17,7 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from common.routing import AIRPORTS, RAIL_ID_BASE, UNREACHABLE
-from ingestion.routing import network, tiles, travel
+from ingestion.routing import network, travel
 
 K_HUBS = 3
 HUB_CAP_MIN = 120.0
