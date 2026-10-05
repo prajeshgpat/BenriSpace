@@ -38,15 +38,20 @@ Last updated 2026-10-05.
   (names fetched once per cell).
 - [~] **Vector tiles.** `scripts/build_tiles.py` (tippecanoe in Docker) → PMTiles with
   `parents`, `cells`, `areas` layers; web support behind `NEXT_PUBLIC_PMTILES_URL`.
-- [ ] **R2 static delivery.** Bucket + custom domain (`tiles.benrispace.com`), CORS with
-  Range; `scripts/publish_static.py` uploads versioned, immutable files and rewrites a
-  short-cache `manifest.json`; web reads the manifest and falls back to the API.
-  Owner: enable R2, R2 permission on the Cloudflare token, R2 S3 keys in `.env` and
-  GitHub secrets.
-- [ ] **Precomputed per-area scores** (13 bytes per area) on R2, so polygon clicks score
-  in the browser; **similar areas in the browser** from the score file.
-- [ ] **Slimmer database.** Simplified polygon outlines in Postgres (full detail in tiles);
-  raw `feature_store` values archived to R2 as Parquet.
+- [~] **R2 static delivery.** Bucket `benrispace-static` live at `tiles.benrispace.com`
+  (CORS with Range applied). `scripts/publish_static.py` uploads content-hashed immutable
+  files and rewrites the short-cache `manifest.json` last; the scoring workflow publishes
+  the score file after each run. Web reads the manifest when `NEXT_PUBLIC_STATIC_URL` is
+  set and falls back to the API piece by piece. Owner: set the env var in Amplify.
+- [~] **Precomputed per-area scores** (`api/areafile.py`, 28 bytes per area, 490 KB
+  gzipped; 45-minute resumable build, `scripts/build_area_scores.py`). Polygon clicks show
+  scores instantly; **similar areas computed in the browser**. Area scores and tiles are
+  published manually.
+- [~] **Simplified polygon outlines in Postgres** (`scripts/copy_areas_slim.py`, ~3 m
+  tolerance: -27 % vertices, 100 % lookup agreement; full detail only in the tiles). Not
+  copied to prod. 11,369 of 35,943 local areas lie outside the scored grid and can be
+  trimmed before the copy.
+- [ ] Raw `feature_store` values archived to R2 as Parquet.
 
 ## Wave 3 — Data foundation
 
