@@ -26,6 +26,7 @@ import psycopg
 from api.areas import AGGREGATE_COLUMNS
 from api.lookup import bbox_around, build_score_response, nearest_geo_entity
 from api.schemas import ScoreResponse
+from common.feature_columns import from_db_row, from_db_rows, new_name
 from common.geo import encode as geohash_encode
 from scoring.engine import WEIGHTS_VERSION_V2, WEIGHTS_VERSION_V2_1
 from scoring.point import (
@@ -121,14 +122,14 @@ def _scales_from_table(conn, weights_version: str, metro_area: str) -> Scales | 
 
 
 def _scales_from_feature_store(conn, weights_version: str, metro_area: str) -> Scales | None:
-    columns = ", ".join(f"fs.{c}" for c in scale_feature_columns(weights_version))
+    columns = ", ".join(f"fs.{new_name(c)}" for c in scale_feature_columns(weights_version))
     with conn.cursor() as cur:
         cur.execute(
             f"select {columns} from feature_store fs "
             "join geo_entities ge on ge.id = fs.geo_entity_id where ge.metro_area = %s",
             (metro_area,),
         )
-        rows = cur.fetchall()
+        rows = from_db_rows(cur.fetchall())
     return compute_scales(rows, weights_version) if rows else None
 
 
@@ -149,7 +150,7 @@ def _cell_query(with_neighborhood: bool) -> str:
 def _fetch_cells(conn, geohashes: list[str]) -> dict[str, dict]:
     with conn.cursor() as cur:
         cur.execute(_cell_query(True), (geohashes,))
-        return {r["geohash"]: r for r in cur.fetchall()}
+        return {r["geohash"]: from_db_row(r) for r in cur.fetchall()}
 
 
 def _nearest_cell(conn, lat: float, lon: float) -> dict | None:

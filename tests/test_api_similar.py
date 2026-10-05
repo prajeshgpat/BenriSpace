@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from api import main, similar
 from api.similar import SIMILARITY_MAX_DIST, differences, similarity, spread_out, summary
 from common.units import M_PER_MI
-from scoring.embeddings import EMBEDDING_COLUMNS
+from scoring.similarity import SIMILARITY_COLUMNS
 
 LAT, LON = 40.758, -73.9855
 M_PER_DEG = 111_320.0
@@ -21,7 +21,7 @@ class FakeConn:
 
 
 def scores(**over):
-    row = {c: 50.0 for c in EMBEDDING_COLUMNS}
+    row = {c: 50.0 for c in SIMILARITY_COLUMNS}
     row.update({f"{k}_score": v for k, v in over.items()})
     return row
 
@@ -169,7 +169,7 @@ def test_out_of_coverage_422(setup):
     assert resp.json()["code"] == "out_of_coverage"
 
 
-def test_no_embedding_404(setup):
+def test_no_score_row_404(setup):
     state, client = setup
     state["target"] = None
     resp = get(client)

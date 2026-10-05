@@ -678,7 +678,7 @@ def get_similar(
     factors: str | None = Query(default=None, description=FACTORS_DOC),
     weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
-    """Areas with a similar factor profile (pgvector), spread out geographically."""
+    """Areas with a similar factor profile, spread out geographically."""
     try:
         priorities = parse_priorities(factors, weights)
     except InvalidMapRequest as exc:
@@ -705,7 +705,6 @@ def get_similar(
             SCORING_WEIGHTS_VERSION,
             geo_entity["metro_area"],
             overfetch_limit(k, wide=priorities.explicit),
-            spread=None if priorities.explicit else (lat, lon, k, min_separation_mi),
         )
         stats = (
             get_stats(conn, SCORING_WEIGHTS_VERSION, geo_entity["metro_area"])

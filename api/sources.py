@@ -47,9 +47,9 @@ SOURCES: tuple[Source, ...] = (
            "Neighborhood labels", OSM_LICENSE, "https://www.openstreetmap.org/copyright",
            ("neighborhoods",)),
     Source("grid", "BenriSpace grid, areas and scoring",
-           "The 0.8 sq mi cells, road-bounded areas, 13 scores and similar-area vectors",
+           "The 0.8 sq mi cells, road-bounded areas and 13 scores",
            "BenriSpace derived data", "https://benrispace.com",
-           ("grid_generation", "scoring", "embeddings")),
+           ("grid_generation", "scoring")),
 )
 
 

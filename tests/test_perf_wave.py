@@ -1,5 +1,5 @@
 """Wave 1/2 additions: migration 0011, score file, sources, feedback, similar
-neighbours, similar_cells, brand patterns (fakes, no database)."""
+neighbours, brand patterns (fakes, no database)."""
 
 import gzip
 import json
@@ -12,8 +12,8 @@ from fastapi.testclient import TestClient
 
 from api import feedback, main, scorefile, similar, sources
 from api.factors import FACTOR_COLUMNS
+from api.metro_stats import ColumnStats
 from common.places import brand_like_patterns
-from scoring import embeddings
 
 ROOT = Path(__file__).resolve().parent.parent / "contracts"
 STAMP = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
@@ -118,6 +118,8 @@ def test_map_scores_endpoint_headers_etag_gzip_and_304(monkeypatch):
     scorefile._cache.clear()
 
     def respond(sql):
+        if "from score_files" in sql:
+            return []  # nothing persisted yet: build from the scores table
         return [{"stamp": STAMP}] if "max(computed_at)" in sql else score_rows()
 
     conn = Conn(respond)
@@ -138,6 +140,71 @@ def test_map_scores_endpoint_headers_etag_gzip_and_304(monkeypatch):
     assert client.get("/v1/map/scores?version=nope").status_code == 404
     raw = scorefile._cache[etag]
     assert gzip.decompress(raw.gzipped) == raw.body
+
+
+def test_scorefile_uses_the_persisted_row_when_the_etag_matches():
+    scorefile._cache.clear()
+    built = scorefile.build_fresh(Conn(lambda sql: score_rows()), "v2.1-handtuned", STAMP)
+    stored = {"body_gz": built.gzipped}
+
+    def respond(sql):
+        if "from score_files" in sql:
+            return [stored]
+        if "max(computed_at)" in sql:
+            return [{"stamp": STAMP}]
+        raise AssertionError("scores must not be scanned when the file is stored")
+
+    conn = Conn(respond)
+    got = scorefile.build(conn, "v2.1-handtuned")
+    assert got.etag == built.etag and got.body == built.body and got.gzipped == built.gzipped
+    assert conn.params[-1] == ("v2.1-handtuned", built.etag)
+    scorefile._cache.clear()
+
+
+def test_scorefile_survives_a_missing_table(monkeypatch):
+    import psycopg
+
+    scorefile._cache.clear()
+
+    class Boom(Conn):
+        rolled = 0
+
+        def cursor(self):
+            outer = self
+
+            class C(Cur):
+                def execute(self, sql, params=None):
+                    if "from score_files" in sql:
+                        raise psycopg.errors.UndefinedTable("score_files")
+                    super().execute(sql, params)
+
+            return C(outer)
+
+        def rollback(self):
+            self.rolled += 1
+
+    conn = Boom(lambda sql: [{"stamp": STAMP}] if "max(computed_at)" in sql else score_rows())
+    got = scorefile.build(conn, "v2.1-handtuned")
+    assert got is not None and conn.rolled == 1 and got.etag.startswith('"v2.1-handtuned-')
+    scorefile._cache.clear()
+
+
+def test_scorefile_store_upserts_the_gzipped_file():
+    class Store(Conn):
+        commits = 0
+
+        def commit(self):
+            self.commits += 1
+
+    conn = Store(lambda sql: [{"stamp": STAMP}] if "max(computed_at)" in sql else score_rows())
+    size = scorefile.store(conn, "v2.1-handtuned")
+    insert = next(
+        p for s, p in zip(conn.sql, conn.params, strict=True) if "insert into score_files" in s
+    )
+    assert insert[0] == "v2.1-handtuned" and insert[1].startswith('"v2.1-handtuned-')
+    assert decode(gzip.decompress(insert[2]))["header"]["count"] == 2
+    assert size == len(insert[2]) and conn.commits == 1
+    assert scorefile.store(Store(lambda sql: [{"stamp": None}]), "x") == 0
 
 
 # --- sources -----------------------------------------------------------------
@@ -197,56 +264,46 @@ def test_feedback_tolerates_missing_table(monkeypatch):
 # --- similar -----------------------------------------------------------------
 
 
-def test_fetch_neighbours_uses_precomputed_when_spread_ok(monkeypatch):
-    pre = [{"latitude": 40.7 + i * 0.05, "longitude": -74.0, "dist": 0.1 * i} for i in range(1, 6)]
-    monkeypatch.setattr(similar, "fetch_precomputed", lambda c, g, v: pre)
-    conn = Conn(lambda sql: [])
-    got = similar.fetch_neighbours(conn, "g", "v", "nyc", 20, spread=(40.7, -74.0, 3, 1.0))
-    assert got == pre and not conn.sql  # no HNSW query
+def test_neighbours_sql_scans_one_metro_with_inlined_z_scores():
+    stats = {c: ColumnStats(50.0, 10.0, tuple(range(101))) for c in similar.FACTOR_SCORE_COLUMNS}
+    sql = similar.build_neighbours_sql(stats)
+    assert "embedding" not in sql and "hnsw" not in sql.lower()
+    assert "ge.metro_area = %(metro)s" in sql and "s.geo_entity_id <> %(id)s" in sql
+    assert "order by dist" in sql and "limit %(limit)s" in sql
+    assert sql.count("power(") == 13
+    # v2 rows read Shopping / Recreation through their legacy columns
+    assert "coalesce(s.shopping_score, s.premium_retail_score)" in sql
+    assert "coalesce(t.recreation_score, t.trail_popularity_score)" in sql
+    assert "(s.transit_score - 50.000000) / 10.000000" in sql
 
 
-def test_fetch_neighbours_falls_back_to_hnsw(monkeypatch):
-    monkeypatch.setattr(similar, "fetch_precomputed", lambda c, g, v: [])
-    conn = Conn(lambda sql: [{"v": "off"}] if "current_setting" in sql else [])
-    similar.fetch_neighbours(conn, "g", "v", "nyc", 100, spread=(40.7, -74.0, 3, 1.0))
-    assert any("set_config('hnsw.ef_search'" in s for s in conn.sql)
-    assert any("hnsw.iterative_scan', 'relaxed_order'" in s for s in conn.sql)
-    last = conn.params[-1]
-    assert last["pool"] == 300 and last["limit"] == 100
-    assert "order by embedding <->" in similar.NEIGHBOURS_SQL and "limit %(pool)s" in similar.NEIGHBOURS_SQL
+def test_neighbours_sql_skips_flat_columns_and_survives_missing_stats():
+    stats = {c: ColumnStats(50.0, 10.0, tuple(range(101))) for c in similar.FACTOR_SCORE_COLUMNS}
+    stats["bar_score"] = ColumnStats(50.0, 0.0, tuple(range(101)))
+    assert similar.build_neighbours_sql(stats).count("power(") == 12
+    assert similar.build_neighbours_sql(None).count("power(") == 13  # fallback spread
 
 
-def test_precomputed_too_close_falls_back(monkeypatch):
-    close = [{"latitude": 40.7, "longitude": -74.0 + i * 1e-4, "dist": 0.1} for i in range(1, 6)]
-    monkeypatch.setattr(similar, "fetch_precomputed", lambda c, g, v: close)
-    conn = Conn(lambda sql: [])
-    similar.fetch_neighbours(conn, "g", "v", "nyc", 20, spread=(40.7, -74.0, 3, 1.0))
-    assert conn.sql  # HNSW query ran
+def test_fetch_neighbours_binds_the_request_and_loads_stats(monkeypatch):
+    stats = {c: ColumnStats(50.0, 10.0, tuple(range(101))) for c in similar.FACTOR_SCORE_COLUMNS}
+    seen = {}
+    monkeypatch.setattr(similar, "get_stats", lambda c, v, m: seen.update(v=v, m=m) or stats)
+    rows = [{"geohash": "dr5ru9", "dist": 0.5}]
+    conn = Conn(lambda sql: rows)
+    assert similar.fetch_neighbours(conn, "g1", "v2.1-handtuned", "nyc", 40) == rows
+    assert seen == {"v": "v2.1-handtuned", "m": "nyc"}
+    assert conn.params[-1] == {"id": "g1", "v": "v2.1-handtuned", "metro": "nyc", "limit": 40}
 
 
-# --- similar_cells -----------------------------------------------------------
+def test_similarity_dimensions_match_the_factor_columns():
+    from scoring.similarity import SIMILARITY_COLUMNS, SIMILARITY_DIM, column_stats, zscore
 
-
-def test_top_neighbours_exact():
-    np = pytest.importorskip("numpy")
-    rng = np.random.default_rng(1)
-    vecs = rng.normal(size=(60, 14)).tolist()
-    ids = [f"c{i}" for i in range(60)]
-    got = embeddings.top_neighbours(ids, vecs, k=5)
-    x = np.array(vecs)
-    for i in (0, 17, 59):
-        d = np.linalg.norm(x - x[i], axis=1)
-        d[i] = np.inf
-        want = [f"c{j}" for j in np.argsort(d)[:5]]
-        assert [n for n, _ in got[ids[i]]] == want
-        assert got[ids[i]][0][1] == pytest.approx(float(np.sort(d)[0]), abs=1e-4)
-        assert ids[i] not in [n for n, _ in got[ids[i]]]
-    assert embeddings.top_neighbours(["a"], [[0.0] * 14]) == {"a": []}
-
-
-def test_write_similar_cells_skips_missing_table():
-    conn = Conn(lambda sql: [{"t": None}])
-    assert embeddings.write_similar_cells(conn, "v", {"a": [("b", 1.0)]}) == 0
+    assert SIMILARITY_COLUMNS == tuple(FACTOR_COLUMNS.values()) and SIMILARITY_DIM == 13
+    assert zscore(60.0, 50.0, 10.0) == 1.0
+    assert zscore(60.0, 50.0, 0.0) == 0.0 and zscore(None, 50.0, 10.0) == 0.0
+    mean, std = column_stats([{"a": 10}, {"a": 30}, {"a": None}], "a")
+    assert mean == 20.0 and std == pytest.approx(10.0)
+    assert column_stats([{"a": None}], "a") == (0.0, 0.0)
 
 
 # --- brand search ------------------------------------------------------------

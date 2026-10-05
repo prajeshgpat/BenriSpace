@@ -318,9 +318,8 @@ UNDERLYING_SCORE_COLUMNS: frozenset[str] = frozenset(
 # Hand-tuned initially — no training data to fit against yet (docs/ROADMAP.md).
 # Rationale, factor by factor:
 # v2 adds restaurant/bar/premium_retail, re-weights emergency corridor and
-# blends schools 20/80 (see below). The deployed default stays v1 until the
-# v2 data is ingested; select v2 via SCORING_WEIGHTS_VERSION.
-WEIGHTS_VERSION_V1 = "v1-handtuned"
+# blends schools 20/80 (see below). v2.1 is the served version; v2 stays
+# selectable via SCORING_WEIGHTS_VERSION while its rows exist.
 WEIGHTS_VERSION_V2 = "v2-handtuned"
 WEIGHTS_VERSION_V2_1 = "v2.1-handtuned"
 

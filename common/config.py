@@ -9,7 +9,6 @@ import os
 from dotenv import load_dotenv
 
 from scoring.engine import (  # noqa: F401 (re-exported)
-    WEIGHTS_VERSION_V1,
     WEIGHTS_VERSION_V2,
     WEIGHTS_VERSION_V2_1,
 )
@@ -53,6 +52,6 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# v2 has been live since the 2026-10 cutover (restaurants, bars, premium retail,
-# noise corridor, school 20/80). Set SCORING_WEIGHTS_VERSION=v1-handtuned to roll back.
+# v2.1 is live (13 factors). Set SCORING_WEIGHTS_VERSION=v2-handtuned to roll back while
+# those rows still exist (scripts/delete_scores.py removes retired versions).
 SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", WEIGHTS_VERSION_V2_1)

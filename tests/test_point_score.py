@@ -146,7 +146,7 @@ def test_scales_fall_back_to_feature_store_when_table_missing():
     assert "grocery_score" in got
     assert conn.rolled_back == 1  # failed statement rolled back before the retry
     assert "from feature_store fs" in calls[-1]
-    assert "fs.grocery_count_500m" in calls[-1] and "fs.*" not in calls[-1]
+    assert "fs.grocery_count_1600ft" in calls[-1] and "fs.*" not in calls[-1]
     assert point_score.scales_info()[(VERSION, "nyc")][0] == "feature_store"
 
 

@@ -9,6 +9,7 @@ import psycopg
 
 from common.config import SCORING_WEIGHTS_VERSION
 from common.db import get_connection
+from common.feature_columns import from_db_row
 from common.ingestion_log import ingestion_job
 from scoring.engine import all_score_columns, score_metro_cohort
 from scoring.scales import Scales, compute_scales, scales_to_rows
@@ -19,6 +20,16 @@ SCALES_UPSERT_SQL = """
     on conflict (weights_version, metro_area, factor, component) do update
     set lo = excluded.lo, hi = excluded.hi, n = excluded.n, computed_at = now()
 """
+
+
+def quantize(column: str, value):
+    """Storage form of a score (migration 0017): sub-scores are whole points (smallint),
+    the composite keeps one decimal (real). None stays None."""
+    if value is None:
+        return None
+    if column == "composite_score":
+        return round(float(value), 1)
+    return int(float(value) + 0.5)
 
 
 def write_scales(conn, weights_version: str, metro_area: str, scales: Scales) -> int:
@@ -53,7 +64,7 @@ def run() -> None:
                         """,
                     (metro_area,),
                 )
-                rows = [dict(r) for r in cur]
+                rows = [from_db_row(r) for r in cur]  # imperial columns -> metric keys
                 for r in rows:
                     r["geo_entity_id"] = str(r["geo_entity_id"])
 
@@ -65,7 +76,10 @@ def run() -> None:
                 for geo_id, found in scored.items():
                     # Every score column is written, NULL when absent, so a score that
                     # no longer applies (e.g. a school with no rating) clears the old value.
-                    values = {c: found.get(c) for c in all_score_columns(SCORING_WEIGHTS_VERSION)}
+                    values = {
+                        c: quantize(c, found.get(c))
+                        for c in all_score_columns(SCORING_WEIGHTS_VERSION)
+                    }
                     columns = [*values.keys(), "geo_entity_id", "weights_version"]
                     placeholders = ", ".join(["%s"] * len(columns))
                     cur.execute(
