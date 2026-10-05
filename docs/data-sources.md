@@ -45,7 +45,7 @@ SEDA is not used. Revisit only with written permission.
    NY/NJ/CT. Ratings are converted to a 0-100 mid-rank percentile within each
    state before writing, so the engine's per-metro min-max cohort is comparable.
 4. Written to `school_district_rating` (and mirrored in
-   `school_avg_rating_1600m`, the column the engine reads), with
+   `school_avg_rating_1mi`, the column the engine reads (called `school_avg_rating_1600m` before migration 0020)), with
    `school_district_geoid`, `school_district_name` and `school_rating_source`.
    An unrated cell gets a NULL school score.
 

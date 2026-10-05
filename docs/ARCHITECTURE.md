@@ -44,7 +44,7 @@ flowchart LR
     ssm[("SSM Parameter Store<br/>database URL · API keys · encrypted")]
   end
 
-  pg[("Supabase Postgres + pgvector<br/>session pooler")]
+  pg[("Supabase Postgres + PostGIS<br/>session pooler")]
   nom["OSM Nominatim<br/>address to lat/lon"]
   liq["LocationIQ<br/>autocomplete · reverse"]
   photon["Photon<br/>keyless fallback"]
@@ -80,7 +80,7 @@ app's generated TypeScript types) and implemented in `api/main.py`. Full guide:
 | `GET /reverse` | Readable address for a clicked point |
 | `GET /places` | Named places (OSM POIs, NCES schools, transit stops) near a point |
 | `GET /improve` | Deterministic "what would raise this score" suggestions with named places |
-| `GET /similar` | Well-separated areas with a similar factor profile (pgvector) |
+| `GET /similar` | Well-separated areas with a similar factor profile (SQL distance over z-scored factors) |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors and weights |
 | `GET /map/top` | Best, well-separated areas for the chosen factors (with neighborhood names) |
 | `POST /triangulate` | Best locations for several commute anchors (placeholder geometry, see below) |
@@ -137,7 +137,6 @@ flowchart LR
   places[("places<br/>named amenities")]
   score["scoring.run<br/>normalize per metro<br/>weighted composite"]
   scores[("scores<br/>versioned by weights_version")]
-  emb["scoring.embeddings<br/>14-dim z-scored vectors"]
   log[("ingestion_runs")]
   abuild["ingestion.areas.build<br/>manual, not in the cron"]
   areas[("areas + area_cells<br/>49,158 areas")]
@@ -152,7 +151,7 @@ flowchart LR
 - The weekly workflow (`.github/workflows/ingestion.yml`) runs the grid, then
   the sources one after another (airports, schools, gtfs_transit, osm_poi,
   osm_retail_parks, neighborhoods, roads, trails), then `scoring.run` and
-  `scoring.embeddings`. It runs sequentially because every job updates different
+  `api.scorefile` (persists the compact score file). It runs sequentially because every job updates different
   columns of the same `feature_store` rows and a job's transaction holds those
   row locks until commit; in parallel they hit Postgres' 2-minute
   `statement_timeout`. Scoring runs even if one source failed (stale values
@@ -198,9 +197,10 @@ flowchart LR
 - **Places** (`places` table): one row per named amenity (OSM POIs, NCES schools,
   GTFS stops). Each job owns its `source` and replaces it wholesale. Powers
   `/places` and `/improve`.
-- **Similar areas**: `scoring.embeddings` writes a 14-dim z-scored vector per
-  scored cell into `scores.embedding`; `/similar` does nearest-neighbour search
-  with pgvector, spread out geographically, re-ranked on the selected factors.
+- **Similar areas**: `/similar` computes, in SQL, the L2 distance between per-metro
+  z-scored factor scores over the target's metro (one scan of about 25,000 rows, tens of
+  milliseconds), spread out geographically and re-ranked on the selected factors. No
+  embedding column or vector index is stored (the HNSW index alone was 46 MB).
 - Scores are relative within each metro cohort in v1/v2/v2.1, and area scores are
   averages of about 0.6 x 0.4 mi cells, so small areas share similar scores
   until per-polygon scoring exists.
@@ -245,10 +245,9 @@ erDiagram
     uuid id PK
     uuid geo_entity_id FK
     text weights_version "v1-handtuned, v2-handtuned, v2.1-handtuned"
-    numeric grocery_score "0-100, higher is better"
+    smallint grocery_score "0-100 whole points, higher is better (0017)"
     numeric school_proximity_score "informational"
     numeric composite_score
-    vector embedding "0007, 14-dim"
     timestamptz computed_at
   }
   areas {
@@ -297,20 +296,32 @@ after review (additive and idempotent, so old code keeps working).
 | 0010 `chat` | `chat_usage` (per-visitor daily message count) | not applied; the API skips the limit while the table is missing |
 | 0012 `density_postgis` | PostGIS; `feature_store.pop_density_per_sq_mi` and `travel_mode`; `geom` on `geo_entities`, `places`, `areas` with GiST indexes; `road_segments` | not applied; written by `ingestion.density` and `ingestion.road_segments` |
 
+Migrations 0016 to 0021 (storage compaction, not applied; apply order in the storage model
+below; 0015 is the point-scoring places index and 0014 `areas_slim`):
+
+| # | Does | Destructive |
+| --- | --- | --- |
+| 0016 `drop_embeddings_similar` | drops `scores.embedding`, its HNSW index and `similar_cells` | yes (data no longer used) |
+| 0017 `scores_compact` | sub-scores to smallint, composite to real, drops `scores.id` (primary key becomes `(geo_entity_id, weights_version)`) and two redundant indexes; table rewrite | yes (rounds scores) |
+| 0018 `geo_entities_trim` | drops the unused `geom` column and GiST index, `created_at`, `updated_at` | yes |
+| 0019 `score_files` | `score_files` table holding the gzipped compact score file | no |
+| 0020 `feature_store_imperial_expand` | adds `*_nearest_ft`, `*_count_1600ft`, `*_count_half_mi`, `*_count_1mi`, `school_avg_rating_1mi` (smallint / real) and backfills them | no (adds about 40 MB transiently) |
+| 0021 `feature_store_imperial_contract` | drops the 27 metric columns and narrows other numeric columns to real / smallint in one rewrite | yes, irreversible |
+
 ## 4. Scoring engine
 
 Full method in [SCORING.md](SCORING.md). Summary:
 
 | Version | `weights_version` | Factors | State |
 | --- | --- | --- | --- |
-| v1 | `v1-handtuned` | 11 | history only (rows kept for rollback) |
+| v1 | `v1-handtuned` | 11 | retired (rows deleted) |
 | v2 | `v2-handtuned` | 14 (12 toggleable + premium retail and trail popularity as underlying signals) | **live in production** |
 | v2.1 | `v2.1-handtuned` | 13, every one a user-facing pill | built; full ingestion in progress; cutover pending owner approval |
 | v3 | `v3-timeaccess` | 13+ | planned: absolute time-to-access curves, mode by density |
 
 `scoring/engine.py` holds the per-version category specs and weights (`DEFAULT_WEIGHTS`,
 `V2_1_WEIGHTS`); `scoring/run.py` writes versioned rows and nulls stale columns;
-`scoring/embeddings.py` builds the similarity vectors.
+`scoring/similarity.py` holds the similarity dimensions and z-score helpers.
 
 ## 5. AI layer
 
@@ -442,7 +453,7 @@ flowchart LR
 - **Why Next.js on Amplify.** React/TypeScript is the most in-demand frontend
   stack; Amplify gives git-push deploys and per-branch previews while keeping the
   stack single-cloud.
-- **Storage.** Supabase free tier (Postgres + pgvector, about 180 MB of 500 MB
+- **Storage.** Supabase free tier (Postgres + PostGIS; see the storage model below; it was about 180 MB of 500 MB
   used after the v2 scores); no separate vector database.
 - **Costs.** Close to $0/month: domain (about $12-20 a year), Supabase and Lambda
   free tiers, GitHub Actions free minutes, free data sources (OSM, GTFS, NCES,
@@ -475,3 +486,114 @@ flowchart LR
 - **Imperial units on the wire and in the UI** (feet and miles; the API's newer
   columns are imperial). Older raw columns are still metres, and renaming them is
   planned (see [ROADMAP.md](ROADMAP.md)).
+
+## 10. Storage model and the 5-hour radius
+
+Measured on production on 2026-10-05 (read-only queries): database 469 MB of the 500 MB
+free tier, 456 MB of it in `public`.
+
+| Table | Rows | Total | Heap | Indexes | Per row (total) |
+| --- | --- | --- | --- | --- | --- |
+| `scores` (2 versions) | 128,640 | 181 MB | 80 MB | 101 MB (HNSW 46, cover 22, unique 15, pkey 9, geo 5, version 4) | 1,406 B |
+| `areas` | 49,158 | 105 MB | 92 MB (`geometry` jsonb 26.5, `geom` 14.9) | 12 MB | 2,142 B |
+| `feature_store` | 64,320 | 68 MB | 63 MB | 5 MB | 1,054 B |
+| `places` | 101,749 | 39 MB | 16 MB | 23 MB (trigram 6.5, unique 5.2, category/lat/lon 4.6, geom 4.2) | 384 B |
+| `area_cells` | 163,903 | 36 MB | 16 MB | 21 MB | 222 B |
+| `geo_entities` | 64,320 | 19 MB | 10 MB | 9 MB | 290 B |
+| `spatial_ref_sys` (PostGIS) | 8,500 | 7 MB | | | |
+| everything else | | under 1 MB | | | |
+
+Bytes per cell today (cells = geo_entities + feature_store + scores for both versions):
+about 2,750 B. Areas cost about 2,900 B each with `area_cells`.
+
+### What the compaction saves (local copy of production's shape, 64,320 cells)
+
+| Change | Before | After |
+| --- | --- | --- |
+| Delete `v2-handtuned` scores (`scripts/delete_scores.py`) | 181 MB | about 90 MB |
+| 0016 + 0017: no embedding or HNSW, smallint scores, no `id`, 2 indexes dropped | about 90 MB per version (production, bloated) | about 15 MB per version (227 B per cell) |
+| 0018: geo_entities | 19 MB | about 16 MB (about 248 B per cell) |
+| 0020 + 0021: narrower feature_store types | 68 MB | about 50 MB (about 775 B per cell, estimated from the 27 percent measured locally) |
+| Stored score file (0019) | 8 s cold rebuild | one 300 KB row |
+| Areas to `areas_slim` (0014, owned by the area build) | 142 MB (`areas` + `area_cells`) | about 25 to 30 MB (estimate) |
+
+Projected production total after all of it: about 469 MB to about 160 MB with `areas_slim`
+(about 276 MB if `areas` stays), leaving 220 to 340 MB of room.
+
+### How big is a 5-hour radius?
+
+From Census 2020 county land area and 2023 population estimates (county centroids within a
+great-circle radius of Manhattan; today's six metro boxes cover 29 counties, 10,472 sq mi
+and 23.4 million people):
+
+| Radius | Land (sq mi) | x today | Population | x today |
+| --- | --- | --- | --- | --- |
+| 100 mi | 17,159 | 1.6 | 27.4 M | 1.2 |
+| 150 mi | 40,021 | 3.8 | 34.5 M | 1.5 |
+| 200 mi | 69,280 | 6.6 | 47.5 M | 2.0 |
+| 250 mi (about 5 h at highway speeds) | 108,442 | 10.4 | 56.8 M | 2.4 |
+| 300 mi | 143,583 | 13.7 | 63.9 M | 2.7 |
+
+So the 5-hour radius is about 10x the land and 2.4x the people, not 30 to 50x (that figure
+was a whole-US estimate). Cell-count tables grow with land, `places` with population, and
+road-bounded areas with land unless rural land is left unsubdivided. Today's grid is
+rectangles with water included (64,320 cells for 10,472 sq mi of land, about 1.75 cells per
+land cell of 0.287 sq mi), so pruning water cells alone cuts a rebuild by about 40 percent.
+
+Projection at 250 mi, with the compacted per-row costs above:
+
+| Plan | Cells | Cell tables (1,250 B each) | Places (about 270,000 x 384 B) | Areas | Total |
+| --- | --- | --- | --- | --- | --- |
+| A. Everything at geohash6, land only | about 378,000 | 472 MB | 104 MB | about 245 MB (`areas_slim`, one per 0.56 sq mi of land) | about 820 MB, does not fit |
+| B. Tiered grid: geohash6 where county density is 200 or more people per sq mi, geohash5 (about 9.2 sq mi) below | about 166,000 | 207 MB | 104 MB | about 40 MB (areas only in the dense tier) | about 350 MB, fits with 30 percent headroom |
+| C. B plus raw features kept off the database (below) | about 166,000 | 117 MB | 104 MB | about 40 MB | about 260 MB |
+| D. A on a paid database tier | about 378,000 | | | | Supabase Pro (8 GB, about $25 a month) |
+
+What fits in 500 MB, in order of leverage:
+
+1. Apply the compaction above (needed even for today's data: 469 MB is one bad ingestion
+   from the limit, because an ingestion rewrite briefly doubles a table).
+2. Prune water cells from `ingestion/grid.py` and tier the grid by density (plan B). The
+   biggest lever: 2.3x fewer cells than plan A.
+3. Keep `feature_store` raw values out of the serving database. The API reads only about 16
+   of its columns (nearest distances for explanations, school info, density). Ingestion can
+   write the full table as Parquet to Cloudflare R2 (free 10 GB, no egress fees) or CI
+   artifacts and keep a slim serving table of about 120 B per cell (plan C).
+4. If traction justifies it, move to Supabase Pro instead of tiering: plan A fits with 8 GB
+   and removes the 7-day pause and the 500 MB cliff. Cloudflare R2 would also hold PMTiles
+   for the cell grid (Wave 2) and the stored score file.
+
+Not worth more effort: `places` indexes (23 MB) are 60 percent of its size, but each serves a
+query (trigram brand search, upsert key, KNN). When migration 0015 (`places_category_geom_gist`)
+is applied, `places_category_lat_lon_idx` (4.6 MB) becomes redundant and can be dropped.
+`spatial_ref_sys` (7 MB) can be trimmed to the SRIDs in use.
+
+### Owner commands for the compaction (production, in this order)
+
+1. `python scripts/delete_scores.py --version v2-handtuned` (dry run), then `--yes`; then
+   `vacuum full scores;` in the SQL editor. (Frees about 90 MB; needed headroom for the
+   rewrites below.)
+2. Deploy the API / ingestion built from this branch (it no longer reads `embedding`, and
+   reads and writes the imperial feature_store columns through `common/feature_columns.py`).
+   Deploy after step 3 for the feature columns, before step 4 for `embedding`.
+3. Apply `0020` (adds and backfills the imperial columns), then deploy, then run the
+   ingestion and scoring job once.
+4. Apply `0016`, `0017`, `0018`, `0019` (each in its own run), then `python -m api.scorefile`.
+5. When the new code has run cleanly: apply `0021` (irreversible).
+6. Optional: `vacuum full geo_entities;`.
+
+### Cold starts
+
+`import api.lambda_handler` takes about 290 ms (measured with `python -X importtime`):
+FastAPI 144 ms, `api.main` itself 18 ms, `api.point_score` 62 ms (mostly psycopg), mangum 31
+ms. The Anthropic SDK, httpx and shapely are already imported lazily (`common/lazy.py`,
+`common/llm.py`), so there is nothing large left to defer; the remaining cold-start cost was
+the 8 s score-file rebuild, now stored in `score_files`. Lambda SnapStart is a separate,
+untested option.
+
+### Edge caching and alarms (Terraform, not applied)
+
+`infra/edge_cache.tf` proxies `api.benrispace.com` through Cloudflare and caches GETs that
+send `Cache-Control` (off unless `enable_edge_cache = true`). `infra/alarms.tf` adds
+CloudWatch alarms (Lambda errors, p95 duration, throttles, API Gateway 5xx) to an SNS topic
+emailing `budget_alert_email`.

@@ -94,6 +94,31 @@ class PointIndex:
         order = np.lexsort((d, ci))
         return ci[order], pi[order], d[order]
 
+    def candidates(self, clats, clons, radii_m):
+        """(cell_idx, point_idx) for every point within each cell's own radius (a superset:
+        the caller re-checks exact distances). radii_m is one value per cell."""
+        clats = np.asarray(clats, dtype=float)
+        clons = np.asarray(clons, dtype=float)
+        if self.n == 0 or len(clats) == 0:
+            e = np.empty(0, dtype=np.int64)
+            return e, e
+        radii = np.asarray(radii_m, dtype=float) * self.b * (1 + _EPS) + 1e-6
+        lists = self.tree.query_ball_point(self._project(clats, clons), radii, return_sorted=False)
+        lens = np.fromiter((len(x) for x in lists), dtype=np.int64, count=len(lists))
+        ci = np.repeat(np.arange(len(clats)), lens)
+        pi = np.fromiter((j for x in lists for j in x), dtype=np.int64, count=int(lens.sum()))
+        return ci, pi
+
+    def nearest_distance(self, clats, clons):
+        """True (haversine) distance in metres from each cell to its nearest indexed point,
+        inf when the index is empty."""
+        clats = np.asarray(clats, dtype=float)
+        clons = np.asarray(clons, dtype=float)
+        if self.n == 0:
+            return np.full(len(clats), np.inf)
+        _, idx = self.tree.query(self._project(clats, clons), k=1)
+        return haversine_m_np(clats, clons, self.lats[idx], self.lons[idx])
+
     def nearest_and_count(self, clats, clons, radius_m: float):
         """Per cell: (count of points with d <= radius_m, nearest distance or NaN)."""
         n = len(np.asarray(clats))

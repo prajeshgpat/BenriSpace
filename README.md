@@ -13,7 +13,7 @@
 - **Best areas** ranked for your factors, with numbered map markers (hover or focus one for its name and score), presets (Daily errands, Family, Commuter, Quiet) and importance sliders.
 - **AI summary** of a score (Claude Haiku 4.5, grounded in that area's data only, capped at about $5/month, with a rule-based fallback).
 - **Improve this area:** which nearby additions would lift weak factors, with named places.
-- **Similar areas** found with pgvector embeddings.
+- **Similar areas** found by comparing per-metro z-scored factor profiles in SQL.
 - **Multi-stop planning** (`/v1/optimize`): near work, Trader Joe's and Planet Fitness at once, ranked by weekly travel time (openrouteservice refinement).
 - **Address search** with autocomplete (LocationIQ, Photon fallback), "use my current location", readable addresses for clicked points, shareable URLs, light and dark themes, and a phone bottom-sheet layout. Distances are in feet and miles.
 - **Public API**, no key needed today: [docs/api.md](docs/api.md).
@@ -28,13 +28,13 @@ Scores are precomputed in batch, so the API is a thin read layer.
 
 1. **Ingestion** pulls OpenStreetMap (Overpass), GTFS feeds (MTA, LIRR, Metro-North, PATH, NJ Transit) plus OSM transit stops, NCES school locations and EDFacts district ratings, and airports onto a geohash6 grid (64,320 cells). A manual job builds the road-bounded areas.
 2. **Scoring** normalizes each factor within its metro area and combines them with weights; `null` is never 0.
-3. **Serving:** FastAPI on AWS Lambda behind API Gateway reads scores from Postgres (Supabase, with pgvector); the Next.js site runs on AWS Amplify. All infrastructure is Terraform; deploys use GitHub Actions with OIDC.
+3. **Serving:** FastAPI on AWS Lambda behind API Gateway reads scores from Postgres (Supabase, with PostGIS); the Next.js site runs on AWS Amplify. All infrastructure is Terraform; deploys use GitHub Actions with OIDC.
 
 | Area | Stack |
 |---|---|
 | Frontend | Next.js 15, React 19, TypeScript, MapLibre GL |
 | API | Python 3.12, FastAPI, Mangum, OpenAPI contract in `contracts/` |
-| Data | Postgres (Supabase), psycopg 3, pgvector |
+| Data | Postgres (Supabase), psycopg 3, PostGIS |
 | AI | Anthropic Haiku 4.5 via `common/llm.py` |
 | Infra | Terraform, AWS Lambda / API Gateway / Amplify / SSM / ACM, Cloudflare DNS |
 | CI/CD | GitHub Actions (tests, Terraform checks, OIDC deploy, weekly ingestion) |
@@ -52,7 +52,7 @@ Scores are precomputed in batch, so the API is a thin read layer.
 |---|---|
 | `web/` | Next.js app (pages, components, generated API types, vitest tests) |
 | `api/` | FastAPI routes, explanations, chat, optimizer, Lambda handler |
-| `scoring/` | Scoring engine (`engine.py`), runner, similarity embeddings |
+| `scoring/` | Scoring engine (`engine.py`), runner, scales, point scoring, similarity helpers |
 | `ingestion/` | One module per data source, plus `areas/` (polygon builder) and `neighborhoods.py` |
 | `common/` | Shared DB layer, Overpass client, LLM client, geo and unit helpers |
 | `contracts/` | `openapi.yaml`, `schema.sql`, numbered `migrations/` |
