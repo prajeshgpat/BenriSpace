@@ -271,3 +271,17 @@ class SimilarResponse(CamelModel):
     min_separation_mi: float
     results: list[SimilarArea]
     priorities: list[str] = []
+
+
+class DataSource(CamelModel):
+    id: str
+    name: str
+    feeds: str
+    license: str
+    url: str
+    last_updated: datetime | None = None
+    rows_affected: int | None = None
+
+
+class SourcesResponse(CamelModel):
+    sources: list[DataSource]

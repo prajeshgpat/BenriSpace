@@ -374,6 +374,40 @@ def shop_features(cell_lat: float, cell_lon: float, index: GridIndex) -> dict:
     }
 
 
+def shop_features_many(cells: list[dict], shops: list[tuple]) -> list[dict]:
+    """Batched shop_features() via scipy cKDTree (ingestion/spatial.py); identical results
+    (exact haversine re-check). Cells are dicts with latitude/longitude."""
+    import numpy as np
+
+    from ingestion.spatial import PointIndex, split_by_cell
+
+    if not shops:
+        return [shop_features(c["latitude"], c["longitude"], GridIndex()) for c in cells]
+    index = PointIndex([s[0] for s in shops], [s[1] for s in shops])
+    clats = np.array([c["latitude"] for c in cells], dtype=float)
+    clons = np.array([c["longitude"] for c in cells], dtype=float)
+    k = min(SHOP_KTH_NEAREST, len(shops))
+    ci, pi, d_m = index.pairs(clats, clons, COUNT_RADIUS_FT / FT_PER_M, k=k)
+    d_ft = d_m * FT_PER_M
+    bounds = split_by_cell(ci, len(cells))
+    out = []
+    for i in range(len(cells)):
+        lo, hi = bounds[i], bounds[i + 1]
+        dists = d_ft[lo:hi]
+        within = dists <= COUNT_RADIUS_FT
+        groups = {shops[j][2] for j in pi[lo:hi][within]}
+        kth = float(dists[min(SHOP_KTH_NEAREST, len(dists)) - 1]) if len(dists) else None
+        out.append(
+            {
+                "shopping_count_1mi": int(within.sum()),
+                "shopping_nearest_ft": float(dists[0]) if len(dists) else None,
+                "shopping_variety_count_1mi": len(groups),
+                "shopping_raw": shopping_raw(kth, len(groups)),
+            }
+        )
+    return out
+
+
 def park_features(cell_lat: float, cell_lon: float, index: GridIndex) -> dict:
     """park_* columns and recreation_raw for one cell."""
     if index.count == 0:
@@ -450,13 +484,17 @@ def run() -> None:
             for place in p_places:
                 park_places.setdefault((place.source_id, place.category), place)
             shop_index, park_index = build_shop_index(shops), build_park_index(parks)
-            for cell in cells:
+            try:
+                shop_rows = shop_features_many(cells, shops)
+            except ImportError:  # scipy not installed: fall back to the bucket-scan path
+                shop_rows = [
+                    shop_features(c["latitude"], c["longitude"], shop_index) for c in cells
+                ]
+            for cell, shop_row in zip(cells, shop_rows, strict=True):
                 upsert_feature_store(
                     conn,
                     cell["id"],
-                    compute_cell_features(
-                        cell["latitude"], cell["longitude"], shop_index, park_index
-                    ),
+                    {**shop_row, **park_features(cell["latitude"], cell["longitude"], park_index)},
                 )
                 rows_written += 1
             conn.commit()

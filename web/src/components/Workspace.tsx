@@ -14,6 +14,7 @@ import {
 
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
+import { useCompare } from "@/hooks/useCompare";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
@@ -39,6 +40,7 @@ import {
 import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
 import { originBounds, previewBounds, type Preview } from "@/lib/map/preview";
+import { placeId, type ComparePlace } from "@/lib/compare";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import { priorityQuery } from "@/lib/map/selection";
 import {
@@ -65,6 +67,7 @@ import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
+import { CompareDrawer } from "./CompareDrawer";
 import { ChatPanel } from "./chat/ChatPanel";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
@@ -277,6 +280,28 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const priorities = priorityQuery(selection, weights);
 
   const { state, retry } = useScoreLookup(target, client, priorities);
+  const compare = useCompare();
+  const currentPlace: ComparePlace | null =
+    state.status === "success"
+      ? {
+          id: placeId(state.score.latitude, state.score.longitude),
+          label: readableAddress ?? state.address,
+          neighborhood: state.score.neighborhood?.trim() || null,
+          score: state.score.compositeScore,
+          subScores: state.score.subScores,
+          lat: state.score.latitude,
+          lon: state.score.longitude,
+        }
+      : null;
+  const topPlace = (r: MapTopResult): ComparePlace => ({
+    id: placeId(r.latitude, r.longitude),
+    label: areaTitle(r),
+    neighborhood: r.neighborhood?.trim() || null,
+    score: r.score,
+    subScores: r.subScores,
+    lat: r.latitude,
+    lon: r.longitude,
+  });
 
   const point: LatLon | null =
     target?.kind === "coordinates"
@@ -660,6 +685,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
                 readableAddress={readableAddress}
                 score={state.score}
                 area={state.area}
+                compare={
+                  currentPlace
+                    ? {
+                        pinned: compare.places.some((p) => p.id === currentPlace.id),
+                        full: compare.full,
+                        onToggle: () => compare.toggle(currentPlace),
+                      }
+                    : undefined
+                }
               />
             ) : null}
           </div>
@@ -675,7 +709,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           />
           {state.status === "success" ? (
             <>
-              <ScoreSummary score={state.score} explanation={state.explanation} />
+              <ScoreSummary
+                score={state.score}
+                explanation={state.explanation}
+                client={client}
+                target={readableAddress ?? state.address}
+              />
               <ImproveCard
                 coordinates={{
                   lat: state.score.latitude,
@@ -704,12 +743,24 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             activeGeohash={activeTop?.geohash ?? null}
             onSelect={selectTop}
             onRetry={top.retry}
+            compare={{
+              isPinned: (r) =>
+                compare.places.some((p) => p.id === placeId(r.latitude, r.longitude)),
+              full: compare.full,
+              onToggle: (r) => compare.toggle(topPlace(r)),
+            }}
+            feedbackClient={client}
           />
         </div>
       )}
       <p className="sr-only" role="status">
         {mapStatus}
       </p>
+      <CompareDrawer
+        places={compare.places}
+        onRemove={compare.remove}
+        onClear={compare.clear}
+      />
     </>
   );
 

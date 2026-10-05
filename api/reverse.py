@@ -10,8 +10,6 @@ import logging
 import math
 import os
 
-import httpx
-
 import common.config  # noqa: F401  (loads .env so LOCATIONIQ_API_KEY works in local runs)
 from api.geocoding import USER_AGENT
 from api.suggest import (
@@ -23,6 +21,9 @@ from api.suggest import (
     _clean,
     in_coverage,
 )
+from common.lazy import lazy_module
+
+httpx = lazy_module("httpx")
 
 LOCATIONIQ_REVERSE_URL = "https://us1.locationiq.com/v1/reverse"
 LOCATIONIQ_TIMEOUT_S = 3.0

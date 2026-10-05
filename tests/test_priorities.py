@@ -136,7 +136,7 @@ def sim(monkeypatch):
     )
     monkeypatch.setattr(main, "fetch_target", lambda c, i, v: state["target"])
 
-    def neighbours(c, i, v, metro, limit):
+    def neighbours(c, i, v, metro, limit, spread=None):
         state["limit"] = limit
         return state["cands"]
 

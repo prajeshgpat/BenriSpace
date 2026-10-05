@@ -278,6 +278,48 @@ def aggregate_cell(
     }
 
 
+def aggregate_cells_many(
+    cells: list[dict],
+    agency_stops: dict[str, list[tuple[float, float]]],
+    radius_m: float = RADIUS_M,
+) -> list[dict]:
+    """Batched aggregate_cell() via scipy cKDTree (ingestion/spatial.py); identical results.
+    Cells are dicts with latitude/longitude. Needs the `ingestion` extra."""
+    import numpy as np
+
+    from ingestion.spatial import PointIndex
+
+    clats = np.array([c["latitude"] for c in cells], dtype=float)
+    clons = np.array([c["longitude"] for c in cells], dtype=float)
+    n = len(cells)
+    total = np.zeros(n, dtype=np.int64)
+    nearest_by_agency: dict[str, np.ndarray] = {}
+    for agency, stops in agency_stops.items():
+        index = PointIndex([s[0] for s in stops], [s[1] for s in stops])
+        counts, nearest = index.nearest_and_count(clats, clons, radius_m)
+        total += counts
+        nearest_by_agency[agency] = nearest
+    out = []
+    for i in range(n):
+        per_agency = {a: float(v[i]) for a, v in nearest_by_agency.items() if not np.isnan(v[i])}
+        if not per_agency:
+            out.append(
+                {"transit_stop_count_800m": 0, "transit_nearest_m": None, "transit_agencies": []}
+            )
+            continue
+        overall = min(per_agency.values())
+        out.append(
+            {
+                "transit_stop_count_800m": int(total[i]),
+                "transit_nearest_m": round(overall, 2),
+                "transit_agencies": sorted(
+                    a for a, d in per_agency.items() if abs(d - overall) <= _TIE_EPSILON_M
+                ),
+            }
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Network/DB-touching glue
 # ---------------------------------------------------------------------------
@@ -399,8 +441,15 @@ def run() -> None:
         )
 
         rows_updated = 0
-        for cell in iter_geo_entities(conn):
-            fields = aggregate_cell(cell["latitude"], cell["longitude"], agency_stops, RADIUS_M)
+        cells = list(iter_geo_entities(conn))
+        try:
+            batch = aggregate_cells_many(cells, agency_stops, RADIUS_M)
+        except ImportError:  # scipy not installed: fall back to the per-cell scan
+            batch = [
+                aggregate_cell(c["latitude"], c["longitude"], agency_stops, RADIUS_M)
+                for c in cells
+            ]
+        for cell, fields in zip(cells, batch, strict=True):
             upsert_feature_store(conn, cell["id"], fields)
             rows_updated += 1
         conn.commit()

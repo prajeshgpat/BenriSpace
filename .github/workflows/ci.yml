@@ -16,9 +16,13 @@
 
 name: CI
 
+# Only pull requests (and `main` after a merge) run CI. A `push` trigger on the
+# working branch would start a second run beside the PR's: its change detection
+# compares against main and the two runs raced and cancelled each other, which
+# left a red `ci-ok` next to the green one.
 on:
   push:
-    branches: [dev-benrispace]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch: {} # runs everything
@@ -27,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -47,7 +51,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
             echo "python=true" >> "$GITHUB_OUTPUT"
             echo "web=true" >> "$GITHUB_OUTPUT"
             exit 0

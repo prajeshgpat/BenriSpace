@@ -14,7 +14,9 @@ import type {
   ChatReply,
   ChatResult,
   ChatTurn,
+  DataSource,
   Explanation,
+  Feedback,
   Improve,
   ImproveBestNearby,
   ImproveBetterArea,
@@ -67,6 +69,9 @@ export const CHAT_TIMEOUT_MS = 28_000;
 export const CHAT_MAX_TURNS = 6;
 export const CHAT_MAX_CHARS = 2000;
 
+/** The score file is about 1 MB; allow a slow connection. */
+export const MAP_SCORES_TIMEOUT_MS = 30_000;
+
 /** A readable address is decoration; give up quickly rather than hold the UI. */
 export const REVERSE_TIMEOUT_MS = 8_000;
 
@@ -113,6 +118,12 @@ export interface ApiClient {
     lon: number,
     options?: RequestOptions & PriorityQuery,
   ): Promise<Similar>;
+  /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
+  getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
+  /** Where the data comes from: names, licences and when each was last refreshed. */
+  getSources(options?: RequestOptions): Promise<DataSource[]>;
+  /** Thumbs and "wrong place" reports. Callers ignore failures. */
+  sendFeedback(feedback: Feedback, options?: RequestOptions): Promise<void>;
   /** "Ask BenriSpace": send the conversation so far; it must end with a user turn. */
   chat(
     messages: readonly ChatTurn[],
@@ -660,6 +671,32 @@ export function parseMapTop(body: unknown): MapTop {
   };
 }
 
+export function parseSources(body: unknown): DataSource[] {
+  const list = isObject(body) ? body.sources : body;
+  if (!Array.isArray(list)) throw invalidResponse("data sources");
+  const text = (value: unknown) =>
+    typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  return list.flatMap((item): DataSource[] => {
+    if (!isObject(item)) return [];
+    const name = text(item.name) ?? text(item.source);
+    if (!name) return [];
+    const link = text(item.licenseUrl) ?? text(item.licenceUrl) ?? text(item.url);
+    return [
+      {
+        name,
+        feeds:
+          text(item.feeds) ?? text(item.description) ?? text(item.usedFor),
+        license: text(item.license) ?? text(item.licence),
+        licenseUrl: link && /^https?:\/\//i.test(link) ? link : null,
+        lastUpdated:
+          text(item.lastUpdated) ??
+          text(item.lastRunAt) ??
+          text(item.updatedAt),
+      },
+    ];
+  });
+}
+
 function formatNumber(value: number): string {
   return String(Math.round(value * 1e5) / 1e5);
 }
@@ -847,6 +884,36 @@ export function createApiClient({
       params.set("precision", String(query.precision));
       if (query.limit) params.set("limit", String(query.limit));
       return parseMapCells(await getJson(`/map/cells?${params}`, options));
+    },
+
+    async getMapScores(options) {
+      const timeout = AbortSignal.timeout(options?.timeoutMs ?? MAP_SCORES_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetchImpl(`${root}/map/scores`, {
+          headers: { Accept: "application/octet-stream" },
+          signal: options?.signal
+            ? AbortSignal.any([options.signal, timeout])
+            : timeout,
+        });
+      } catch (cause) {
+        if (options?.signal?.aborted) throw cause;
+        throw new ApiError(
+          timeout.aborted ? "timeout" : "network",
+          "Could not load the score file.",
+          { cause },
+        );
+      }
+      if (!response.ok) throw errorFromResponse(response.status, null, response.headers);
+      return response.arrayBuffer();
+    },
+
+    async getSources(options) {
+      return parseSources(await getJson("/sources", options));
+    },
+
+    async sendFeedback(feedback, options) {
+      await requestJson("/feedback", { method: "POST", body: feedback }, options);
     },
 
     async chat(messages, context = {}, options) {

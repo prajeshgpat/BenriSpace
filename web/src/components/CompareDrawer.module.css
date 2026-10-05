@@ -1,0 +1,152 @@
+.bar {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 30;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.open {
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--text);
+  color: var(--surface);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.dialog {
+  display: grid;
+  gap: 0.75rem;
+  width: min(60rem, 100%);
+  max-height: 90dvh;
+  overflow: auto;
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 1.125rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.text {
+  min-height: 2.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th,
+.table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.table th[scope="row"] {
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.place {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: center;
+  min-width: 7rem;
+}
+
+.name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.sub {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.cell {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-md);
+}
+
+.cell[data-best="true"] {
+  background: var(--surface-sunken);
+  outline: 2px solid var(--text);
+  font-weight: 700;
+}
+
+.ring {
+  width: 2rem;
+  height: 2rem;
+}
+
+.track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 10;
+}
+
+.fill {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 10;
+  transform: rotate(-90deg);
+  transform-origin: 60px 60px;
+}
+
+.empty {
+  color: var(--text-secondary);
+}

@@ -461,6 +461,37 @@ def min_max_normalize(raw_by_id: dict[str, float]) -> dict[str, float]:
     return {k: (v - lo) / (hi - lo) * 100.0 for k, v in raw_by_id.items()}
 
 
+# v2.1: clip each factor at these cohort percentiles before scaling, so a few
+# extreme cells (a remote outpost, one huge corridor) cannot squash every other
+# cell into the top of the range. v1 / v2 keep plain min-max.
+ROBUST_CLIP_PERCENTILES = (2.0, 98.0)
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Linear-interpolated percentile of an already sorted, non-empty list."""
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = (len(sorted_values) - 1) * pct / 100.0
+    lo = int(pos)
+    hi = min(lo + 1, len(sorted_values) - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
+
+
+def robust_normalize(
+    raw_by_id: dict[str, float], clip: tuple[float, float] = ROBUST_CLIP_PERCENTILES
+) -> dict[str, float]:
+    """0-100 between the cohort's clip percentiles; values beyond them clamp to
+    0 / 100. Degenerate spreads fall back to plain min-max."""
+    values = sorted(raw_by_id.values())
+    if not values:
+        return {}
+    lo, hi = _percentile(values, clip[0]), _percentile(values, clip[1])
+    if hi <= lo:
+        return min_max_normalize(raw_by_id)
+    span = hi - lo
+    return {k: min(100.0, max(0.0, (v - lo) / span * 100.0)) for k, v in raw_by_id.items()}
+
+
 def all_score_columns(weights_version: str = WEIGHTS_VERSION_V2) -> list[str]:
     """Every per-category score column the engine emits for a weights version,
     plus the composite."""
@@ -488,7 +519,7 @@ RATING_BLEND_WEIGHT = 1 / 3  # default CategorySpec.rating_weight (trails)
 
 
 def _spec_scores(
-    feature_rows: list[dict], spec: CategorySpec
+    feature_rows: list[dict], spec: CategorySpec, normalize=None
 ) -> tuple[dict[str, float], dict[str, float]]:
     """({geo_entity_id: 0-100 category score}, {geo_entity_id: 0-100
     proximity+density part before any rating blend}) for one spec over a
@@ -499,7 +530,8 @@ def _spec_scores(
         raw = compute_raw_goodness(row, spec)
         if raw is not None:
             raw_by_id[row["geo_entity_id"]] = raw
-    primary = min_max_normalize(raw_by_id)
+    normalize = normalize or min_max_normalize
+    primary = normalize(raw_by_id)
 
     rating_scores: dict[str, float] = {}
     if spec.rating_column is not None:
@@ -508,7 +540,7 @@ def _spec_scores(
             rating = compute_rating_raw(row, spec)
             if rating is not None:
                 rating_raw[row["geo_entity_id"]] = rating
-        rating_scores = min_max_normalize(rating_raw)
+        rating_scores = normalize(rating_raw)
 
     scores: dict[str, float] = {}
     for geo_id, pd_score in primary.items():
@@ -541,7 +573,8 @@ def score_metro_cohort(
     `weights_version` picks the category specs and default weights (v2 or v2.1).
     """
     specs, weights = specs_and_weights(weights_version)
-    scored = {spec.score_column: _spec_scores(feature_rows, spec) for spec in specs}
+    normalize = robust_normalize if weights_version == WEIGHTS_VERSION_V2_1 else min_max_normalize
+    scored = {spec.score_column: _spec_scores(feature_rows, spec, normalize) for spec in specs}
 
     results: dict[str, dict] = {}
     for row in feature_rows:

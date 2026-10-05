@@ -407,7 +407,7 @@ def test_similar_results_have_neighborhood(monkeypatch):
         main, "get_geo_entity_by_geohash", lambda c, g: {"id": "g", "metro_area": "nyc"}
     )
     monkeypatch.setattr(main, "fetch_target", lambda c, i, v: base)
-    monkeypatch.setattr(main, "fetch_neighbours", lambda *a: [cand])
+    monkeypatch.setattr(main, "fetch_neighbours", lambda *a, **kw: [cand])
     monkeypatch.setattr(similar, "area_label", lambda c, la, lo: "Area bounded by A and B")
     monkeypatch.setattr(similar, "neighborhood_map", lambda c, g: {"dr5ru9": "Montclair, NJ"})
     r = TestClient(main.app).get("/v1/similar", params={"lat": 40.758, "lon": -73.9855}).json()

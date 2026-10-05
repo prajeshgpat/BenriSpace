@@ -17,13 +17,14 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import httpx
-
 import common.config  # noqa: F401  (loads .env so LOCATIONIQ_API_KEY works in local runs)
 from api.geocoding import USER_AGENT
 from api.schemas import Suggestion
 from common.coverage import metro_center, union_bbox
 from common.geo import haversine_m
+from common.lazy import lazy_module
+
+httpx = lazy_module("httpx")
 
 PHOTON_URL = "https://photon.komoot.io/api/"
 PROVIDER_TIMEOUT_S = 8.0

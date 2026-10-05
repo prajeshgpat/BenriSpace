@@ -249,3 +249,75 @@ create table if not exists chat_usage (
     count        int not null default 0,
     primary key (visitor_hash, day)
 );
+
+-- Performance + product tables (migration 0011, not yet applied).
+create index if not exists geo_entities_lat_lon_idx on geo_entities (latitude, longitude);
+
+create extension if not exists pg_trgm;
+
+create index if not exists places_name_trgm_idx on places using gin (lower(name) gin_trgm_ops);
+
+create index if not exists places_brand_trgm_idx on places using gin (lower(brand) gin_trgm_ops);
+
+create index if not exists scores_version_entity_cover_idx
+    on scores (weights_version, geo_entity_id) include (composite_score);
+
+create table if not exists similar_cells (
+    geo_entity_id   uuid not null references geo_entities (id) on delete cascade,
+    weights_version text not null,
+    neighbor_id     uuid not null references geo_entities (id) on delete cascade,
+    rank            smallint not null,
+    distance        real not null,
+    primary key (geo_entity_id, weights_version, rank)
+);
+
+create table if not exists feedback (
+    id           bigserial primary key,
+    kind         text not null check (kind in ('summary', 'chat', 'place')),
+    target       text,
+    rating       smallint,
+    message      text,
+    visitor_hash text not null,
+    created_at   timestamptz not null default now()
+);
+
+-- Population density + PostGIS foundation (migration 0012, not yet applied).
+create extension if not exists postgis;
+
+alter table feature_store
+    add column if not exists pop_density_per_sq_mi double precision,
+    add column if not exists travel_mode text;
+
+alter table geo_entities
+    add column if not exists geom geometry(Point, 4326)
+        generated always as (st_setsrid(st_makepoint(longitude, latitude), 4326)) stored;
+
+alter table places
+    add column if not exists geom geometry(Point, 4326)
+        generated always as (st_setsrid(st_makepoint(longitude, latitude), 4326)) stored;
+
+alter table areas
+    add column if not exists geom geometry(MultiPolygon, 4326);
+
+update areas
+    set geom = st_multi(st_setsrid(st_geomfromgeojson(geometry::text), 4326))
+    where geom is null;
+
+create index if not exists geo_entities_geom_idx on geo_entities using gist (geom);
+
+create index if not exists places_geom_idx on places using gist (geom);
+
+create index if not exists areas_geom_idx on areas using gist (geom);
+
+create table if not exists road_segments (
+    id                 bigserial primary key,
+    osm_id             bigint,
+    highway            text,                  -- OSM highway value, or 'rail'
+    name               text,
+    is_emergency_route boolean not null default false,
+    geom               geometry(LineString, 4326)
+);
+
+create index if not exists road_segments_geom_idx on road_segments using gist (geom);
+
+create index if not exists road_segments_osm_id_idx on road_segments (osm_id);

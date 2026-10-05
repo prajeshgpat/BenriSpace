@@ -28,6 +28,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api import scorefile, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
@@ -38,6 +39,7 @@ from api.areas import (
 )
 from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat
 from api.explain import build_explanation, nearest_m_by_factor, nearest_mi_by_factor
+from api.feedback import FeedbackRequest, record_feedback
 from api.geocoding import geocode_address
 from api.improve import build_improve, search_box
 from api.lookup import (
@@ -81,6 +83,7 @@ from api.schemas import (
     ReverseResponse,
     ScoreResponse,
     SimilarResponse,
+    SourcesResponse,
     SuggestResponse,
     TriangulateRequest,
     TriangulateResponse,
@@ -579,6 +582,7 @@ def get_similar(
             SCORING_WEIGHTS_VERSION,
             geo_entity["metro_area"],
             overfetch_limit(k, wide=priorities.explicit),
+            spread=None if priorities.explicit else (lat, lon, k, min_separation_mi),
         )
         stats = (
             get_stats(conn, SCORING_WEIGHTS_VERSION, geo_entity["metro_area"])
@@ -691,3 +695,59 @@ def post_chat(body: ChatRequest, request: Request):
         )
     except ChatHttpError as exc:
         return _error(exc.status, exc.code, exc.message)
+
+
+@app.get(
+    "/v1/map/scores",
+    responses={304: {"description": "Not modified"}, 404: {"model": Error}},
+    response_class=Response,
+)
+def get_map_scores(request: Request, version: str | None = Query(default=None)):
+    """Every cell's 13 sub-scores as a compact binary file (format: docs/api.md)."""
+    if version is not None and version != SCORING_WEIGHTS_VERSION:
+        return _error(404, "not_found", f"Unknown weights version {version!r}.")
+    with get_connection() as conn:
+        stamp = scorefile.current_stamp(conn, SCORING_WEIGHTS_VERSION)
+        etag = scorefile.make_etag(SCORING_WEIGHTS_VERSION, stamp)
+        headers = {
+            "Cache-Control": "public, max-age=86400",
+            "ETag": etag,
+            "Vary": "Accept-Encoding",
+        }
+        if stamp is not None and request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        built = scorefile.build(conn, SCORING_WEIGHTS_VERSION, stamp)
+    if built is None:
+        return _error(404, "not_found", "No scores for this weights version yet.")
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        headers["Content-Encoding"] = "gzip"
+        body = built.gzipped
+    else:
+        body = built.body
+    return Response(content=body, media_type="application/octet-stream", headers=headers)
+
+
+@app.get("/v1/sources", response_model=SourcesResponse)
+def get_sources(response: Response):
+    """Data sources behind the scores, with licences and freshness."""
+    with get_connection() as conn:
+        runs = sources.freshness(conn)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return {"sources": sources.build_sources(runs)}
+
+
+@app.post(
+    "/v1/feedback",
+    status_code=204,
+    responses={429: {"model": Error}},
+)
+def post_feedback(body: FeedbackRequest, request: Request):
+    """Thumbs / reports on summaries, chat answers and places."""
+    stored = record_feedback(
+        body,
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else None,
+    )
+    if not stored:
+        return _error(429, "rate_limited", "Too much feedback today. Thank you.")
+    return Response(status_code=204)

@@ -730,6 +730,105 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /map/scores:
+    get:
+      summary: Compact binary file of every cell's 13 sub-scores.
+      description: >
+        Little-endian `uint32` header length, UTF-8 header JSON (`format`,
+        `version`, `factors`, `count`, `geohashLength`, `generatedAt`), then
+        `count` fixed 6-character ASCII geohashes (sorted), then `count * 13`
+        `uint8` sub-scores in `factors` order (0-100, 255 = no score). Layout in
+        docs/api.md. Gzip-encoded when accepted; supports `If-None-Match`.
+      operationId: getMapScores
+      parameters:
+        - name: version
+          in: query
+          description: Weights version; must equal the served one.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The score file.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Not modified.
+        "404":
+          description: Unknown version or no scores yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /sources:
+    get:
+      summary: Data sources, licences and freshness.
+      operationId: getSources
+      responses:
+        "200":
+          description: The source registry with last successful ingestion per source.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, feeds, license, url]
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        feeds: {type: string}
+                        license: {type: string}
+                        url: {type: string}
+                        lastUpdated: {type: string, format: date-time, nullable: true}
+                        rowsAffected: {type: integer, nullable: true}
+
+  /feedback:
+    post:
+      summary: Send thumbs or a report about a summary, chat answer or place.
+      operationId: postFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: {type: string, enum: [summary, chat, place]}
+                target: {type: string, maxLength: 200}
+                rating: {type: integer, minimum: -1, maximum: 1}
+                message: {type: string, maxLength: 1000}
+      responses:
+        "204":
+          description: Stored (or dropped while migration 0011 is not applied).
+        "400":
+          description: Invalid body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: More than 30 items from this visitor today.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:

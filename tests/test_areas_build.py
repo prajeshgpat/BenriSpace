@@ -178,7 +178,9 @@ def test_write_areas_single_transaction_sequence():
     conn = FakeConn()
     res = build.write_areas(conn, make_numbered(), "areas-v1-test")
     kinds = [e[0] for e in conn.log]
-    assert kinds == ["execute", "execute", "executemany", "executemany", "commit"]
+    assert kinds[:5] == ["execute", "execute", "executemany", "executemany", "commit"]
+    # then the PostGIS geom backfill in its own transaction
+    assert conn.log[5][1].startswith("update areas set geom") and conn.log[6] == ("commit",)
     assert conn.log[0][1] == "delete from area_cells"
     assert conn.log[1][1] == "delete from areas"
     assert conn.log[2][1].startswith("insert into areas")

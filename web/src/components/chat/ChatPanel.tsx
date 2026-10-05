@@ -13,6 +13,7 @@ import type { ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
 import type { ChatContext, ChatResult } from "@/lib/api/types";
 
+import { FeedbackThumbs } from "../Feedback";
 import styles from "./ChatPanel.module.css";
 
 export const CHAT_INPUT_LIMIT = 500;
@@ -333,6 +334,9 @@ export function ChatPanel({
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {message.role === "assistant" ? (
+              <FeedbackThumbs client={client} kind="chat" target={message.content} />
             ) : null}
           </div>
         ))}

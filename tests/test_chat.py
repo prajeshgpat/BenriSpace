@@ -453,5 +453,26 @@ def test_migration_0010_is_additive_and_mirrored():
         "create table if not exists chat_usage"
     )
     assert "primary key (visitor_hash, day)" in statements[0]
-    assert "not yet applied" in migration.lower()
+    assert "applied to production" in migration.lower()
     assert "create table if not exists chat_usage" in (root / "schema.sql").read_text()
+
+
+def test_grounding_accepts_sums_differences_and_roundings():
+    payloads = [{"a": {"minutes": 12.4, "score": 61}, "b": {"minutes": 33, "miles": 2.34}}]
+
+    def ok(reply):
+        return chat.validate_reply(reply, payloads, [], "{}")
+
+    assert ok("That is 45 minutes in total.")  # 12.4 + 33 rounded
+    assert ok("About 21 minutes less.")  # 33 - 12.4 rounded
+    assert ok("Roughly 10 minutes.")  # 12.4 to the nearest 10
+    assert ok("Around 2.3 miles.")  # one decimal
+    assert ok("A score of 94 combined.")  # 61 + 33
+    assert not ok("It takes 777 minutes.")  # invented
+    assert not ok("A score of 58.")  # not derivable
+
+
+def test_grounding_accepts_names_from_any_tool_string():
+    payloads = [{"results": [{"neighborhood": "Park Slope, Brooklyn", "areaLabel": "Area bounded by Union St and 5th Ave"}]}]
+    assert chat.validate_reply("Try Park Slope or the area by Union St.", payloads, [], "{}")
+    assert not chat.validate_reply("Try Park Slope or Williamsburg.", payloads, [], "{}")

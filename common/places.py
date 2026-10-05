@@ -131,6 +131,20 @@ def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def brand_like_patterns(needle: str, max_variants: int = 6) -> list[str]:
+    """LIKE patterns for a normalized (apostrophe-free) needle that hit the
+    trigram indexes on lower(name) / lower(brand) (migration 0011) yet still
+    find possessives: "trader joes" also matches "trader joe's" through a
+    variant with a % before each 's'. The Python name_matches() pass after the
+    query keeps the result exact."""
+    text = _like_escape(needle)
+    patterns = [f"%{text}%"]
+    for i, ch in enumerate(text):
+        if ch == "s" and i > 0 and text[i - 1].isalpha() and len(patterns) <= max_variants:
+            patterns.append(f"%{text[:i]}%{text[i:]}%")
+    return patterns
+
+
 def places_by_brand_in_box(
     conn, query: str, min_lat: float, max_lat: float, min_lon: float, max_lon: float
 ) -> list[dict]:
@@ -140,14 +154,13 @@ def places_by_brand_in_box(
     needle = normalize_name(query)
     if not needle:
         return []
-    pattern = f"%{_like_escape(needle)}%"
-    strip = "replace(replace(lower({col}), '''', ''), chr(8217), '')"
+    patterns = brand_like_patterns(needle)
     with conn.cursor() as cur:
         cur.execute(
             "select name, brand, category, latitude, longitude from places "
             "where latitude between %s and %s and longitude between %s and %s "
-            f"and ({strip.format(col='name')} like %s or {strip.format(col='brand')} like %s)",
-            (min_lat, max_lat, min_lon, max_lon, pattern, pattern),
+            "and (lower(name) like any(%s) or lower(brand) like any(%s))",
+            (min_lat, max_lat, min_lon, max_lon, patterns, patterns),
         )
         rows = [dict(r) for r in cur]
     return [r for r in rows if name_matches(query, r["name"], r["brand"])]

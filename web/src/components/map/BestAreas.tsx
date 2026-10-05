@@ -1,5 +1,8 @@
 import { useEffect, useId, useRef } from "react";
 
+import { CompareButton } from "@/components/CompareButton";
+import { ReportProblem } from "@/components/Feedback";
+import type { ApiClient } from "@/lib/api/client";
 import { INITIAL_ROWS, ShowMoreButton, useShowMore } from "@/components/ShowMore";
 
 import type { ApiError } from "@/lib/api/errors";
@@ -25,6 +28,14 @@ interface BestAreasProps {
   activeGeohash: string | null;
   onSelect: (result: MapTopResult) => void;
   onRetry: () => void;
+  /** Pinning for the compare view. */
+  compare?: {
+    isPinned: (result: MapTopResult) => boolean;
+    full: boolean;
+    onToggle: (result: MapTopResult) => void;
+  };
+  /** Where "Report a problem" goes; leave out to hide it. */
+  feedbackClient?: Pick<ApiClient, "sendFeedback">;
 }
 
 export function BestAreas({
@@ -35,6 +46,8 @@ export function BestAreas({
   activeGeohash,
   onSelect,
   onRetry,
+  compare,
+  feedbackClient,
 }: BestAreasProps) {
   const id = useId();
   const noFactors = selectedFactors.length === 0;
@@ -80,10 +93,12 @@ export function BestAreas({
                 selectedFactors={selectedFactors}
                 active={result.geohash === activeGeohash}
                 onSelect={onSelect}
+                compare={compare}
               />
             ))}
           </ol>
           <ShowMoreButton hidden={hidden} open={open} onToggle={toggle} controls={listId} />
+          <ReportProblem client={feedbackClient} list="Best areas" />
         </>
       )}
     </section>
@@ -118,6 +133,7 @@ interface AreaItemProps {
   selectedFactors: readonly FactorKey[];
   active: boolean;
   onSelect: (result: MapTopResult) => void;
+  compare?: BestAreasProps["compare"];
 }
 
 function AreaItem({
@@ -126,6 +142,7 @@ function AreaItem({
   selectedFactors,
   active,
   onSelect,
+  compare,
 }: AreaItemProps) {
   const item = useRef<HTMLLIElement>(null);
   // A marker click can select an entry that is scrolled out of the panel.
@@ -167,6 +184,16 @@ function AreaItem({
           <span className="sr-only"> out of 100</span>
         </span>
       </button>
+      {compare ? (
+        <div className={styles.compare}>
+        <CompareButton
+          name={areaTitle(result)}
+          pinned={compare.isPinned(result)}
+          full={compare.full}
+          onToggle={() => compare.onToggle(result)}
+        />
+        </div>
+      ) : null}
     </li>
   );
 }

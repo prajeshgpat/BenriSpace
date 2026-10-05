@@ -202,7 +202,8 @@ export function HomePage() {
             </p>
             <p className={styles.noteText}>
               <strong>Open data.</strong> Built from {DATA_SOURCES}. Scores are
-              estimates, so check anything important in person.
+              estimates, so check anything important in person.{" "}
+              <Link href="/data">See every source and when it was updated.</Link>
             </p>
           </div>
         </section>

@@ -266,6 +266,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/map/scores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compact binary file of every cell's 13 sub-scores.
+         * @description Little-endian `uint32` header length, UTF-8 header JSON (`format`, `version`, `factors`, `count`, `geohashLength`, `generatedAt`), then `count` fixed 6-character ASCII geohashes (sorted), then `count * 13` `uint8` sub-scores in `factors` order (0-100, 255 = no score). Layout in docs/api.md. Gzip-encoded when accepted; supports `If-None-Match`.
+         */
+        get: operations["getMapScores"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Data sources, licences and freshness. */
+        get: operations["getSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send thumbs or a report about a summary, chat answer or place. */
+        post: operations["postFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1365,6 +1419,124 @@ export interface operations {
             };
             /** @description Invalid bbox, unknown factor, or malformed weights. */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMapScores: {
+        parameters: {
+            query?: {
+                /** @description Weights version; must equal the served one. */
+                version?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The score file. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Not modified. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown version or no scores yet. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The source registry with last successful ingestion per source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sources: {
+                            id: string;
+                            name: string;
+                            feeds: string;
+                            license: string;
+                            url: string;
+                            /** Format: date-time */
+                            lastUpdated?: string | null;
+                            rowsAffected?: number | null;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    postFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "summary" | "chat" | "place";
+                    target?: string;
+                    rating?: number;
+                    message?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored (or dropped while migration 0011 is not applied). */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid body. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description More than 30 items from this visitor today. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

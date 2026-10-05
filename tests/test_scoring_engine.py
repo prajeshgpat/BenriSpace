@@ -540,3 +540,22 @@ def test_score_metro_cohort_defaults_to_v2_columns():
     rows = [{"geo_entity_id": "x", "premium_retail_raw": 1.0, "grocery_nearest_m": 10}]
     scored = score_metro_cohort(rows)
     assert "premium_retail_score" in scored["x"] and "shopping_score" not in scored["x"]
+
+
+def test_robust_normalize_clamps_outliers():
+    from scoring.engine import robust_normalize
+
+    raw = {str(i): float(i) for i in range(100)}
+    raw["outlier"] = -10_000.0
+    out = robust_normalize(raw)
+    assert out["outlier"] == 0.0
+    assert out["99"] == 100.0
+    # Without clipping the outlier would squash 0..99 into the top ~1%.
+    assert 40 < out["50"] < 60
+
+
+def test_robust_normalize_degenerate_falls_back():
+    from scoring.engine import robust_normalize
+
+    assert robust_normalize({"a": 1.0, "b": 1.0}) == {"a": 50.0, "b": 50.0}
+    assert robust_normalize({}) == {}
