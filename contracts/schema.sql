@@ -354,3 +354,54 @@ create index if not exists areas_slim_geom_idx on areas_slim using gist (geom);
 -- Per-category nearest-neighbour search for point scoring (migration 0015, not yet applied).
 create extension if not exists btree_gist;
 create index if not exists places_category_geom_gist on places using gist (category, geom);
+
+-- Wave 4 routing precompute (migration 0016, not yet applied). Minutes are deci-minutes in
+-- smallint arrays; -1 = not reachable. See the migration for the column meanings.
+create table if not exists routing_meta (
+    key         text primary key,
+    value       jsonb not null,
+    computed_at timestamptz not null default now()
+);
+
+create table if not exists cell_travel (
+    geohash     text primary key,
+    mode        text not null check (mode in ('walk', 'drive')),
+    minutes_dm  smallint[] not null,
+    computed_at timestamptz not null default now()
+);
+
+create table if not exists cell_graph (
+    geohash     text not null,
+    mode        text not null check (mode in ('walk', 'drive')),
+    latitude    real not null,
+    longitude   real not null,
+    edges_dm    smallint[] not null,
+    primary key (geohash, mode)
+);
+
+create index if not exists cell_graph_mode_lat_lon_idx on cell_graph (mode, latitude, longitude);
+
+create table if not exists routing_hubs (
+    id          integer primary key,
+    kind        text not null check (kind in ('airport', 'rail')),
+    code        text not null,
+    name        text not null,
+    latitude    double precision not null,
+    longitude   double precision not null,
+    unique (kind, code)
+);
+
+create index if not exists routing_hubs_kind_lat_lon_idx on routing_hubs (kind, latitude, longitude);
+
+create table if not exists cell_hubs (
+    geohash     text not null,
+    kind        text not null check (kind in ('airport', 'rail')),
+    hub_ids     integer[] not null,
+    minutes_dm  smallint[] not null,
+    primary key (geohash, kind)
+);
+
+create table if not exists rail_matrix (
+    origin_id   integer primary key references routing_hubs (id) on delete cascade,
+    minutes_dm  smallint[] not null
+);
