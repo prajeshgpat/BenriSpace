@@ -125,6 +125,7 @@ Score for one place. Give either `address`, or `lat` and `lon`, not both.
 | `address` | string | one of address / lat+lon | Free-text address. Geocoded server-side with OpenStreetMap Nominatim. |
 | `lat` | number | with `lon` | Latitude. Skips geocoding; use this with a `/suggest` result. |
 | `lon` | number | with `lat` | Longitude. |
+| `precision` | `grid` \| `point` | no | `grid` (default) returns the stored score of the containing cell. `point` scores the exact location on demand (see [SCORING.md](SCORING.md) A8) and falls back to `grid` on any error; the response's `precision` field says which was served. `/area` accepts it too and scores the mean of up to five points inside the polygon. |
 
 The point is snapped to its geohash6 cell; if that exact cell is not in the grid, the nearest covered cell within about 2 miles is used.
 

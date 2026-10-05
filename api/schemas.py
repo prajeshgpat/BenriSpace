@@ -74,6 +74,9 @@ class ScoreResponse(CamelModel):
     school: SchoolInfo | None = None
     # Human name such as 'Park Slope, Brooklyn'; null when not labelled.
     neighborhood: str | None = None
+    # 'point' when scored on demand at the exact location (?precision=point),
+    # 'grid' when it is the stored score of the containing grid cell (default).
+    precision: Literal["point", "grid"] = "grid"
 
 
 class ExplanationResponse(CamelModel):

@@ -21,6 +21,8 @@ the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
 """
 
 import contextlib
+import logging
+from typing import Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request, Response
@@ -28,13 +30,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api import scorefile, sources
+from api import point_score, scorefile, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
     bounded_by_text,
     build_area_response,
     pick_area,
+    point_in_polygon,
     usable_areas,
 )
 from api.chat import ChatHttpError, ChatRequest, ChatResponse, handle_chat
@@ -107,6 +110,16 @@ from common.db import (
 )
 from common.geo import encode as geohash_encode
 from common.units import mi_to_km
+from scoring.point import sample_points
+
+log = logging.getLogger(__name__)
+
+PRECISION_DOC = (
+    "grid (default): the stored score of the grid cell containing the location. "
+    "point: scored on demand at the exact location (an area: the mean of sample points "
+    "inside it) from live place queries; falls back to grid on any error. "
+    "The response's `precision` says which was served."
+)
 
 FACTORS_DOC = (
     "Comma-separated factor keys the user cares about (same keys as /map/top). "
@@ -172,6 +185,7 @@ def get_score(
     ),
     lat: float | None = Query(default=None),
     lon: float | None = Query(default=None),
+    precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
     if address and (lat is not None or lon is not None):
         return _error(400, "invalid_request", "Provide either address or lat/lon, not both.")
@@ -183,6 +197,14 @@ def get_score(
         if geocoded is None:
             return _error(400, "unresolvable_address", f"Could not geocode address: {address!r}")
         lat, lon = geocoded
+
+    if precision == "point":
+        try:
+            with get_connection() as conn:
+                result = point_score.score_points(conn, [(lat, lon)], SCORING_WEIGHTS_VERSION)[0]
+            return point_score.point_score_response(result, SCORING_WEIGHTS_VERSION)
+        except Exception:  # any failure serves the grid score instead
+            log.warning("point scoring failed; serving grid", exc_info=True)
 
     # geohash6, same precision/convention as ingestion/grid.py's grid build.
     geohash = geohash_encode(lat, lon, precision=6)
@@ -385,22 +407,28 @@ def get_places(
     return PlacesResponse(factor=factor, radius_mi=radius_mi, places=places)
 
 
-def _resolve_area(lat: float, lon: float):
+def _resolve_area(lat: float, lon: float, with_aggregate: bool = True, open_conn=None):
     """Shared by /v1/area and /v1/area/explanation. Returns an error
-    JSONResponse, or (area, aggregate, geo_entity, feature_row)."""
+    JSONResponse, or (area, aggregate, geo_entity, feature_row). With
+    with_aggregate=False the stored grid aggregate is not fetched (aggregate is None).
+    Pass `open_conn` to reuse an open connection."""
     if not in_coverage(lat, lon):
         return _error(422, "out_of_coverage", "Location is outside the covered metro area.")
 
     def not_found() -> JSONResponse:
         return _error(404, "area_not_found", "No road-bounded area found for this location.")
 
-    with get_connection() as conn:
+    with (
+        contextlib.nullcontext(open_conn) if open_conn is not None else get_connection()
+    ) as conn:
         area = pick_area(lat, lon, usable_areas(get_area_candidates(conn, lat, lon)))
         if area is None:
             return not_found()
-        aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
-        if aggregate is None:
-            return not_found()
+        aggregate = None
+        if with_aggregate:
+            aggregate = get_area_aggregate(conn, area["id"], SCORING_WEIGHTS_VERSION)
+            if aggregate is None:
+                return not_found()
         # The grid cell under the click supplies geoEntityId, school district
         # and nearest distances (same lookup as /score?lat&lon).
         geo_entity = get_geo_entity_by_geohash(conn, geohash_encode(lat, lon, precision=6))
@@ -425,7 +453,17 @@ def get_area(
     response: Response,
     lat: float = Query(ge=-90, le=90, description="Latitude."),
     lon: float = Query(ge=-180, le=180, description="Longitude."),
+    precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
+    if precision == "point":
+        try:
+            point_response = _area_at_point_precision(lat, lon)
+            if isinstance(point_response, JSONResponse):
+                return point_response
+            response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
+            return point_response
+        except Exception:  # any failure serves the grid aggregate instead
+            log.warning("point area scoring failed; serving grid", exc_info=True)
     resolved = _resolve_area(lat, lon)
     if isinstance(resolved, JSONResponse):
         return resolved
@@ -434,6 +472,24 @@ def get_area(
     return build_area_response(
         area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
     )
+
+
+def _area_at_point_precision(lat: float, lon: float):
+    """The area's score as the equal-weight mean of up to 5 sample points inside
+    the polygon (scoring.point.sample_points), each scored on demand. Returns the
+    AreaScoreResponse, or an error JSONResponse for an unknown area."""
+    with get_connection() as conn:
+        resolved = _resolve_area(lat, lon, with_aggregate=False, open_conn=conn)
+        if isinstance(resolved, JSONResponse):
+            return resolved
+        area, _, geo_entity, feature_row = resolved
+        samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
+        results = point_score.score_points(conn, samples, SCORING_WEIGHTS_VERSION)
+    aggregate = point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
+    built = build_area_response(
+        area, aggregate, geo_entity, lat, lon, feature_row, SCORING_WEIGHTS_VERSION
+    )
+    return built.model_copy(update={"precision": "point"})
 
 
 @app.get(

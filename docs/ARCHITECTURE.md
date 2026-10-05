@@ -94,6 +94,11 @@ Behavior worth knowing:
   overlapping cells' latest scores. It returns 404 when no polygon fits (over
   0.8 sq mi or 1.4 mi across, or none contains the point), and the web app then
   falls back to the single cell rectangle.
+- **Point precision (experimental).** `?precision=point` on `/score` and `/area` scores
+  the exact location on demand: one pipelined round trip (cell row plus one PostGIS
+  statement over `places`), normalized with per-metro factor scales (`score_scales`,
+  migration 0013, or computed once per Lambda instance). Falls back to the grid score on
+  any error. See [SCORING.md](SCORING.md) A8.
 - **Serving version.** Score reads prefer the Lambda's `SCORING_WEIGHTS_VERSION`.
   The code default is `v2-handtuned`; production sets it through the Terraform
   variable `scoring_weights_version`. Roll back by setting it to

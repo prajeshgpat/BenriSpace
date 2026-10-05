@@ -45,6 +45,15 @@ paths:
           in: query
           required: true
           schema: { type: number, format: double }
+        - name: precision
+          in: query
+          description: >
+            `grid` (default) returns the stored score of the containing grid cell.
+            `point` scores the exact location on demand (an area: the mean of up to
+            five sample points inside it) from live place queries and the metro's
+            factor scales, and falls back to `grid` on any error. The response's
+            `precision` says which was served.
+          schema: { type: string, enum: [grid, point], default: grid }
       responses:
         "200":
           description: Area found.
@@ -91,6 +100,15 @@ paths:
           schema:
             type: number
             format: double
+        - name: precision
+          in: query
+          description: >
+            `grid` (default) returns the stored score of the containing grid cell.
+            `point` scores the exact location on demand (an area: the mean of up to
+            five sample points inside it) from live place queries and the metro's
+            factor scales, and falls back to `grid` on any error. The response's
+            `precision` says which was served.
+          schema: { type: string, enum: [grid, point], default: grid }
       responses:
         "200":
           description: Score found.
@@ -978,6 +996,13 @@ components:
             (OpenStreetMap place nodes); null until the neighborhoods job has run or
             when nothing is nearby. For an area, the area's own label, else the
             representative cell's.
+        precision:
+          type: string
+          enum: [grid, point]
+          default: grid
+          description: >
+            `point` when scored on demand at the exact location (`?precision=point`),
+            `grid` when it is the stored score of the containing cell.
 
     AreaScoreResponse:
       description: >
