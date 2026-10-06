@@ -204,9 +204,12 @@ export function TripPlanner({
         ) : null}
       </div>
 
-      {rows.length > 0 ? (
+      {rows.some((row) => row.lat !== undefined) ? (
         <ul className={styles.legend2} aria-label="Map legend">
-          {[0, ...rows.map((_, i) => i + 1)].map((index) => (
+          {[
+            0,
+            ...rows.flatMap((row, i) => (row.lat !== undefined ? [i + 1] : [])),
+          ].map((index) => (
             <li key={index} className={styles.legendItem} data-index={index}>
               <Swatch index={index} />
               {anchorName(index)}
