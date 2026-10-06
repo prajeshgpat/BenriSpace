@@ -58,6 +58,7 @@ geo = [
 # used by the exploratory scripts/routing_prototype.py.
 routing = [
     "pandana>=0.7",
+    "osmium>=4.0",  # Geofabrik extracts (ingestion/routing/pbf.py)
     "osmnx>=2.0",
     "numpy>=1.26",
     "shapely>=2.0",
