@@ -86,7 +86,7 @@ describe("TripPlanner", () => {
     expect(box).toHaveAttribute("placeholder", "Point of interest 1");
     expect(box.compareDocumentPosition(addButton()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove point of interest 1" })).toBeInTheDocument();
-    expect(onNeedSpace).toHaveBeenCalledWith("full");
+    expect(onNeedSpace).toHaveBeenCalledWith("half");
   });
 
   it("opens the second box on the next click and the pill disappears", async () => {
