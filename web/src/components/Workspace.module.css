@@ -280,6 +280,7 @@
 .ask {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   justify-self: start;
   min-height: 2.75rem;
