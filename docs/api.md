@@ -30,6 +30,32 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 
 **v2.1 key names.** The API now answers with the thirteen v2.1 factors (`shopping`, `gasConvenience`, `traffic`, `recreation` replace `premiumRetail`, `gasStation`/`convenienceStore`, `road`, `trailPopularity`). The examples below show the production `v2-handtuned` rows read through those keys: `gasConvenience` is `null` on v2 rows (they scored gas stations and convenience stores as two negative factors), `shopping` comes from the old premium-retail score, `recreation` from the old trail score and `traffic` from the old road score. Rows scored as `v2.1-handtuned` fill all thirteen. The old keys are still accepted wherever you send `factors` or `weights` (see "The thirteen factors").
 
+## Use BenriSpace in Claude (MCP connector)
+
+`https://api.benrispace.com/mcp` is a Model Context Protocol server, so Claude can call
+BenriSpace directly (`api/mcp.py`). It is stateless JSON-RPC over HTTP POST ("Streamable
+HTTP" without a stream), read-only, and needs no login.
+
+- **claude.ai and the Claude desktop app:** Settings -> Connectors -> Add custom connector,
+  name it BenriSpace and paste `https://api.benrispace.com/mcp`. Leave authentication empty.
+  Then turn it on for a chat from the tools menu.
+- **Claude Code:** `claude mcp add --transport http benrispace https://api.benrispace.com/mcp`
+  (add `--scope user` to have it in every project).
+- **Other MCP clients:** the same URL with the HTTP transport. To check it by hand:
+  `npx @modelcontextprotocol/inspector --cli https://api.benrispace.com/mcp --transport http --method tools/list`.
+
+Tools (all read-only): `geocode`, `area_score`, `nearby_places`, `improve`, `similar`,
+`search_areas`, `find_places`, `optimize_location` (the ones Ask Benri uses), plus
+`travel_area` (how far you can get by walking, train or car in N minutes) and `triangulate`
+(the best places within reach of 2-4 anchors). Results are JSON in the tool result's text
+and `structuredContent`; a failed lookup is a result with `isError: true` and a message.
+Example prompts: "Score 101 Astor Place", "Where can I live within 30 minutes of Grand
+Central by train and 40 minutes of Montclair by car?", "Find areas near a Trader Joe's and a
+Planet Fitness with good transit".
+
+Protocol versions 2025-06-18, 2025-03-26 and 2024-11-05. `GET /mcp` returns 405 (no
+server-sent events). API Gateway throttling applies as for the rest of the API.
+
 ## Conventions
 
 - **Authentication:** none today. Phase 4 will add API keys and usage tiers (an `Authorization: Bearer ...` or `X-API-Key` header).

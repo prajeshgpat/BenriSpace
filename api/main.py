@@ -26,6 +26,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import FastAPI, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -294,6 +295,35 @@ def get_score_explanation(
         nearest_mi=nearest_mi_by_factor(feature_row),
         priorities=priorities.factors,
     )
+
+
+# --- MCP connector (api/mcp.py): BenriSpace as tools for Claude --------------------------
+
+@app.post("/mcp", include_in_schema=False)
+@app.post("/v1/mcp", include_in_schema=False)
+async def mcp_post(request: Request):
+    from api import mcp
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - any unparseable body is a JSON-RPC parse error
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+            status_code=400,
+        )
+    reply = await run_in_threadpool(mcp.handle_body, body)
+    if reply is None:
+        return Response(status_code=202)
+    return JSONResponse(reply, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mcp", include_in_schema=False)
+@app.get("/v1/mcp", include_in_schema=False)
+@app.delete("/mcp", include_in_schema=False)
+@app.delete("/v1/mcp", include_in_schema=False)
+def mcp_no_stream():
+    # Stateless JSON-only server: no SSE stream to open and no session to end.
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 @app.post(
