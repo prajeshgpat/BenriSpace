@@ -183,12 +183,40 @@ export function AddressSearch({
                     activeIndex >= 0 ? optionId(listboxId, activeIndex) : undefined,
                 }
               : {})}
-            data-adorned={endAdornment ? "true" : undefined}
+            data-adorned={endAdornment || value ? (endAdornment && value ? "2" : "1") : undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
-          {endAdornment ? (
-            <div className={styles.adornment}>{endAdornment}</div>
+          {endAdornment || value ? (
+            <div className={styles.adornment}>
+              {value ? (
+                <button
+                  type="button"
+                  className={styles.clear}
+                  aria-label="Clear address"
+                  // Keep focus in the box: a mousedown blur would close the list first.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setValue("");
+                    onTextChange?.("");
+                    if (error) setError(null);
+                    if (autocomplete) suggestions.handleInput("");
+                    inputRef.current?.focus();
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path
+                      d="M6 6l12 12M18 6L6 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              ) : null}
+              {endAdornment}
+            </div>
           ) : null}
           {autocomplete ? (
             <ul

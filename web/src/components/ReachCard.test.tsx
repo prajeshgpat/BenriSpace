@@ -32,7 +32,9 @@ function reach(overrides: Partial<Reach> = {}): Reach {
 }
 
 describe("ReachCard", () => {
-  it("fetches on toggle and hands the polygon to the map", async () => {
+  const SWITCH = { name: "Show travel time on the map" };
+
+  it("fetches when switched on and hands the polygon to the map", async () => {
     const getReach = vi.fn().mockResolvedValue(reach());
     const onReach = vi.fn();
     render(
@@ -43,13 +45,16 @@ describe("ReachCard", () => {
       />,
     );
     expect(getReach).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
+    const toggle = screen.getByRole("switch", SWITCH);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
     expect(getReach.mock.calls[0].slice(0, 4)).toEqual([40.7, -74, "drive", 15]);
     expect(screen.getByRole("status").textContent).toContain("12.3 sq mi within 15 min");
   });
 
-  it("switches mode and minutes, and says when the area is an estimate", async () => {
+  it("switches mode with icon buttons, and says when the area is an estimate", async () => {
     const getReach = vi.fn().mockResolvedValue(reach({ method: "estimate", mode: "walk" }));
     render(
       <ReachCard
@@ -58,8 +63,10 @@ describe("ReachCard", () => {
         onReach={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
-    fireEvent.click(screen.getByRole("button", { name: "Walk" }));
+    fireEvent.click(screen.getByRole("switch", SWITCH));
+    const walk = screen.getByRole("button", { name: "Walk" });
+    expect(walk.textContent).toBe(""); // an icon, not a word
+    fireEvent.click(walk);
     await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 10]));
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain("straight-line circle"),
@@ -76,10 +83,9 @@ describe("ReachCard", () => {
         onReach={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
+    fireEvent.click(screen.getByRole("switch", SWITCH));
     await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 10]));
     const fewer = screen.getByRole("button", { name: "Fewer minutes" });
-    fireEvent.click(fewer);
     fireEvent.click(fewer);
     expect(screen.getByText("5 min")).toBeTruthy();
     expect((fewer as HTMLButtonElement).disabled).toBe(true);
@@ -112,7 +118,37 @@ describe("ReachCard", () => {
     expect(screen.getByText("60 min")).toBeTruthy();
   });
 
-  it("clears the map when turned off and shows an error", async () => {
+  it("stays on with the chosen mode and minutes when the place changes", async () => {
+    const getReach = vi.fn().mockResolvedValue(reach());
+    const props = { client: { getReach }, onReach: () => {} };
+    const { rerender } = render(
+      <ReachCard coordinates={{ lat: 40.7, lon: -74 }} travelMode="drive" {...props} />,
+    );
+    fireEvent.click(screen.getByRole("switch", SWITCH));
+    fireEvent.click(screen.getByRole("button", { name: "Train" }));
+    fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
+    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["transit", 25]));
+    // A new place is loading (no coordinates), then arrives with a different default mode.
+    rerender(<ReachCard coordinates={null} travelMode={null} {...props} />);
+    rerender(<ReachCard coordinates={{ lat: 40.8, lon: -73.9 }} travelMode="walk" {...props} />);
+    expect(screen.getByRole("switch", SWITCH).getAttribute("aria-checked")).toBe("true");
+    await waitFor(() =>
+      expect(getReach.mock.calls.at(-1)?.slice(0, 4)).toEqual([40.8, -73.9, "transit", 25]),
+    );
+  });
+
+  it("follows the place's own mode until the user picks one", () => {
+    const props = { client: { getReach: vi.fn().mockResolvedValue(reach()) }, onReach: () => {} };
+    const { rerender } = render(
+      <ReachCard coordinates={{ lat: 40.7, lon: -74 }} travelMode="drive" {...props} />,
+    );
+    expect(screen.getByRole("button", { name: "Drive" }).getAttribute("aria-pressed")).toBe("true");
+    rerender(<ReachCard coordinates={{ lat: 40.72, lon: -74.04 }} travelMode="walk" {...props} />);
+    expect(screen.getByRole("button", { name: "Walk" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("10 min")).toBeTruthy();
+  });
+
+  it("clears the map when switched off and shows an error", async () => {
     const getReach = vi.fn().mockRejectedValue(new Error("boom"));
     const onReach = vi.fn();
     render(
@@ -122,17 +158,18 @@ describe("ReachCard", () => {
         onReach={onReach}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
+    const toggle = screen.getByRole("switch", SWITCH);
+    fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Couldn"));
-    fireEvent.click(screen.getByRole("button", { name: "Hide on map" }));
+    fireEvent.click(toggle);
     await waitFor(() => expect(onReach).toHaveBeenLastCalledWith(null));
   });
 
-  it("renders nothing without coordinates", () => {
-    const { container } = render(
-      <ReachCard coordinates={null} client={{ getReach: vi.fn() }} onReach={() => {}} />,
-    );
-    expect(container.firstChild).toBeNull();
+  it("is shown but switched off and disabled without a place", () => {
+    render(<ReachCard coordinates={null} client={{ getReach: vi.fn() }} onReach={() => {}} />);
+    const toggle = screen.getByRole("switch", SWITCH) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 });
 

@@ -324,10 +324,10 @@ describe("suggestAddresses", () => {
     ]);
   });
 
-  it("defaults the limit to 5", async () => {
+  it("defaults the limit to 8", async () => {
     const { client, fetchMock } = clientReturning(jsonResponse({ suggestions: [] }));
     await client.suggestAddresses("abc");
-    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=5");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=8");
   });
 
   it("rejects a 503 so callers can degrade quietly", async () => {

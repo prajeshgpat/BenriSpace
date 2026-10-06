@@ -1,4 +1,4 @@
-import { useId, memo } from "react";
+import { memo, useId, type ReactNode } from "react";
 
 import type { FactorKey } from "@/lib/api/types";
 import {
@@ -38,6 +38,8 @@ interface FactorControlsProps {
   onChange: (selection: FactorSelection) => void;
   /** When set, each selected factor shows its score on its toggle. */
   scores?: FactorScores | null;
+  /** Shown under the factor groups, inside the section (the travel-time row). */
+  children?: ReactNode;
 }
 
 const RING_RADIUS = 14;
@@ -76,6 +78,7 @@ function FactorControlsImpl({
   selection,
   onChange,
   scores = null,
+  children,
 }: FactorControlsProps) {
   const headingId = useId();
   return (
@@ -125,6 +128,8 @@ function FactorControlsImpl({
           </fieldset>
         ))}
 
+        {children}
+
         <details className={styles.importance}>
           <summary>
             Adjust importance
@@ -150,13 +155,6 @@ function FactorControlsImpl({
           )}
         </details>
 
-        <p className={styles.note}>
-          <strong>Why isn&rsquo;t anywhere 100?</strong> Every place is scored
-          on one scale for the whole region, by how much is within a short walk
-          or drive. Dense, walkable blocks can reach 100 on amenities, but the
-          best spots for transit are also the busiest and noisiest, so nowhere
-          maxes out every factor.
-        </p>
       </div>
     </section>
   );

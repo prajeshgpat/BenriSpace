@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FACTOR_KEYS } from "@/lib/score/factors";
 
-import { ALL_FACTORS, createSelection } from "./selection";
+import { ALL_FACTORS, DEFAULT_SELECTION, createSelection } from "./selection";
 import {
   explorerHref,
   initialView,
@@ -17,17 +17,17 @@ const parse = (query: string) => parseExplorerParams(new URLSearchParams(query))
 const EMPTY: ExplorerUrlInput = {
   target: null,
   view: null,
-  selection: ALL_FACTORS,
+  selection: DEFAULT_SELECTION,
 };
 
 describe("parseExplorerParams", () => {
-  it("defaults to no place, no view, all factors", () => {
+  it("defaults to no place, no view, the default factors", () => {
     expect(parse("")).toEqual({
       target: null,
       targetError: null,
       center: null,
       zoom: null,
-      selection: ALL_FACTORS,
+      selection: DEFAULT_SELECTION,
     });
   });
 
@@ -83,8 +83,12 @@ describe("parseExplorerParams", () => {
     ]);
   });
 
-  it("falls back to all factors when none are recognised", () => {
-    expect(parse("factors=bogus").selection).toEqual(ALL_FACTORS);
+  it("falls back to the default factors when none are recognised", () => {
+    expect(parse("factors=bogus").selection).toEqual(DEFAULT_SELECTION);
+  });
+
+  it("reads factors=all as every factor", () => {
+    expect(parse("factors=all").selection).toEqual(ALL_FACTORS);
   });
 
   it("reads an explicit empty selection", () => {
@@ -204,13 +208,14 @@ describe("serializeExplorerParams", () => {
     expect(parse(query).selection.factors).toEqual([]);
   });
 
-  it("does not write factors when every factor is selected", () => {
+  it("writes factors=all for every factor and nothing for the default set", () => {
     expect(
       serializeExplorerParams({
         ...EMPTY,
         selection: createSelection(FACTOR_KEYS),
       }),
-    ).toBe("");
+    ).toBe("factors=all");
+    expect(serializeExplorerParams({ ...EMPTY, selection: DEFAULT_SELECTION })).toBe("");
   });
 });
 

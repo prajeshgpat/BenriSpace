@@ -14,7 +14,7 @@ import {
 } from "@/lib/suggest/combobox";
 
 export const SUGGEST_DEBOUNCE_MS = 250;
-export const SUGGEST_LIMIT = 5;
+export const SUGGEST_LIMIT = 8;
 
 export interface AddressSuggestions {
   state: ComboboxState;

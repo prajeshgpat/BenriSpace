@@ -237,6 +237,8 @@ export function parseScore(body: unknown): Score {
     computedAt: body.computedAt,
     neighborhood: parseNeighborhood(body.neighborhood),
     precision: body.precision === "point" ? "point" : "grid",
+    travelMode:
+      body.travelMode === "walk" || body.travelMode === "drive" ? body.travelMode : null,
     ...parseSchool(body.school),
   };
 }
@@ -1009,7 +1011,7 @@ export function createApiClient({
       return parseExplanation(await getJson(path, options));
     },
 
-    async suggestAddresses(query, { limit = 5, ...options } = {}) {
+    async suggestAddresses(query, { limit = 8, ...options } = {}) {
       const params = new URLSearchParams({ q: query, limit: String(limit) });
       return parseSuggestions(
         await getJson(`/suggest?${params}`, {

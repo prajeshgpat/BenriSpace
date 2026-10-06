@@ -10,7 +10,9 @@ import { APP_PATH } from "@/lib/site";
 
 import {
   createSelection,
+  DEFAULT_FACTOR_KEYS,
   isAllSelected,
+  isDefaultSelection,
   type FactorSelection,
   type ImportanceOverrides,
 } from "./selection";
@@ -63,6 +65,7 @@ function parseZoom(raw: string | null): number | null {
 function parseFactors(raw: string | null): FactorKey[] | null {
   if (raw === null) return null;
   if (raw === "none") return [];
+  if (raw === "all") return [...FACTOR_KEYS];
   const keys = [
     ...new Set(raw.split(",").flatMap((key) => canonicalFactorKey(key) ?? [])),
   ];
@@ -92,7 +95,7 @@ export function parseExplorerParams(
     center: parseCenter(params.get("center")),
     zoom: parseZoom(params.get("z")),
     selection: createSelection(
-      parseFactors(params.get("factors")) ?? FACTOR_KEYS,
+      parseFactors(params.get("factors")) ?? DEFAULT_FACTOR_KEYS,
       parseImportance(params.get("importance")),
     ),
   };
@@ -146,9 +149,12 @@ export function serializeExplorerParams({
     if (!atTarget) params.set("center", centre);
     params.set("z", String(Math.round(view.zoom * 100) / 100));
   }
+  // The app's default set is left out of links; everything else is spelled out.
   if (selection.factors.length === 0) {
     params.set("factors", "none");
-  } else if (!isAllSelected(selection)) {
+  } else if (isAllSelected(selection)) {
+    params.set("factors", "all");
+  } else if (!isDefaultSelection(selection)) {
     params.set("factors", selection.factors.join(","));
   }
   const importance = Object.entries(selection.importance);

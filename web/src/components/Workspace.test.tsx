@@ -245,7 +245,7 @@ describe("Workspace: scoring an address", () => {
 
   it("loads and renders a result from the address in the URL", async () => {
     const { fetchMock } = setup(
-      "address=350+5th+Ave%2C+New+York%2C+NY",
+      "address=350+5th+Ave%2C+New+York%2C+NY&factors=all",
       liveApi,
     );
 
@@ -473,7 +473,7 @@ describe("Workspace: the map and its controls", () => {
   });
 
   it("requests cells for the padded viewport at the coarse precision when zoomed out", async () => {
-    const { getMapCells } = setup();
+    const { getMapCells } = setup("factors=all");
     await mapReady();
 
     sendViewport({ zoom: 8 });
@@ -498,7 +498,7 @@ describe("Workspace: the map and its controls", () => {
 
   it("refetches cells and best areas with the chosen factors when one is toggled", async () => {
     const user = userEvent.setup();
-    const { getMapCells, getMapTop } = setup();
+    const { getMapCells, getMapTop } = setup("factors=all");
     await mapReady();
     sendViewport();
     await waitFor(() => expect(getMapCells).toHaveBeenCalledTimes(1));
@@ -1155,7 +1155,7 @@ describe("selection reaches the point endpoints", () => {
       priorities: [],
     }));
     const rendered = setup(
-      "lat=40.7&lon=-74",
+      "lat=40.7&lon=-74&factors=all",
       liveApi,
       { getImprove, getSimilar, getAreaExplanation },
       () => jsonResponse(makeAreaBody()),

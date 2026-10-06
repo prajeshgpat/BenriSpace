@@ -15,6 +15,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import common.config  # noqa: F401  (loads .env so LOCATIONIQ_API_KEY works in local runs)
@@ -268,14 +269,33 @@ def fetch_locationiq_features(api_key: str, q: str, limit: int) -> list[dict]:
     return locationiq_to_features(payload)
 
 
+def _photon_or_nothing(q: str, limit: int) -> list:
+    try:
+        return fetch_photon_features(q, limit)
+    except SuggestUnavailable as exc:
+        logger.warning("suggest: %s (LocationIQ results only)", exc)
+        return []
+
+
 def fetch_features(q: str, limit: int) -> list:
+    """LocationIQ and Photon asked in parallel, LocationIQ's results first. LocationIQ
+    autocomplete misses many house numbers and street-plus-town queries ("100 Washington St
+    Hoboken", "Main St Montclair") that Photon finds, so Photon fills the list; then
+    clean_suggestions de-duplicates, keeps the covered area and, for a query that starts
+    with a number, lists exact addresses first. Without a key, or if LocationIQ fails,
+    Photon alone."""
     api_key = os.environ.get(LOCATIONIQ_KEY_ENV, "").strip()
-    if api_key:
+    if not api_key:
+        return fetch_photon_features(q, limit)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        photon = pool.submit(_photon_or_nothing, q, limit)
         try:
-            return fetch_locationiq_features(api_key, q, limit)
+            primary = fetch_locationiq_features(api_key, q, limit)
         except SuggestUnavailable as exc:
             logger.warning("suggest: %s; falling back to Photon", exc)
-    return fetch_photon_features(q, limit)
+            photon.cancel()
+            return fetch_photon_features(q, limit)
+        return primary + photon.result()
 
 
 class TTLCache:

@@ -78,14 +78,6 @@ describe("FactorControls", () => {
     ).not.toBeInTheDocument();
     expect(changes.at(-1)?.importance).toEqual({});
   });
-
-  it("explains why nothing scores 100 everywhere", () => {
-    render(<Harness />);
-    expect(
-      screen.getByText(/one scale for the whole region/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/nowhere maxes out every factor/)).toBeInTheDocument();
-  });
 });
 
 describe("factor icons", () => {

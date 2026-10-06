@@ -18,9 +18,9 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await page.goto("/app");
   await page.getByRole("combobox").first().fill("350 5th");
   await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
-  // The card recomputes the overall score for the selected factors (all of
-  // them here) from the mock sub-scores, so not the API's compositeScore of 77.
-  await expect(page.getByTestId("composite-score")).toHaveText("63");
+  // The card recomputes the overall score for the selected factors (the seven
+  // switched on by default) from the mock sub-scores, not the API's compositeScore of 77.
+  await expect(page.getByTestId("composite-score")).toHaveText("54");
   await expect(page.getByRole("heading", { name: "Midtown, Manhattan" })).toBeVisible();
 
   await page

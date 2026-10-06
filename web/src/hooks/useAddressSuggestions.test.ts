@@ -59,7 +59,7 @@ describe("useAddressSuggestions", () => {
     expect(suggestAddresses).toHaveBeenCalledTimes(1);
     expect(suggestAddresses).toHaveBeenCalledWith(
       "350 5th",
-      expect.objectContaining({ limit: 5, signal: expect.any(AbortSignal) }),
+      expect.objectContaining({ limit: 8, signal: expect.any(AbortSignal) }),
     );
     expect(result.current.open).toBe(true);
     expect(result.current.state.suggestions).toEqual([A]);

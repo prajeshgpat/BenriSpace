@@ -238,11 +238,16 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // Every selection resolves the road-bounded area, like a map click.
   const target: ScoreTarget | null = urlTarget;
   // A clicked point is labelled with coordinates until its street address is looked up.
-  const readableAddress = useReverseGeocode(
-    needsReadableAddress(target) ? { lat: target.lat, lon: target.lon } : null,
+  // "Your location" keeps its label on screen, but its street address is looked up too so
+  // the chat gets a real place instead of the words "Your location".
+  const located = target?.kind === "coordinates" && target.label === YOUR_LOCATION_LABEL;
+  const reversed = useReverseGeocode(
+    needsReadableAddress(target) || located ? { lat: target.lat, lon: target.lon } : null,
     client,
   ).label;
+  const readableAddress = located ? null : reversed;
   const address = readableAddress ?? (target ? targetLabel(target) : null);
+  const chatAddress = (located ? reversed : null) ?? address;
   const placeKey = target ? targetKey(target) : null;
 
   const [selection, setSelection] = useState(initial.selection);
@@ -717,8 +722,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const chatProps = {
     client,
     context: {
-      ...(target && address
-        ? { address }
+      ...(target && chatAddress
+        ? { address: chatAddress }
         : typedText.trim()
           ? { address: typedText.trim().slice(0, 300) }
           : {}),
@@ -726,7 +731,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       ...(priorities.factors ? { factors: priorities.factors } : {}),
       ...(priorities.weights ? { weights: priorities.weights } : {}),
     },
-    place: { key: placeKey, label: target ? address : null },
+    place: { key: placeKey, label: target ? chatAddress : null },
     onShowOnMap: showChatResult,
     onScoreArea: scoreChatResult,
     onClose: () => setChatOpen(false),
@@ -844,7 +849,19 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               ? state.score.subScores
               : (provisional?.subScores ?? null)
           }
-        />
+        >
+          {/* Always mounted, so a switched-on travel area survives a change of place. */}
+          <ReachCard
+            coordinates={
+              state.status === "success"
+                ? { lat: state.score.latitude, lon: state.score.longitude }
+                : null
+            }
+            travelMode={state.status === "success" ? state.score.travelMode : null}
+            client={client}
+            onReach={setReachGeometry}
+          />
+        </FactorControls>
         {state.status === "success" ? (
           <>
             <ScoreSummary
@@ -858,15 +875,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               client={client}
               priorities={priorities}
               onPreview={onPreview}
-            />
-            <ReachCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
-              travelMode={state.score.travelMode}
-              client={client}
-              onReach={setReachGeometry}
             />
             <SimilarCard
               coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
