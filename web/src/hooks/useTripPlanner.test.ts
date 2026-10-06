@@ -133,6 +133,30 @@ describe("useTripPlanner address resolution", () => {
     expect(hook.result.current.rows[0]).toMatchObject({ label: "", lat: undefined, lon: undefined });
   });
 
+  it("fills a box from a tap on the map, then swaps in the address", async () => {
+    const { hook, reverseGeocode } = setup();
+    act(() => hook.result.current.add());
+    const id = hook.result.current.rows[0].id;
+    await act(async () => hook.result.current.setPlaceFromMap(id, { lat: 40.7411, lon: -73.9897 }));
+    expect(reverseGeocode).toHaveBeenCalledWith({ lat: 40.7411, lon: -73.9897 });
+    expect(hook.result.current.rows[0]).toMatchObject({
+      label: "12 Main St",
+      lat: 40.7411,
+      lon: -73.9897,
+      error: null,
+    });
+  });
+
+  it("keeps the coordinates as the label when the tapped place has no address", async () => {
+    const { hook, reverseGeocode } = setup();
+    reverseGeocode.mockResolvedValue({ label: null, latitude: 0, longitude: 0 } as never);
+    act(() => hook.result.current.add());
+    const id = hook.result.current.rows[0].id;
+    await act(async () => hook.result.current.setPlaceFromMap(id, { lat: 40.7411, lon: -73.9897 }));
+    expect(hook.result.current.rows[0].lat).toBe(40.7411);
+    expect(hook.result.current.rows[0].label).toContain("40.7411");
+  });
+
   it("resolvePending looks up every box whose text was never confirmed", async () => {
     const { hook, suggestAddresses } = setup();
     suggestAddresses.mockImplementation((async (q: string) =>

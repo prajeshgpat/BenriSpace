@@ -372,6 +372,32 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // The Travel time row in Factors: the searched place and the points of interest share it.
   const [travel, setTravel] = useState<{ mode: ReachMode; minutes: number } | null>(null);
   const planner = useTripPlanner(client, tripPlace, travel);
+  // A press on the map while a point-of-interest box is selected (cursor blinking) fills that
+  // box with the tapped place instead of scoring it. The press is noted at pointerdown, before
+  // the box loses focus; the click that follows consults it.
+  const armedPoi = useRef<string | null>(null);
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const active = document.activeElement;
+      const id = active instanceof HTMLElement ? (active.dataset.poiId ?? null) : null;
+      armedPoi.current = id && target?.closest(".maplibregl-map") ? id : null;
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+  const poiRows = planner.rows;
+  const setPoiPlace = planner.setPlaceFromMap;
+  const fillPoiFromMap = useCallback(
+    (point: { lat: number; lon: number }): boolean => {
+      const id = armedPoi.current;
+      armedPoi.current = null;
+      if (!id || !poiRows.some((row) => row.id === id)) return false;
+      setPoiPlace(id, point);
+      return true;
+    },
+    [setPoiPlace, poiRows],
+  );
   // When an overlap (or the news that there is none) arrives, bring the places and their
   // travel areas into view.
   const overlapKey =
@@ -1020,12 +1046,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             } else setTopViewport((current) => current ?? next);
           }}
           onCellClick={(cell) => {
+            if (fillPoiFromMap({ lat: cell.lat, lon: cell.lon })) return;
             revealMap();
             selectCell(cell);
           }}
           onMarkerClick={(geohash) => {
-            revealMap();
             const result = topResults?.find((r) => r.geohash === geohash);
+            if (result && fillPoiFromMap({ lat: result.latitude, lon: result.longitude })) return;
+            revealMap();
             if (result) selectTop(result);
           }}
           onUnavailable={() => setMapUnavailable(true)}

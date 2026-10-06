@@ -136,8 +136,11 @@ export function TripPlanner({
   const previousStatus = useRef(status);
 
   const setInput = (id: string, element: HTMLInputElement | null) => {
-    if (element) inputs.current.set(id, element);
-    else inputs.current.delete(id);
+    if (element) {
+      inputs.current.set(id, element);
+      // The Workspace reads this to tell a tap on the map meant for this box.
+      element.dataset.poiId = id;
+    } else inputs.current.delete(id);
   };
 
   // Focus follows an added row's input, and returns to the add button on removal.
@@ -152,7 +155,8 @@ export function TripPlanner({
       addButton.current?.focus();
     }
     focusAdd.current = false;
-    if (rows.length > previousRows.current) onNeedSpace?.("full");
+    // Half, not full: the map stays in view so a place can be tapped on it to fill the box.
+    if (rows.length > previousRows.current) onNeedSpace?.("half");
     previousRows.current = rows.length;
   }, [rows.length, planner.lastAddedId, onNeedSpace]);
 

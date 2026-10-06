@@ -1241,6 +1241,37 @@ describe("Workspace: points of interest", () => {
     );
   });
 
+  it("a map tap fills the selected point-of-interest box instead of scoring the place", async () => {
+    const user = userEvent.setup();
+    const reverseGeocode = vi.fn<ApiClient["reverseGeocode"]>(async ({ lat, lon }) => ({
+      label: "Tapped Plaza, NY",
+      latitude: lat,
+      longitude: lon,
+    }));
+    setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi, { reverseGeocode });
+    await screen.findByText(/strongest factor/);
+    await user.click(screen.getByRole("button", { name: "Point of interest" }));
+    const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
+    expect(box).toHaveFocus();
+    pushState.mockClear();
+
+    // The press lands on the map while the box still has the cursor, then focus moves away.
+    const mapEl = document.createElement("div");
+    mapEl.className = "maplibregl-map";
+    document.body.append(mapEl);
+    mapEl.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7411, lon: -73.9897 }));
+    mapEl.remove();
+
+    await waitFor(() => expect(box).toHaveValue("Tapped Plaza, NY"));
+    expect(pushState).not.toHaveBeenCalled(); // the tapped place was not scored as the main one
+
+    // With no box selected the next tap scores the place as before.
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    act(() => map().onCellClick({ geohash: "dr5ru8", score: 77, lat: 40.76, lon: -73.98 }));
+    await waitFor(() => expect(pushState).toHaveBeenCalled());
+  });
+
   it("puts Ask Benri directly below the score card", async () => {
     setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
     const card = await screen.findByRole("region", { name: "Selected location" });

@@ -162,6 +162,8 @@ export interface TripPlannerState {
   clearPlace: (id: string) => void;
   /** Resolve every box whose text was never confirmed; settles when all are done. */
   resolvePending: () => Promise<void>;
+  /** A tap on the map while this box was selected: use that place, labelled by its address. */
+  setPlaceFromMap: (id: string, point: { lat: number; lon: number }) => void;
   /** Rebuild the planner from URL points; labels are looked up afterwards. */
   hydrate: (points: readonly UrlPoint[]) => void;
   retry: () => void;
@@ -240,6 +242,29 @@ export function useTripPlanner(
       patchRow(id, { draft: text, error: null });
     },
     [patchRow, clearPlace],
+  );
+
+  const setPlaceFromMap = useCallback(
+    (id: string, point: { lat: number; lon: number }) => {
+      resolving.current.delete(id);
+      const fallback = formatLatLon(point);
+      patchRow(id, { label: fallback, lat: point.lat, lon: point.lon, draft: undefined, error: null });
+      clientRef.current
+        .reverseGeocode(point)
+        .then(({ label }) => {
+          if (!label) return;
+          // Only replace the stand-in if the box still holds this tapped place.
+          setRows((current) =>
+            current.map((r) =>
+              r.id === id && r.lat === point.lat && r.lon === point.lon && r.label === fallback
+                ? { ...r, label }
+                : r,
+            ),
+          );
+        })
+        .catch(() => {});
+    },
+    [patchRow],
   );
 
   const resolveText = useCallback(
@@ -456,6 +481,7 @@ export function useTripPlanner(
     setText,
     clearPlace,
     resolvePending,
+    setPlaceFromMap,
     hydrate,
     retry,
   };

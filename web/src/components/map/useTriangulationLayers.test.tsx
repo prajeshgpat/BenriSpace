@@ -124,9 +124,10 @@ describe("useTriangulationLayers", () => {
     const view = renderHook(() =>
       useTriangulationLayers({ mapRef: ref, ready: true, theme: "light", overlay: overlay() }),
     );
-    expect(gl.markers.map((m) => m.element.textContent)).toEqual(["★", "1"]);
-    expect(gl.markers[1].element.style.background).toContain("rgb(234, 88, 12)");
-    expect(gl.markers[1].element.getAttribute("aria-label")).toBe("Point of interest 1");
+    // No pin for the searched place (the app's own pin marks it): only the points of interest.
+    expect(gl.markers.map((m) => m.element.textContent)).toEqual(["1"]);
+    expect(gl.markers[0].element.style.background).toContain("rgb(234, 88, 12)");
+    expect(gl.markers[0].element.getAttribute("aria-label")).toBe("Point of interest 1");
 
     view.unmount();
     expect(gl.markers.every((m) => m.removed)).toBe(true);

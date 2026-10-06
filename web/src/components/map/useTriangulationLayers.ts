@@ -226,7 +226,8 @@ export function useTriangulationLayers({ mapRef, ready, theme, overlay }: Option
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map || !overlay) return;
-    const markers = overlay.pins.map((pin) =>
+    // The searched place already has the app's own pin; only points of interest get one.
+    const markers = overlay.pins.filter((pin) => pin.index > 0).map((pin) =>
       new Marker({ element: pinElement(pin, theme) })
         .setLngLat([pin.lon, pin.lat])
         .addTo(map),
