@@ -322,6 +322,11 @@ UNDERLYING_SCORE_COLUMNS: frozenset[str] = frozenset(
 # selectable via SCORING_WEIGHTS_VERSION while its rows exist.
 WEIGHTS_VERSION_V2 = "v2-handtuned"
 WEIGHTS_VERSION_V2_1 = "v2.1-handtuned"
+# v2.2: routed, per-area density scoring (scoring/density.py, scoring/area_run.py). Same 13
+# columns and default weights as v2.1, but NOT computed by this engine: scoring.run skips it
+# and the API serves its stored rows instead of scoring points on demand.
+WEIGHTS_VERSION_V2_2 = "v2.2-density"
+DENSITY_VERSIONS = frozenset({WEIGHTS_VERSION_V2_2})
 
 DEFAULT_WEIGHTS: dict[str, float] = {
     # "Origin insight": grocery-type retailers are the strongest proxy for
@@ -384,6 +389,7 @@ V2_1_WEIGHTS: dict[str, float] = {
 _SPECS_BY_VERSION: dict[str, tuple[list[CategorySpec], dict[str, float]]] = {
     WEIGHTS_VERSION_V2: (CATEGORY_SPECS_V2, DEFAULT_WEIGHTS),
     WEIGHTS_VERSION_V2_1: (CATEGORY_SPECS_V2_1, V2_1_WEIGHTS),
+    WEIGHTS_VERSION_V2_2: (CATEGORY_SPECS_V2_1, V2_1_WEIGHTS),
 }
 
 

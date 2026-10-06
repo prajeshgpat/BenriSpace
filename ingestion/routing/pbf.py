@@ -90,7 +90,9 @@ class _Builder:
         self.v = array("q")
         self.minutes = array("f")
 
-    def add_way(self, refs: list[int], xs: list[float], ys: list[float], mph: float, direction: int):
+    def add_way(
+        self, refs: list[int], xs: list[float], ys: list[float], mph: float, direction: int
+    ):
         self.node_ids.extend(refs)
         self.x.extend(xs)
         self.y.extend(ys)
@@ -217,9 +219,7 @@ def save_network(data: NetworkData, path: Path) -> None:
 
 def load_network(path: Path) -> NetworkData:
     with np.load(path) as z:
-        return NetworkData(
-            z["node_ids"], z["x"], z["y"], z["edge_u"], z["edge_v"], z["minutes"]
-        )
+        return NetworkData(z["node_ids"], z["x"], z["y"], z["edge_u"], z["edge_v"], z["minutes"])
 
 
 def pad_bbox(

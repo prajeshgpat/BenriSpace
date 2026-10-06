@@ -96,8 +96,9 @@ multi-destination solver, not a lookup tool.
 
 ## Next
 
-1. **Finish the rollout.** Apply migration 0021 after the next weekly ingestion succeeds
-   on the new code; confirm the alarm email subscription.
+1. **Ship v2.2 routed density scoring** (SCORING.md A10): migration 0023, ingestion run,
+   area scoring from production places, publish, switch. Then migration 0021 after a
+   successful weekly ingestion on the new code.
 2. **Full routing run.** Swap Overpass for a Geofabrik extract, run walk and drive
    tiles for the whole metro, and add a geohash5 graph for drive trips over 90 min.
 3. **Scoring v3 (`v3-timeaccess`).** Per-factor time curves reading `cell_travel`,

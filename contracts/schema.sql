@@ -560,3 +560,26 @@ create table if not exists rail_matrix (
     origin_id   integer primary key references routing_hubs (id) on delete cascade,
     minutes_dm  smallint[] not null
 );
+
+-- Per-area scores for density weights versions, v2.2-density (migration 0023, not yet applied).
+create table if not exists area_scores (
+    area_id                  integer     not null,
+    weights_version          text        not null,
+    grocery_score            smallint,
+    gym_score                smallint,
+    cafe_score               smallint,
+    restaurant_score         smallint,
+    bar_score                smallint,
+    shopping_score           smallint,
+    gas_convenience_score    smallint,
+    transit_score            smallint,
+    school_score             smallint,
+    school_proximity_score   smallint,
+    road_score               smallint,
+    emergency_corridor_score smallint,
+    airport_score            smallint,
+    recreation_score         smallint,
+    composite_score          real,
+    computed_at              timestamptz not null default now(),
+    primary key (area_id, weights_version)
+);

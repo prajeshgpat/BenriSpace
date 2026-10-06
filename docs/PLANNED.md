@@ -80,11 +80,22 @@ Last updated 2026-10-05.
   web "How far can I get?" card.
 - [~] **Real `/triangulate`** (cell-set intersect / union) and **optimizer upgrades**
   (Weiszfeld seed, lower-bound pruning, stored times).
-- [ ] **Geofabrik extract** instead of Overpass for the full-metro / 5 hr run.
+- [x] **Geofabrik extract** instead of Overpass (`ingestion/routing/pbf.py`: NY/NJ/CT walk
+  13.4M and drive 7.3M nodes in 2.5 min).
 - [ ] **geohash5 coarse graph** for drive isochrones over ~90 minutes.
 - [ ] **Triangulate / optimizer UI** in the web app.
 
 ## Wave 5 — Scoring v3 (`v3-timeaccess`) and cutover
+
+- [~] **v2.2 routed density scoring** (`v2.2-density`, [SCORING.md](SCORING.md) A10). Places
+  per sq mi over each area and its walkable neighbours on one absolute scale; drive-mode
+  areas credit a dense cluster a short drive away (max 80 %); grocery / gym / gas 70 %
+  proximity; transit = train station proximity. Built and calibrated locally (Lloyd, NY bars
+  100 -> 30). Cutover: migration 0023, ingestion run, reach from production places,
+  `scoring.area_run --write`, publish, switch `scoring_weights_version` + the repository
+  variable. Not recomputed weekly yet (offline job).
+- [ ] Run the reach + area scoring in CI (needs ~10 GB RAM for the walk network, or tiles).
+- [ ] Better places coverage (Overture Maps): OpenStreetMap misses many gyms and shops.
 
 - [ ] Per-factor time curves by travel mode, reading `cell_travel` ([SCORING.md](SCORING.md)
   Part B, A9).

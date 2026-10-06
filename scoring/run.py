@@ -11,7 +11,7 @@ from common.config import SCORING_WEIGHTS_VERSION
 from common.db import get_connection
 from common.feature_columns import from_db_row
 from common.ingestion_log import ingestion_job
-from scoring.engine import all_score_columns, score_metro_cohort
+from scoring.engine import DENSITY_VERSIONS, all_score_columns, score_metro_cohort
 from scoring.scales import Scales, compute_scales, scales_to_rows
 
 SCALES_UPSERT_SQL = """
@@ -47,6 +47,13 @@ def write_scales(conn, weights_version: str, metro_area: str, scales: Scales) ->
 
 
 def run() -> None:
+    if SCORING_WEIGHTS_VERSION in DENSITY_VERSIONS:
+        # Routed density scores need the road networks and are written by scoring.area_run.
+        print(
+            f"{SCORING_WEIGHTS_VERSION} is written by scoring.area_run; nothing to do here.",
+            file=sys.stderr,
+        )
+        return
     with get_connection() as conn, ingestion_job("scoring") as ctx:
         with conn.cursor() as cur:
             cur.execute("select distinct metro_area from geo_entities")

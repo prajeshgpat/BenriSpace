@@ -377,3 +377,33 @@ def test_route_422_out_of_coverage(client):
     r = client.get("/v1/area", params={"lat": 10, "lon": 10})
     assert r.status_code == 422
     assert r.json()["code"] == "out_of_coverage"
+
+
+# --- density versions (stored per-area scores) -------------------------------
+
+
+def test_route_serves_stored_area_scores_for_a_density_version(client, monkeypatch):
+    stored = make_aggregate() | {"grocery_score": 42, "weights_version": "v2.2-density"}
+    calls = []
+
+    def fetch(conn, area_id, version):
+        calls.append((area_id, version))
+        return stored
+
+    monkeypatch.setattr(main, "SCORING_WEIGHTS_VERSION", "v2.2-density")
+    monkeypatch.setattr(main.area_scores, "fetch", fetch)
+    monkeypatch.setattr(
+        main, "_area_at_point_precision", lambda *a: pytest.fail("density areas are not sampled")
+    )
+    r = client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1], "precision": "point"})
+    assert r.status_code == 200
+    assert calls == [(3, "v2.2-density")]
+    assert r.json()["subScores"]["grocery"] == 42
+    assert r.json()["weightsVersion"] == "v2.2-density"
+
+
+def test_route_404_when_a_density_area_has_no_stored_row(client, monkeypatch):
+    monkeypatch.setattr(main, "SCORING_WEIGHTS_VERSION", "v2.2-density")
+    monkeypatch.setattr(main.area_scores, "fetch", lambda *a: None)
+    r = client.get("/v1/area", params={"lat": CLICK[0], "lon": CLICK[1]})
+    assert r.status_code == 404

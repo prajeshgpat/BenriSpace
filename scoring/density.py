@@ -32,6 +32,11 @@ Factors
     transit                           train station proximity; a bus stop counts at most
                                       BUS_CREDIT. No density (one neighbourhood rarely has
                                       several stations).
+    school proximity                  proximity to the nearest school (blended with the district
+                                      rating in scoring/area_run.py, 20 / 80)
+
+Traffic, Noise corridor, Recreation, Airport and the school rating come from the grid cells'
+features (scoring/area_run.py): they have no density or travel-time form yet.
 """
 
 from __future__ import annotations
@@ -103,6 +108,9 @@ FACTORS: tuple[Factor, ...] = (
 RAIL_WALK = Curve(10.0, 30.0)
 RAIL_DRIVE = Curve(5.0, 20.0)  # park-and-ride, drive-mode areas only
 BUS_WALK = Curve(5.0, 15.0)
+SCHOOL_WALK = Curve(10.0, 30.0)
+SCHOOL_DRIVE = Curve(10.0, 25.0)
+AIRPORT_DRIVE = Curve(20.0, 75.0)  # applied to the cell's airport drive minutes
 
 
 @dataclass
@@ -204,4 +212,5 @@ def score(r: Reach) -> dict[str, np.ndarray]:
         else:
             out[f.key] = np.asarray(dens, dtype=np.float64)
     out["transit"] = transit_score(r)
+    out["schoolProximity"] = 100.0 * proximity(r, ("school",), SCHOOL_WALK, SCHOOL_DRIVE)
     return out

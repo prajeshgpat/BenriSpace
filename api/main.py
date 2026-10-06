@@ -30,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api import area_cache, point_score, scorefile, slim_areas, sources
+from api import area_cache, area_scores, point_score, scorefile, slim_areas, sources
 from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
@@ -203,7 +203,8 @@ def get_score(
             return _error(400, "unresolvable_address", f"Could not geocode address: {address!r}")
         lat, lon = geocoded
 
-    if precision == "point":
+    # A density version stores whole-area scores; its cells already carry them.
+    if precision == "point" and not area_scores.is_density(SCORING_WEIGHTS_VERSION):
         try:
             with get_connection() as conn:
                 result = point_score.score_points(conn, [(lat, lon)], SCORING_WEIGHTS_VERSION)[0]
@@ -477,7 +478,11 @@ def _resolve_area(lat: float, lon: float, with_aggregate: bool = True, open_conn
         if area is None:
             return not_found()
         aggregate = None
-        if with_aggregate and use_slim:
+        if with_aggregate and area_scores.is_density(SCORING_WEIGHTS_VERSION):
+            aggregate = area_scores.fetch(conn, area["id"], SCORING_WEIGHTS_VERSION)
+            if aggregate is None:
+                return not_found()
+        elif with_aggregate and use_slim:
             samples = sample_points(area["geometry"], point_in_polygon) or [(lat, lon)]
             results = point_score.score_points(conn, samples, SCORING_WEIGHTS_VERSION)
             aggregate = point_score.area_aggregate_from_points(results, SCORING_WEIGHTS_VERSION)
@@ -513,7 +518,8 @@ def get_area(
     lon: float = Query(ge=-180, le=180, description="Longitude."),
     precision: Literal["grid", "point"] = Query(default="grid", description=PRECISION_DOC),
 ):
-    if precision == "point" or slim_areas.enabled():
+    density = area_scores.is_density(SCORING_WEIGHTS_VERSION)  # stored, not sampled
+    if (precision == "point" or slim_areas.enabled()) and not density:
         try:
             point_response = _area_at_point_precision(lat, lon)
             if isinstance(point_response, JSONResponse):

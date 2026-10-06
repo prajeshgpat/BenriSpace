@@ -108,8 +108,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Written next to older versions' rows (unique per geo_entity + version); the API
-      # keeps serving whichever version its SCORING_WEIGHTS_VERSION names.
-      SCORING_WEIGHTS_VERSION: v2.1-handtuned
+      # keeps serving whichever version its SCORING_WEIGHTS_VERSION names. Set the repository
+      # variable together with the Lambda's (terraform scoring_weights_version) when switching.
+      # A density version (v2.2-density) is scored offline by scoring.area_run: scoring.run
+      # skips it, and the steps below re-store and republish its score file from `scores`.
+      SCORING_WEIGHTS_VERSION: ${{ vars.SCORING_WEIGHTS_VERSION || 'v2.1-handtuned' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

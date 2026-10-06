@@ -2,6 +2,7 @@
 
     python -m ingestion.routing.pbf          # once: walk / drive networks from the extracts
     python -m ingestion.routing.reach        # origins, tallies, pair minutes, nearest minutes
+    python -m ingestion.routing.reach --sync-places   # first copy production's places locally
 
 Reads `areas_slim`, `places`, `routing_hubs` (rail) and the grid's population density from
 AREAS_DATABASE_URL (the local database by default; nothing is written to any database) and
@@ -214,7 +215,9 @@ def snap(net, lat: np.ndarray, lon: np.ndarray, mode: str):
     return nodes, miles / ACCESS_MPH[mode] * 60.0, miles <= MAX_ACCESS_MI
 
 
-def candidate_pairs(origins: Origins, mode: str, sources: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def candidate_pairs(
+    origins: Origins, mode: str, sources: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """(src, dst) index pairs whose straight-line distance could be travelled within the cap."""
     from scipy.spatial import cKDTree
 
@@ -264,6 +267,29 @@ def nearest_minutes(net, nodes, access, on_net, points, mode: str) -> np.ndarray
         mins = res[1].reindex(nodes).to_numpy(dtype=np.float64) + access
         out[:, j] = np.where(on_net & (mins <= cap), mins, np.nan)
     return out
+
+
+PLACES_COLUMNS = ("source", "source_id", "category", "name", "brand", "latitude", "longitude")
+
+
+def sync_places(source_url: str, local_url: str) -> int:
+    """Replaces the local `places` table with the source database's (read-only there), so the
+    reach is computed from the same places production serves. Returns rows copied."""
+    import psycopg
+
+    cols = ", ".join(PLACES_COLUMNS)
+    with psycopg.connect(source_url) as src, psycopg.connect(local_url) as dst:
+        src.read_only = True
+        with dst.transaction(), dst.cursor() as out:
+            out.execute("delete from places")
+            with (
+                src.cursor().copy(f"copy (select {cols} from places) to stdout") as reader,
+                out.copy(f"copy places ({cols}) from stdin") as writer,
+            ):
+                for block in reader:
+                    writer.write(block)
+            out.execute("select count(*) from places")
+            return int(out.fetchone()[0])
 
 
 def run(conn, network_dir: Path = NETWORK_DIR, out_path: Path = OUT_PATH) -> dict:
@@ -328,8 +354,17 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--networks", type=Path, default=NETWORK_DIR)
     ap.add_argument("--out", type=Path, default=OUT_PATH)
+    ap.add_argument(
+        "--sync-places", action="store_true", help="copy DATABASE_URL's places locally first"
+    )
     args = ap.parse_args(argv)
     url = os.environ.get("AREAS_DATABASE_URL", LOCAL_DATABASE_URL)
+    if args.sync_places:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        copied = sync_places(os.environ["DATABASE_URL"], url)
+        print(f"[reach] copied {copied:,} places from DATABASE_URL", file=sys.stderr)
     with psycopg.connect(url, row_factory=dict_row) as conn:
         conn.read_only = True
         print(json.dumps(run(conn, args.networks, args.out), indent=2))
