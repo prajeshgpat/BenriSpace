@@ -71,14 +71,16 @@ Last updated 2026-10-05.
 
 ## Wave 4 — Routing precompute
 
-- [~] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana, migration 0022).
+- [x] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana, migration 0022).
   Full region computed locally from the Geofabrik networks in 25 min
-  (`run --all --networks build/routing --steps amenity,graph,hubs`); 51 MB of tables.
-  Moves to production with `scripts/copy_routing.py` (one transaction, size-guarded).
-- [~] **Drive matrices** to airports and rail stations: computed for every cell on the
-  arterial network (`pbf.py` `arterial` mode); ships with the copy above.
-- [~] **Train times.** Connection Scan over GTFS rail, 933 stations, 273k connections,
-  matrix in 24 s; refreshed locally, ships with the copy above.
+  (`run --all --networks build/routing --steps amenity,graph,hubs`); 51 MB of tables, copied
+  to production 2026-10-06 with `scripts/copy_routing.py` (database 394 -> 443 MB). The
+  isochrone card, triangulate and the optimizer now return routed times. Re-run and re-copy
+  after a Geofabrik refresh; the weekly job does not recompute them.
+- [x] **Drive matrices** to airports and rail stations: every cell, on the arterial network
+  (`pbf.py` `arterial` mode); in production.
+- [x] **Train times.** Connection Scan over GTFS rail, 933 stations, 273k connections,
+  matrix in 24 s; in production.
 - [~] **Isochrones** `GET /v1/isochrone` from a stored cell graph (pure Python, 2-27 ms);
   web "How far can I get?" card. Cell resolution is coarse: checked against routed
   area-to-area times, walking is within about +-30 % and driving within 0.85-1.05x in rural
