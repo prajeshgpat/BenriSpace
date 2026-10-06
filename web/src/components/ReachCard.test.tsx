@@ -44,15 +44,17 @@ describe("ReachCard", () => {
         onReach={onReach}
       />,
     );
-    expect(getReach).not.toHaveBeenCalled();
+    // The switch starts on: the area is fetched and drawn as soon as there is a place.
     const toggle = screen.getByRole("switch", SWITCH);
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
     expect(getReach.mock.calls[0].slice(0, 4)).toEqual([40.7, -74, "drive", 15]);
     expect(screen.getByText("15 min")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("12.3 sq mi within 15 min");
+    // Switching it off clears the area from the map.
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(onReach).toHaveBeenLastCalledWith(null));
   });
 
   it("switches mode with icon buttons, and says when the area is an estimate", async () => {
@@ -64,7 +66,6 @@ describe("ReachCard", () => {
         onReach={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("switch", SWITCH));
     const walk = screen.getByRole("button", { name: "Walk" });
     expect(walk.textContent).toBe(""); // an icon, not a word
     fireEvent.click(walk);
@@ -86,7 +87,6 @@ describe("ReachCard", () => {
     );
     expect(screen.getByRole("button", { name: "Train" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("20 min")).toBeTruthy();
-    fireEvent.click(screen.getByRole("switch", SWITCH));
     await waitFor(() =>
       expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["transit", 20]),
     );
@@ -105,7 +105,7 @@ describe("ReachCard", () => {
       <ReachCard
         coordinates={{ lat: 40.7, lon: -74 }}
         travelMode="drive"
-        client={{ getReach: vi.fn() }}
+        client={{ getReach: vi.fn().mockResolvedValue(reach()) }}
         onReach={() => {}}
       />,
     );
@@ -117,7 +117,7 @@ describe("ReachCard", () => {
     render(
       <ReachCard
         coordinates={{ lat: 40.7, lon: -74 }}
-        client={{ getReach: vi.fn() }}
+        client={{ getReach: vi.fn().mockResolvedValue(reach()) }}
         onReach={() => {}}
       />,
     );
@@ -134,7 +134,6 @@ describe("ReachCard", () => {
     const onReach = vi.fn();
     const props = { coordinates: { lat: 40.7, lon: -74 }, client: { getReach }, onReach };
     const { rerender } = render(<ReachCard {...props} />);
-    fireEvent.click(screen.getByRole("switch", SWITCH));
     await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
     const calls = getReach.mock.calls.length;
     rerender(<ReachCard {...props} suspended />);
@@ -179,7 +178,6 @@ describe("ReachCard", () => {
     const { rerender } = render(
       <ReachCard coordinates={{ lat: 40.7, lon: -74 }} travelMode="drive" {...props} />,
     );
-    fireEvent.click(screen.getByRole("switch", SWITCH));
     fireEvent.click(screen.getByRole("button", { name: "Train" }));
     fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
     await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["transit", 25]));
@@ -214,17 +212,18 @@ describe("ReachCard", () => {
       />,
     );
     const toggle = screen.getByRole("switch", SWITCH);
-    fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Couldn"));
     fireEvent.click(toggle);
     await waitFor(() => expect(onReach).toHaveBeenLastCalledWith(null));
   });
 
-  it("is shown but switched off and disabled without a place", () => {
-    render(<ReachCard coordinates={null} client={{ getReach: vi.fn() }} onReach={() => {}} />);
+  it("is shown on but disabled without a place, and never fetches", () => {
+    const getReach = vi.fn();
+    render(<ReachCard coordinates={null} client={{ getReach }} onReach={() => {}} />);
     const toggle = screen.getByRole("switch", SWITCH) as HTMLButtonElement;
     expect(toggle.disabled).toBe(true);
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(getReach).not.toHaveBeenCalled();
   });
 });
 

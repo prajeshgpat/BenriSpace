@@ -277,7 +277,8 @@ describe("Workspace: scoring an address", () => {
       "350 5th Ave, New York, NY scores 63 out of 100, Good.",
     );
     expect(document.title).toBe("350 5th Ave, New York, NY · BenriSpace");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The score, its explanation, and the travel-time area (the switch starts on).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("reserves the header slot while loading and when loaded, with the filters after it", async () => {
@@ -348,11 +349,12 @@ describe("Workspace: scoring an address", () => {
     const user = userEvent.setup();
     const { fetchMock } = setup("address=350+5th+Ave", liveApi);
     await screen.findByText(/strongest factor/);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     await user.click(screen.getByRole("button", { name: "Get score" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    // A fresh score, its explanation, and the travel-time area drawn again for the new lookup.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
     expect(pushState).not.toHaveBeenCalled();
   });
 
@@ -1048,9 +1050,13 @@ describe("area polygon", () => {
     expect(screen.queryByText(/Area bounded by/)).not.toBeInTheDocument();
     expect(map().highlightGeohash).toBe("dr5ru7");
     expect(String(areaMock.mock.calls[0][0])).toBe("http://api.test/v1/area?lat=40.7&lon=-74");
-    // Only the background AI-explanation upgrade may use the generic fetch.
+    // Only the background AI-explanation upgrade and the travel-time area (the switch
+    // starts on) may use the generic fetch.
     expect(
-      fetchMock.mock.calls.filter(([url]) => !String(url).includes("/area/explanation?")),
+      fetchMock.mock.calls.filter(
+        ([url]) =>
+          !String(url).includes("/area/explanation?") && !String(url).includes("/isochrone?"),
+      ),
     ).toEqual([]);
   });
 

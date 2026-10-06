@@ -48,7 +48,7 @@ export function ReachCard({ coordinates, travelMode, client, onReach, suspended 
       setMinutes(placeDefault.minutes);
     }
   }
-  const [on, setOn] = useState(false);
+  const [on, setOn] = useState(true);
   const [state, setState] = useState<State>({ status: "off" });
   const lat = coordinates?.lat;
   const lon = coordinates?.lon;
