@@ -24,10 +24,11 @@
   min-width: 0;
 }
 
-/* A small slider switch. */
+/* A small slider switch, on the right of the line. */
 .switch {
   position: relative;
   flex: none;
+  margin-left: auto;
   width: 2.5rem;
   height: 1.5rem;
   padding: 0;
@@ -65,79 +66,9 @@
   cursor: not-allowed;
 }
 
-.switch:focus-visible,
-.mode:focus-visible,
-.modeOn:focus-visible,
-.step:focus-visible {
+.switch:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-}
-
-.modes {
-  display: inline-flex;
-  flex: none;
-  padding: 0.125rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-}
-
-.mode,
-.modeOn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2rem;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.mode:hover {
-  color: var(--text);
-}
-
-.modeOn {
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.stepper {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-left: auto;
-  flex: none;
-}
-
-.step {
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.step:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.value {
-  min-width: 3.5rem;
-  text-align: center;
-  font-size: 0.875rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
 }
 
 .meta {
@@ -151,4 +82,10 @@
   .thumb {
     transition: none;
   }
+}
+
+.note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
 }

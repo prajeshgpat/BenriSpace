@@ -55,7 +55,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--surface);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -137,7 +137,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--surface);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 

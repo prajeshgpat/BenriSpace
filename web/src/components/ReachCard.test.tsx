@@ -51,6 +51,7 @@ describe("ReachCard", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
     expect(getReach.mock.calls[0].slice(0, 4)).toEqual([40.7, -74, "drive", 15]);
+    expect(screen.getByText("15 min")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("12.3 sq mi within 15 min");
   });
 
@@ -73,8 +74,8 @@ describe("ReachCard", () => {
     );
   });
 
-  it("defaults to walking where people walk, stepping by 5 minutes from 5", async () => {
-    const getReach = vi.fn().mockResolvedValue(reach({ mode: "walk" }));
+  it("starts dense places on a 20 min train, stepping by 5 minutes from 5", async () => {
+    const getReach = vi.fn().mockResolvedValue(reach({ mode: "transit" }));
     render(
       <ReachCard
         coordinates={{ lat: 40.7, lon: -74 }}
@@ -83,14 +84,68 @@ describe("ReachCard", () => {
         onReach={() => {}}
       />,
     );
+    expect(screen.getByRole("button", { name: "Train" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("20 min")).toBeTruthy();
     fireEvent.click(screen.getByRole("switch", SWITCH));
-    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 10]));
+    await waitFor(() =>
+      expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["transit", 20]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Walk" }));
+    expect(screen.getByText("10 min")).toBeTruthy();
     const fewer = screen.getByRole("button", { name: "Fewer minutes" });
     fireEvent.click(fewer);
     expect(screen.getByText("5 min")).toBeTruthy();
     expect((fewer as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
     expect(screen.getByText("10 min")).toBeTruthy();
+  });
+
+  it("defaults non-dense places to a 15 min drive", () => {
+    render(
+      <ReachCard
+        coordinates={{ lat: 40.7, lon: -74 }}
+        travelMode="drive"
+        client={{ getReach: vi.fn() }}
+        onReach={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Drive" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("15 min")).toBeTruthy();
+  });
+
+  it("puts the switch after the mode group, with a filled walking person icon", () => {
+    render(
+      <ReachCard
+        coordinates={{ lat: 40.7, lon: -74 }}
+        client={{ getReach: vi.fn() }}
+        onReach={() => {}}
+      />,
+    );
+    const modes = screen.getByRole("group", { name: "Travel mode" });
+    const toggle = screen.getByRole("switch", SWITCH);
+    expect(modes.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const svg = screen.getByRole("button", { name: "Walk" }).querySelector("svg")!;
+    expect(svg.getAttribute("stroke")).toBeNull();
+    expect(svg.querySelector("path")!.getAttribute("d")!.startsWith("M13.5 5.5")).toBe(true);
+  });
+
+  it("when suspended, clears the area, disables the switch and says why", async () => {
+    const getReach = vi.fn().mockResolvedValue(reach());
+    const onReach = vi.fn();
+    const props = { coordinates: { lat: 40.7, lon: -74 }, client: { getReach }, onReach };
+    const { rerender } = render(<ReachCard {...props} />);
+    fireEvent.click(screen.getByRole("switch", SWITCH));
+    await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
+    const calls = getReach.mock.calls.length;
+    rerender(<ReachCard {...props} suspended />);
+    const toggle = screen.getByRole("switch", SWITCH) as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(onReach).toHaveBeenLastCalledWith(null));
+    expect(getReach.mock.calls.length).toBe(calls);
+    expect(
+      screen.getByText("Travel areas are showing for your points of interest."),
+    ).toBeTruthy();
   });
 
   it("steps every mode by 5 minutes: train up to 45, drive up to 60", () => {
@@ -144,8 +199,8 @@ describe("ReachCard", () => {
     );
     expect(screen.getByRole("button", { name: "Drive" }).getAttribute("aria-pressed")).toBe("true");
     rerender(<ReachCard coordinates={{ lat: 40.72, lon: -74.04 }} travelMode="walk" {...props} />);
-    expect(screen.getByRole("button", { name: "Walk" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("10 min")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Train" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("20 min")).toBeTruthy();
   });
 
   it("clears the map when switched off and shows an error", async () => {
