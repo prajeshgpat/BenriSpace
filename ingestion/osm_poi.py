@@ -79,7 +79,15 @@ COUNT_RADIUS_M = 500.0
 # docstring re: grocery vs. convenience_store double-counting).
 CATEGORY_TAG_RULES: dict[str, list[tuple[str, str]]] = {
     "grocery": [("shop", "supermarket"), ("shop", "grocery")],
-    "gym": [("leisure", "fitness_centre")],
+    # Gyms are mostly leisure=fitness_centre; studios and some clubs are tagged by sport only.
+    "gym": [
+        ("leisure", "fitness_centre"),
+        ("amenity", "gym"),
+        ("sport", "fitness"),
+        ("sport", "crossfit"),
+        ("sport", "pilates"),
+        ("sport", "yoga"),
+    ],
     "cafe": [("amenity", "cafe")],
     "gas_station": [("amenity", "fuel")],
     "convenience_store": [("shop", "convenience"), ("shop", "kiosk")],
@@ -108,6 +116,13 @@ BRAND_RULES: dict[str, dict[str, frozenset[str]]] = {
     },
 }
 ALL_CATEGORIES: list[str] = [*CATEGORY_TAG_RULES, *BRAND_RULES]
+
+# A sport=fitness tag on these is outdoor equipment or a field, not a gym.
+GYM_EXCLUDED_LEISURE = frozenset(
+    {"pitch", "fitness_station", "park", "playground", "track", "garden", "nature_reserve"}
+)
+# Sports centres that are gyms by name (YMCAs, "... Fitness", "... Gym"); not gymnastics.
+GYM_SPORTS_CENTRE_NAME = re.compile(r"\b(ymca|fitness|gym)\b", re.IGNORECASE)
 
 # premium_retail_raw weights and distance-decay scale.
 PREMIUM_RETAIL_WEIGHTS: dict[str, float] = {"whole_foods": 1.0, "starbucks": 1.0, "target": 0.5}
@@ -163,6 +178,7 @@ def build_overpass_query(min_lat: float, max_lat: float, min_lon: float, max_lon
     statements.append(f'nwr["brand:wikidata"~"^({ids})$"]({bbox});')
     statements.append(f'nwr["shop"]["brand"~"^({names})$",i]({bbox});')
     statements.append(f'nwr["shop"]["name"~"^({names})$",i]({bbox});')
+    statements.append(f'nwr["leisure"="sports_centre"]["name"~"ymca|fitness|gym",i]({bbox});')
     body = "\n  ".join(statements)
     return f"[out:json][timeout:{OVERPASS_TIMEOUT_S}];\n(\n  {body}\n);\nout center;"
 
@@ -196,7 +212,13 @@ def categorize_poi(tags: dict) -> str | None:
     for category, rules in CATEGORY_TAG_RULES.items():
         for key, value in rules:
             if tags.get(key) == value:
+                if category == "gym" and tags.get("leisure") in GYM_EXCLUDED_LEISURE:
+                    continue
                 return category
+    if tags.get("leisure") == "sports_centre" and GYM_SPORTS_CENTRE_NAME.search(
+        tags.get("name") or ""
+    ):
+        return "gym"
     return None
 
 

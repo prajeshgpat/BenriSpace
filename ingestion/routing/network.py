@@ -4,9 +4,9 @@
 region grows: Overpass (plain JSON, parsed to arrays) is fine for a few hundred tiles; a 5 hour radius should read a
 Geofabrik extract instead (osmium / pyrosm, one `NetworkData` per tile) and keep everything else.
 
-Edge cost is minutes:
-  walk   length / 80.467 m per minute (3 mph), every way both directions
-  drive  length / (OSM maxspeed, else the highway-class speed below) x 1 / DRIVE_SPEED_FACTOR,
+Edge cost is minutes, from lengths in miles and speeds in mph:
+  walk   length / 3 mph, every way both directions
+  drive  length / (OSM maxspeed, else the highway-class speed below) x DRIVE_SPEED_FACTOR,
          one-way streets respected. Free flow only: no live or historical traffic.
 """
 
@@ -19,23 +19,23 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from common.routing import WALK_M_PER_MIN
+from common.routing import WALK_MPH
 
 DRIVE_SPEED_FACTOR = 0.8  # signals, turns, parking and congestion on top of free-flow speed
-KMH_PER_MPH = 1.609344
-# Highway-class defaults (km/h) for ways without a maxspeed tag.
-DRIVE_HWY_SPEEDS = {
-    "motorway": 50 * KMH_PER_MPH,
-    "trunk": 40 * KMH_PER_MPH,
-    "primary": 30 * KMH_PER_MPH,
-    "secondary": 27 * KMH_PER_MPH,
-    "tertiary": 24 * KMH_PER_MPH,
-    "unclassified": 22 * KMH_PER_MPH,
-    "residential": 20 * KMH_PER_MPH,
-    "living_street": 10 * KMH_PER_MPH,
-    "service": 10 * KMH_PER_MPH,
+MPH_PER_KMH = 1 / 1.609344
+# Highway-class defaults (mph) for ways without a maxspeed tag.
+DRIVE_HWY_MPH = {
+    "motorway": 50.0,
+    "trunk": 40.0,
+    "primary": 30.0,
+    "secondary": 27.0,
+    "tertiary": 24.0,
+    "unclassified": 22.0,
+    "residential": 20.0,
+    "living_street": 10.0,
+    "service": 10.0,
 }
-DRIVE_FALLBACK_KMH = 20 * KMH_PER_MPH
+DRIVE_FALLBACK_MPH = 20.0
 # The sparse network used for the far pad of a drive tile and for long hub trips.
 ARTERIAL_FILTER = (
     '["highway"~"motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|'
@@ -75,29 +75,30 @@ DRIVE_FILTER = (
     '["area"!="yes"]'
 )
 MAX_CHUNK_DEG = {"walk": 0.12, "drive": 0.2, "arterial": 0.6}
-M_PER_DEG_LAT = 111_320.0
+MI_PER_DEG_LAT = 69.172
 OVERPASS_TIMEOUT_S = 300
 
 
-def _maxspeed_kmh(raw: str | None) -> float | None:
+def _maxspeed_mph(raw: str | None) -> float | None:
+    """OSM maxspeed in mph ("25 mph"; a bare number is km/h per the OSM convention)."""
     if not raw:
         return None
     try:
         value = float(raw.split()[0])
     except ValueError:
         return None
-    return value * KMH_PER_MPH if "mph" in raw else value
+    return value if "mph" in raw else value * MPH_PER_KMH
 
 
-def _way_speed_kmh(tags: dict) -> float:
-    explicit = _maxspeed_kmh(tags.get("maxspeed"))
+def way_speed_mph(tags: dict) -> float:
+    explicit = _maxspeed_mph(tags.get("maxspeed"))
     if explicit and explicit > 0:
         return explicit
     highway = tags.get("highway", "")
-    return DRIVE_HWY_SPEEDS.get(highway.removesuffix("_link"), DRIVE_FALLBACK_KMH)
+    return DRIVE_HWY_MPH.get(highway.removesuffix("_link"), DRIVE_FALLBACK_MPH)
 
 
-def _oneway(tags: dict) -> int:
+def oneway(tags: dict) -> int:
     """1 = forward only, -1 = reverse only, 0 = both ways (drive)."""
     value = tags.get("oneway")
     if value in ("yes", "true", "1"):
@@ -110,6 +111,13 @@ def _oneway(tags: dict) -> int:
     ):
         return 1 if value != "no" else 0
     return 0
+
+
+def segment_miles(xa: float, ya: float, xb: float, yb: float) -> float:
+    """Length in miles of a short segment between (lon, lat) points (equirectangular)."""
+    dy = (yb - ya) * MI_PER_DEG_LAT
+    dx = (xb - xa) * MI_PER_DEG_LAT * math.cos(math.radians((ya + yb) / 2.0))
+    return math.hypot(dx, dy)
 
 
 def parse_osm(elements: list[dict], mode: str) -> NetworkData:
@@ -130,15 +138,13 @@ def parse_osm(elements: list[dict], mode: str) -> NetworkData:
         tags = way.get("tags", {})
         nodes = [n for n in way["nodes"] if n in coords]
         if mode == "walk":
-            m_per_min, direction = WALK_M_PER_MIN, 0
+            mph, direction = WALK_MPH, 0
         else:
-            m_per_min = _way_speed_kmh(tags) * 1000.0 / 60.0 * DRIVE_SPEED_FACTOR
-            direction = _oneway(tags)
+            mph = way_speed_mph(tags) * DRIVE_SPEED_FACTOR
+            direction = oneway(tags)
         for a, b in itertools.pairwise(nodes):
             (xa, ya), (xb, yb) = coords[a], coords[b]
-            dy = (yb - ya) * M_PER_DEG_LAT
-            dx = (xb - xa) * M_PER_DEG_LAT * math.cos(math.radians((ya + yb) / 2.0))
-            minutes = math.hypot(dx, dy) / m_per_min
+            minutes = segment_miles(xa, ya, xb, yb) / mph * 60.0
             if direction >= 0:
                 us.append(a), vs.append(b), mins.append(minutes)
             if direction <= 0:
