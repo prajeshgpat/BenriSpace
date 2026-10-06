@@ -134,23 +134,29 @@ describe("TripPlanner", () => {
     expect(onSelectResult).toHaveBeenCalledWith({ lat: 40.71, lon: -73.99, label: "1 Main St" });
   });
 
-  it("shows a legend only for places that have an address", async () => {
+  it("shows a legend with the searched place and the overlap once a point has an address", async () => {
     const { user } = setup();
     await user.click(addButton()!);
     expect(screen.queryByRole("list", { name: "Map legend" })).not.toBeInTheDocument();
     await fillPoint(user, "Point of interest 1");
-    const legend = screen.getByRole("list", { name: "Map legend" });
-    expect(legend.textContent).toBe("Searched placePoint of interest 1Overlap");
-    expect(legend.textContent).not.toContain("Point of interest 2");
+    // The points of interest are marked by their pins; only the searched place's boundary and
+    // the overlap are drawn, so those are all the legend lists.
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched placeOverlap"),
+    );
     await user.click(addButton()!);
-    // The second box is open but still empty, so it is not in the legend yet.
-    expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe(
-      "Searched placePoint of interest 1Overlap",
-    );
     await fillPoint(user, "Point of interest 2");
-    expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe(
-      "Searched placePoint of interest 1Point of interest 2Overlap",
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched placeOverlap"),
     );
+  });
+
+  it("leaves Overlap out of the legend when the areas do not overlap", async () => {
+    const { user } = setup(vi.fn(async () => response({ combined: iso("network", 0) })));
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    expect((await screen.findAllByText(NO_OVERLAP_MESSAGE)).length).toBeGreaterThan(0);
+    expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched place");
   });
 
   it("explains an empty overlap", async () => {

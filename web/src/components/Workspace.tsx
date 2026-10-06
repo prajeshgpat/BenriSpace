@@ -408,7 +408,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     if (!overlapKey || !planner.data) return;
     const box = pointsAndAreasBounds(planner.overlay.pins, [
       planner.data.combined?.geometry,
-      ...planner.overlay.anchors.map((anchor) => anchor.geometry),
+      ...planner.overlay.anchors.filter((anchor) => anchor.index === 0).map((anchor) => anchor.geometry),
     ]);
     if (!box) return;
     setFlyRequest({
