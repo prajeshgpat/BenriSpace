@@ -30,10 +30,14 @@ export const PREVIEW_STYLE = {
   dark: { fillOpacity: 0.2, line: "#fdba74", casing: "#0b1020" },
 } as const;
 
-/** The reachable-area overlay (isochrone): teal, distinct from the blue selection and orange preview. */
+/**
+ * The reachable-area overlay (isochrone): magenta, a hue the score ramp never uses, so the
+ * outline stands out over any cell colour (it was teal and vanished into the green cells).
+ * Distinct from the blue selection and orange preview.
+ */
 export const REACH_STYLE = {
-  light: { fillOpacity: 0.16, line: "#0f766e", casing: "#ffffff" },
-  dark: { fillOpacity: 0.22, line: "#5eead4", casing: "#0b1020" },
+  light: { fillOpacity: 0.12, line: "#c026d3", casing: "#ffffff" },
+  dark: { fillOpacity: 0.18, line: "#f0abfc", casing: "#0b1020" },
 } as const;
 
 export const RAMP_GRADIENT = `linear-gradient(to right, ${RAMP_STOPS.map(

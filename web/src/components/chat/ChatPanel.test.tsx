@@ -155,6 +155,28 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("button", { name: "Try again" }) !== null).toBe(retryable);
   });
 
+  it("scrolls to the start of a new reply, not the bottom, so the answer shows first", async () => {
+    const user = userEvent.setup();
+    // jsdom has no layout: the log sits at y=100 and every reply 300 px into its content,
+    // so on screen a reply is at 400 minus however far the log has scrolled.
+    const rect = (top: number) => ({ top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top, toJSON: () => ({}) });
+    const held: { log?: HTMLElement } = {};
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return rect(this === held.log ? 100 : 400 - (held.log?.scrollTop ?? 0)) as DOMRect;
+    });
+    setup();
+    const log = screen.getByRole("log");
+    held.log = log;
+    Object.defineProperty(log, "scrollHeight", { configurable: true, value: 5000 });
+
+    await user.click(within(screen.getByRole("list", { name: "Suggested questions" })).getAllByRole("button")[0]);
+    await screen.findByText("Shippan Point looks best.");
+
+    // 300 px to the reply minus 8 px of breathing room, not scrollHeight (5000).
+    await waitFor(() => expect(log.scrollTop).toBe(292));
+    vi.restoreAllMocks();
+  });
+
   it("Close chat calls onClose", async () => {
     const user = userEvent.setup();
     const { onClose } = setup();

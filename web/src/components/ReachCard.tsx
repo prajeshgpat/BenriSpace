@@ -16,23 +16,21 @@ export interface ReachCardProps {
   onReach: (geometry: AreaGeometry | null) => void;
 }
 
-/** 5, 10, 15, 30, 45, then every 15 minutes up to the API's 2 hour cap. */
-const LONG_STEPS = [5, 10, 15, 30, 45, 60, 75, 90, 105, 120] as const;
+/** 5, 10, 15 ... up to `max` minutes. */
+function everyFive(max: number): readonly number[] {
+  return Array.from({ length: max / 5 }, (_, i) => (i + 1) * 5);
+}
 
+/** Every mode steps by 5 minutes: walk and train 5-45, drive 5-60. */
 const OPTIONS: ReadonlyArray<{
   mode: ReachMode;
   label: string;
   minutes: readonly number[];
   initial: number;
 }> = [
-  {
-    mode: "walk",
-    label: "Walk",
-    minutes: Array.from({ length: 12 }, (_, i) => (i + 1) * 5),
-    initial: 15,
-  },
-  { mode: "transit", label: "Train", minutes: LONG_STEPS, initial: 30 },
-  { mode: "drive", label: "Drive", minutes: LONG_STEPS, initial: 30 },
+  { mode: "walk", label: "Walk", minutes: everyFive(45), initial: 10 },
+  { mode: "transit", label: "Train", minutes: everyFive(45), initial: 20 },
+  { mode: "drive", label: "Drive", minutes: everyFive(60), initial: 15 },
 ];
 
 function optionFor(mode: ReachMode) {
