@@ -50,6 +50,14 @@ DRIVE_HIGHWAYS = frozenset(
         "residential", "living_street", "service",
     }
 )  # fmt: skip
+ARTERIAL_HIGHWAYS = frozenset(
+    {
+        "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+        "secondary", "secondary_link",
+    }
+)  # fmt: skip
+# Roads a drive-mode cell is snapped to when building the cell graph (see travel.fast_snapper).
+COLLECTOR_HIGHWAYS = ARTERIAL_HIGHWAYS | {"tertiary", "tertiary_link"}
 _BLOCKED_ACCESS = ("private", "no")
 _BLOCKED_SERVICE = ("parking_aisle", "driveway", "private")
 
@@ -76,6 +84,19 @@ def drive_ok(tags: dict) -> bool:
         and tags.get("motor_vehicle") != "no"
         and not _has(tags.get("service"), _BLOCKED_SERVICE)
         and tags.get("area") != "yes"
+    )
+
+
+def arterial_ok(tags: dict) -> bool:
+    """The sparse backbone for long drives (airports, rail stations): `network.ARTERIAL_FILTER`."""
+    return tags.get("highway") in ARTERIAL_HIGHWAYS and not _has(
+        tags.get("access"), _BLOCKED_ACCESS
+    )
+
+
+def collector_ok(tags: dict) -> bool:
+    return tags.get("highway") in COLLECTOR_HIGHWAYS and not _has(
+        tags.get("access"), _BLOCKED_ACCESS
     )
 
 
@@ -137,7 +158,7 @@ def read_extracts(
     modes: tuple[str, ...] = ("walk", "drive"),
 ) -> dict[str, NetworkData]:
     """{mode: NetworkData} for every routable way with at least one node inside bbox =
-    (south, west, north, east)."""
+    (south, west, north, east). Modes: walk, drive, arterial (drive speeds, big roads only), collector (arterials + tertiary)."""
     import osmium
 
     south, west, north, east = bbox
@@ -154,7 +175,9 @@ def read_extracts(
             tags = dict(way.tags)
             want_walk = "walk" in builders and walk_ok(tags)
             want_drive = "drive" in builders and drive_ok(tags)
-            if not (want_walk or want_drive):
+            want_arterial = "arterial" in builders and arterial_ok(tags)
+            want_collector = "collector" in builders and collector_ok(tags)
+            if not (want_walk or want_drive or want_arterial or want_collector):
                 continue
             refs: list[int] = []
             xs: list[float] = []
@@ -173,9 +196,15 @@ def read_extracts(
                 continue
             if want_walk:
                 builders["walk"].add_way(refs, xs, ys, WALK_MPH, 0)
-            if want_drive:
+            if want_drive or want_arterial or want_collector:
                 mph = way_speed_mph(tags) * DRIVE_SPEED_FACTOR
-                builders["drive"].add_way(refs, xs, ys, mph, oneway(tags))
+                direction = oneway(tags)
+                if want_collector:
+                    builders["collector"].add_way(refs, xs, ys, mph, direction)
+                if want_drive:
+                    builders["drive"].add_way(refs, xs, ys, mph, direction)
+                if want_arterial:
+                    builders["arterial"].add_way(refs, xs, ys, mph, direction)
         print(f"[pbf] {path.name}: {time.time() - t0:.0f}s", file=sys.stderr)
     return {m: b.finish() for m, b in builders.items()}
 
@@ -235,7 +264,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--pbf", nargs="*", type=Path, help="extracts (default build/osm/*.osm.pbf)")
     ap.add_argument("--bbox", help="south,west,north,east (default: the grid, padded)")
-    ap.add_argument("--modes", default="walk,drive")
+    ap.add_argument("--modes", default="walk,drive,arterial,collector")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = ap.parse_args(argv)
 

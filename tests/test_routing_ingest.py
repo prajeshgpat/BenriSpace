@@ -28,9 +28,7 @@ def test_pad_box_grows_by_metres():
 
 
 def elements():
-    nodes = [
-        {"type": "node", "id": i, "lat": 40.7, "lon": -74.0 + 0.001 * i} for i in range(1, 4)
-    ]
+    nodes = [{"type": "node", "id": i, "lat": 40.7, "lon": -74.0 + 0.001 * i} for i in range(1, 4)]
     ways = [
         {"type": "way", "id": 10, "nodes": [1, 2, 3], "tags": {"highway": "residential"}},
         {
@@ -221,3 +219,29 @@ def test_keep_connected_drops_small_fragments():
     kept = keep_connected(data, min_nodes=3)
     assert list(kept.node_ids) == [1, 2, 3]
     assert list(kept.edge_u) == [1, 2]
+
+
+def test_pbf_arterial_rules_keep_only_big_public_roads():
+    from ingestion.routing.pbf import arterial_ok
+
+    assert arterial_ok({"highway": "motorway"})
+    assert arterial_ok({"highway": "secondary_link"})
+    assert not arterial_ok({"highway": "tertiary"})
+    assert not arterial_ok({"highway": "residential"})
+    assert not arterial_ok({"highway": "primary", "access": "private"})
+
+
+def test_fast_snapper_prefers_a_nearby_main_road_node_and_falls_back_when_far():
+    from ingestion.routing.travel import FastSnapper
+
+    ids = np.array([10, 11, 12], dtype=np.int64)
+    lon = np.array([-74.00, -74.00, -73.50])
+    lat = np.array([40.700, 40.760, 40.700])  # 11 is ~4 mi north of 10; 12 is ~26 mi east
+    snapper = FastSnapper(ids, lon, lat, routable_ids=np.array([10, 12], dtype=np.int64))
+    near = snapper(np.array([40.702]), np.array([-74.001]), np.array([99]))
+    assert list(near) == [10]  # within 1.2 mi of main-road node 10
+    far = snapper(np.array([40.730]), np.array([-73.75]), np.array([99]))
+    assert list(far) == [99]  # nothing close: the default node is kept
+    # a node that is not in the routing network is never chosen
+    only11 = FastSnapper(ids, lon, lat, routable_ids=np.array([12], dtype=np.int64))
+    assert list(only11(np.array([40.76]), np.array([-74.0]), np.array([99]))) == [99]
