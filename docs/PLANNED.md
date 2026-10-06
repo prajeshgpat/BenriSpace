@@ -57,9 +57,9 @@ Last updated 2026-10-05.
 - [x] **PostGIS** geometry and GiST indexes; `road_segments` table and ingestion (not run
   weekly: nothing reads it yet and it took 97 MB; the table is emptied, run
   `python -m ingestion.road_segments` when the frontage-noise factor needs it).
-- [~] **Imperial column rename.** Expand (0020, applied in prod) / contract (0021, run
-  only after a weekly ingestion succeeds on the new code) with `common/feature_columns.py`
-  translating at the database boundary. `areas.area_sq_m` not renamed yet.
+- [x] **Imperial column rename.** Expand (0020) and contract (0021, applied 2026-10-06,
+  `feature_store` 77 -> 22 MB) with `common/feature_columns.py` translating at the code
+  boundary. `areas.area_sq_m` is not renamed yet.
 - [~] **Faster ingestion.** cKDTree for POIs, shops, transit, and now parks and schools
   (schools' nearest distance is now the true nearest).
 - [x] **Density-capped road polygons.** 0.1 sq mi at ≥20k people/sq mi up to 1 sq mi below
