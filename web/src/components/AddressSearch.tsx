@@ -7,6 +7,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type Ref,
 } from "react";
 
 import { useAddressSuggestions } from "@/hooks/useAddressSuggestions";
@@ -42,6 +43,20 @@ interface AddressSearchProps {
   endAdornment?: ReactNode;
   /** Every keystroke, so a parent can use text that was never submitted. */
   onTextChange?: (text: string) => void;
+  /** Accessible name of the field; defaults to "Address". */
+  label?: string;
+  placeholder?: string;
+  /** Text of the submit button; defaults to "Get score". */
+  submitLabel?: string;
+  /**
+   * A smaller single-row field with no submit button (Enter still submits)
+   * and a clear button; autocomplete works as usual.
+   */
+  compact?: boolean;
+  /** Called after the clear button empties the field (compact only). */
+  onClear?: () => void;
+  /** Receives the input element, e.g. to move focus to it. */
+  inputRef?: Ref<HTMLInputElement>;
 }
 
 export function AddressSearch({
@@ -52,13 +67,24 @@ export function AddressSearch({
   suggestClient,
   endAdornment,
   onTextChange,
+  label = "Address",
+  placeholder = "Enter an address",
+  submitLabel = "Get score",
+  compact = false,
+  onClear,
+  inputRef: externalInputRef,
 }: AddressSearchProps) {
   const id = useId();
   const inputId = `${id}-input`;
   const errorId = `${id}-error`;
   const listboxId = `${id}-listbox`;
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const setInputRef = (element: HTMLInputElement | null) => {
+    inputRef.current = element;
+    if (typeof externalInputRef === "function") externalInputRef(element);
+    else if (externalInputRef) externalInputRef.current = element;
+  };
   const [value, setValue] = useState(initialValue);
   const [error, setError] = useState<string | null>(initialError);
 
@@ -95,6 +121,15 @@ export function AddressSearch({
     setError(null);
     reset();
     onSearch(result.value);
+  }
+
+  function clear() {
+    setValue("");
+    setError(null);
+    reset();
+    onTextChange?.("");
+    onClear?.();
+    inputRef.current?.focus();
   }
 
   function select(suggestion: Suggestion) {
@@ -139,20 +174,20 @@ export function AddressSearch({
 
   return (
     <form
-      className={styles.form}
-      role="search"
+      className={compact ? `${styles.form} ${styles.compact}` : styles.form}
+      role={compact ? undefined : "search"}
       action={APP_PATH}
       method="get"
       noValidate
       onSubmit={handleSubmit}
     >
       <label className="sr-only" htmlFor={inputId}>
-        Address
+        {label}
       </label>
       <div className={styles.row}>
         <div className={styles.field}>
           <input
-            ref={inputRef}
+            ref={setInputRef}
             id={inputId}
             className={styles.input}
             type="text"
@@ -166,7 +201,7 @@ export function AddressSearch({
             }}
             onKeyDown={handleKeyDown}
             onBlur={autocomplete ? suggestions.dismiss : undefined}
-            placeholder="Enter an address"
+            placeholder={placeholder}
             maxLength={ADDRESS_MAX_LENGTH}
             autoComplete="off"
             autoCapitalize="words"
@@ -193,16 +228,10 @@ export function AddressSearch({
                 <button
                   type="button"
                   className={styles.clear}
-                  aria-label="Clear address"
+                  aria-label={`Clear ${label.toLowerCase()}`}
                   // Keep focus in the box: a mousedown blur would close the list first.
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    setValue("");
-                    onTextChange?.("");
-                    if (error) setError(null);
-                    if (autocomplete) suggestions.handleInput("");
-                    inputRef.current?.focus();
-                  }}
+                  onClick={clear}
                 >
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
                     <path
@@ -238,9 +267,11 @@ export function AddressSearch({
             </ul>
           ) : null}
         </div>
-        <button className={styles.button} type="submit">
-          Get score
-        </button>
+        {compact ? null : (
+          <button className={styles.button} type="submit">
+            {submitLabel}
+          </button>
+        )}
       </div>
       {autocomplete ? (
         <p className="sr-only" role="status">

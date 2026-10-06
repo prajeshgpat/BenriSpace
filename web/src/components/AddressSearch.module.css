@@ -168,3 +168,22 @@
     flex: 1;
   }
 }
+
+/* Compact: one small row, no submit button, a clear button inside the field. */
+.compact .row {
+  flex-direction: row;
+}
+
+.compact .field {
+  flex: 1;
+}
+
+.compact .input {
+  height: 2.5rem;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-md);
+}
+
+.compact .input[data-adorned] {
+  padding-right: 2.5rem;
+}

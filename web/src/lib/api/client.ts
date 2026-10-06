@@ -41,6 +41,9 @@ import type {
   ScoreQuery,
   Suggestion,
   SubScores,
+  Triangulation,
+  TriangulateAnchor,
+  Isochrone,
   SchoolInfo,
 } from "./types";
 
@@ -141,6 +144,11 @@ export interface ApiClient {
     minutes: number,
     options?: RequestOptions,
   ): Promise<Reach>;
+  /** Where the travel areas of 2 or more places overlap, and the best addresses in it. */
+  triangulate(
+    anchors: readonly TriangulateAnchor[],
+    options?: RequestOptions,
+  ): Promise<Triangulation>;
   /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
   getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
   /** Where the data comes from: names, licences and when each was last refreshed. */
@@ -287,8 +295,9 @@ function parseGeometry(raw: unknown): AreaGeometry {
   throw invalidResponse("area geometry");
 }
 
-export function parseReach(body: unknown): Reach {
-  const iso = isObject(body) && isObject(body.isochrone) ? body.isochrone : null;
+/** One reachable-area object, shared by /isochrone and /triangulate. */
+export function parseIsochroneShape(raw: unknown): Reach {
+  const iso = isObject(raw) ? raw : null;
   if (
     !iso ||
     !isFiniteNumber(iso.minutes) ||
@@ -304,6 +313,50 @@ export function parseReach(body: unknown): Reach {
     method: iso.method,
     areaSqMi: iso.areaSqMi,
     geometry: iso.geometry ? parseGeometry(iso.geometry) : null,
+  };
+}
+
+export function parseReach(body: unknown): Reach {
+  return parseIsochroneShape(isObject(body) ? body.isochrone : null);
+}
+
+function parseIsochrone(raw: unknown): Isochrone {
+  const reach = parseIsochroneShape(raw);
+  const source = raw as JsonObject;
+  return {
+    ...reach,
+    label: typeof source.label === "string" ? source.label : null,
+    cellCount: isFiniteNumber(source.cellCount) ? source.cellCount : 0,
+  };
+}
+
+export function parseTriangulate(body: unknown): Triangulation {
+  if (!isObject(body) || !Array.isArray(body.results)) {
+    throw invalidResponse("triangulation");
+  }
+  const results = body.results.map((row: unknown) => {
+    if (
+      !isObject(row) ||
+      !isFiniteNumber(row.latitude) ||
+      !isFiniteNumber(row.longitude) ||
+      !isFiniteNumber(row.compositeScore)
+    ) {
+      throw invalidResponse("triangulation");
+    }
+    return {
+      lat: row.latitude,
+      lon: row.longitude,
+      score: row.compositeScore,
+      address: typeof row.address === "string" ? row.address : "",
+    };
+  });
+  const isochrones = Array.isArray(body.isochrones)
+    ? body.isochrones.map(parseIsochrone)
+    : [];
+  return {
+    results,
+    isochrones,
+    combined: body.combined ? parseIsochrone(body.combined) : null,
   };
 }
 
@@ -999,6 +1052,23 @@ export function createApiClient({
         minutes: String(minutes),
       });
       return parseReach(await getJson(`/isochrone?${params}`, options));
+    },
+
+    async triangulate(anchors, options) {
+      const body = {
+        anchors: anchors.map((a) => ({
+          label: a.label,
+          latitude: a.lat,
+          longitude: a.lon,
+          mode: a.mode,
+          maxTravelMinutes: a.minutes,
+        })),
+        combineMode: "intersect",
+        limit: 50,
+      };
+      return parseTriangulate(
+        await requestJson("/triangulate", { method: "POST", body }, options),
+      );
     },
 
     async getScoreExplanation(geoEntityId, { factors, weights, ...options } = {}) {
