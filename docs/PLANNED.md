@@ -54,7 +54,9 @@ Last updated 2026-10-05.
 ## Wave 3 — Data foundation
 
 - [x] **Population density per cell** (Census 2020, migration 0012).
-- [x] **PostGIS** geometry and GiST indexes; `road_segments` table and ingestion.
+- [x] **PostGIS** geometry and GiST indexes; `road_segments` table and ingestion (not run
+  weekly: nothing reads it yet and it took 97 MB; the table is emptied, run
+  `python -m ingestion.road_segments` when the frontage-noise factor needs it).
 - [~] **Imperial column rename.** Expand (0020, applied in prod) / contract (0021, run
   only after a weekly ingestion succeeds on the new code) with `common/feature_columns.py`
   translating at the database boundary. `areas.area_sq_m` not renamed yet.
