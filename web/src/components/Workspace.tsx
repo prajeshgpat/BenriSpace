@@ -45,7 +45,12 @@ import {
 } from "@/lib/geolocation";
 import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
-import { originBounds, previewBounds, type Preview } from "@/lib/map/preview";
+import {
+  originBounds,
+  pointsAndAreasBounds,
+  previewBounds,
+  type Preview,
+} from "@/lib/map/preview";
 import { placeId, type ComparePlace } from "@/lib/compare";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import { priorityQuery } from "@/lib/map/selection";
@@ -60,6 +65,8 @@ import { bandLabel, roundScore } from "@/lib/score/presentation";
 import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
+import { TripPlanner } from "./TripPlanner";
+import { useTripPlanner } from "@/hooks/useTripPlanner";
 import { BottomSheet } from "./BottomSheet";
 import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
@@ -350,6 +357,50 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
   }, [lookup, selection.factors, weights]);
 
+  // "+ Point of interest": up to two extra places whose travel-time areas must overlap.
+  const tripPlace = useMemo(
+    () =>
+      state.status === "success"
+        ? {
+            label: chatAddress ?? state.address,
+            lat: state.score.latitude,
+            lon: state.score.longitude,
+            travelMode: state.score.travelMode,
+          }
+        : null,
+    [state, chatAddress],
+  );
+  const planner = useTripPlanner(client, tripPlace);
+  // When an overlap (or the news that there is none) arrives, bring the places and their
+  // travel areas into view.
+  const overlapKey =
+    planner.data && planner.overlay.pins.length > 1
+      ? `${planner.status}:${planner.overlay.pins.length}:${planner.data.combined?.areaSqMi ?? "none"}`
+      : null;
+  useEffect(() => {
+    if (!overlapKey || !planner.data) return;
+    const box = pointsAndAreasBounds(planner.overlay.pins, [
+      planner.data.combined?.geometry,
+      ...planner.overlay.anchors.map((anchor) => anchor.geometry),
+    ]);
+    if (!box) return;
+    setFlyRequest({
+      lat: (box[1] + box[3]) / 2,
+      lon: (box[0] + box[2]) / 2,
+      nonce: Date.now(),
+      bounds: box,
+    });
+    // Only when a new overlap arrives, not on every planner render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlapKey]);
+  // Points in a shared link restore the planner once, on load.
+  const hydratedPoints = useRef(false);
+  useEffect(() => {
+    if (hydratedPoints.current) return;
+    hydratedPoints.current = true;
+    if (initial.points.length > 0) planner.hydrate(initial.points);
+  }, [initial.points, planner]);
+
   // A map click that landed in a known area shows that area's static scores
   // while `/area` loads; the API's answer replaces them.
   const [areaHint, setAreaHint] = useState<{ key: string; areaId: number } | null>(null);
@@ -512,6 +563,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     target,
     view: urlView,
     selection,
+    points: planner.urlPoints,
   });
   // A rejected address in the URL has no state of its own to write back.
   const preserveUrl = target === null && rawAddress !== null;
@@ -539,7 +591,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     window.history.pushState(
       null,
       "",
-      explorerHref({ target: next, view: urlView, selection }),
+      explorerHref({ target: next, view: urlView, selection, points: planner.urlPoints }),
     );
   }
 
@@ -775,6 +827,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </div>
       </div>
 
+      <TripPlanner
+        planner={planner}
+        client={client}
+        onSelectResult={({ lat, lon, label }) =>
+          navigate({ kind: "coordinates", lat, lon, label })
+        }
+        onNeedSpace={(kind) => setSnap(kind)}
+      />
+
       {chatOpen ? null : (
         <button type="button" className={styles.ask} onClick={openChat}>
           <AskIcon className={styles.askIcon} />
@@ -865,6 +926,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             travelMode={state.status === "success" ? state.score.travelMode : null}
             client={client}
             onReach={setReachGeometry}
+            suspended={planner.active}
           />
         </FactorControls>
         {state.status === "success" ? (
@@ -940,6 +1002,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
           reachGeometry={reachGeometry}
+          triangulation={planner.active ? planner.overlay : null}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}

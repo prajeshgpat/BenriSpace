@@ -64,6 +64,20 @@ function visit(coordinates: unknown, each: (lon: number, lat: number) => void) {
   coordinates.forEach((child) => visit(child, each));
 }
 
+/** The box around some points and the area polygons that go with them; null when empty. */
+export function pointsAndAreasBounds(
+  points: readonly { lat: number; lon: number }[],
+  areas: readonly (AreaGeometry | null | undefined)[],
+): Bbox | null {
+  let box: Bbox | null = null;
+  const add = (lon: number, lat: number) => {
+    box = box ? union(box, [lon, lat, lon, lat]) : [lon, lat, lon, lat];
+  };
+  for (const point of points) add(point.lon, point.lat);
+  for (const area of areas) if (area) visit(area.coordinates, add);
+  return box;
+}
+
 /** The box around an area polygon, or around the point when there is none. */
 export function originBounds(
   origin: { lat: number; lon: number },

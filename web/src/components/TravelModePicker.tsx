@@ -73,6 +73,8 @@ export function TravelModePicker({ mode, minutes, onChange, name, disabled }: Tr
   const plain = name === "Travel time";
   const modeLabel = plain ? "Travel mode" : `Travel mode for ${name}`;
   const minutesLabel = plain ? "Minutes" : `Minutes for ${name}`;
+  const fewerLabel = name === "Travel time" ? "Fewer minutes" : `Fewer minutes for ${name}`;
+  const moreLabel = name === "Travel time" ? "More minutes" : `More minutes for ${name}`;
 
   return (
     <div className={styles.picker}>
@@ -96,7 +98,7 @@ export function TravelModePicker({ mode, minutes, onChange, name, disabled }: Tr
         <button
           type="button"
           className={styles.step}
-          aria-label="Fewer minutes"
+          aria-label={fewerLabel}
           disabled={disabled || step <= 0}
           onClick={() => onChange(mode, current.minutes[Math.max(step - 1, 0)])}
         >
@@ -108,7 +110,7 @@ export function TravelModePicker({ mode, minutes, onChange, name, disabled }: Tr
         <button
           type="button"
           className={styles.step}
-          aria-label="More minutes"
+          aria-label={moreLabel}
           disabled={disabled || step >= current.minutes.length - 1}
           onClick={() =>
             onChange(mode, current.minutes[Math.min(step + 1, current.minutes.length - 1)])

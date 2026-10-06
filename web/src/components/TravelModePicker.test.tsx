@@ -11,7 +11,7 @@ describe("TravelModePicker", () => {
     expect(screen.getByRole("group", { name: "Minutes for Point 1" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Train" }));
     expect(onChange).toHaveBeenCalledWith("transit", 20);
-    fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
+    fireEvent.click(screen.getByRole("button", { name: "More minutes for Point 1" }));
     expect(onChange).toHaveBeenLastCalledWith("drive", 20);
   });
 

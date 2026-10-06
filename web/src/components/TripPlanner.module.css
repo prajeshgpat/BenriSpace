@@ -32,20 +32,32 @@
   }
 }
 
+/* A small grey pill, as wide as its text; the same grey as the address box's placeholder. */
 .add {
-  min-height: 2.75rem;
-  padding: 0 1rem;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
   background: var(--surface);
-  color: var(--accent);
+  color: var(--text-subtle);
   font: inherit;
-  font-weight: 600;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .add:hover {
   background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+
+.add:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .row {
@@ -90,22 +102,34 @@
   background: var(--tri-2);
 }
 
+/* A round chip that sits on the card's top border and breaks the line, like the legend. */
 .remove {
   position: absolute;
-  top: -0.875rem;
-  right: 0.5rem;
-  width: 2.5rem;
-  height: 2.5rem;
-  border: 0;
-  background: none;
+  top: -1rem;
+  right: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--text-secondary);
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   line-height: 1;
   cursor: pointer;
 }
 
 .remove:hover {
   color: var(--text);
+  background: var(--surface-sunken);
+}
+
+.remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .error {

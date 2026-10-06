@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef } from "react";
 
 import {
   anchorName,
@@ -8,9 +8,9 @@ import {
   type TripRow,
 } from "@/hooks/useTripPlanner";
 import type { ApiClient } from "@/lib/api/client";
-import type { ReachMode } from "@/lib/api/types";
 
 import { AddressSearch } from "./AddressSearch";
+import { TravelModePicker } from "./TravelModePicker";
 import styles from "./TripPlanner.module.css";
 
 export const NO_OVERLAP_MESSAGE =
@@ -25,129 +25,6 @@ export interface TripPlannerProps {
   onNeedSpace?: (kind: "full" | "half") => void;
 }
 
-/** The temporary mode/minutes interface; swap for `TravelModePicker` (P1) later. */
-interface TravelValue {
-  mode: ReachMode;
-  minutes: number;
-}
-
-interface TravelControlProps extends TravelValue {
-  name: string;
-  onChange: (value: TravelValue) => void;
-}
-
-function everyFive(max: number): readonly number[] {
-  return Array.from({ length: max / 5 }, (_, i) => (i + 1) * 5);
-}
-
-const MODES: ReadonlyArray<{
-  mode: ReachMode;
-  label: string;
-  minutes: readonly number[];
-  initial: number;
-}> = [
-  { mode: "walk", label: "Walk", minutes: everyFive(45), initial: 10 },
-  { mode: "transit", label: "Train", minutes: everyFive(45), initial: 20 },
-  { mode: "drive", label: "Drive", minutes: everyFive(60), initial: 15 },
-];
-
-function svg(children: ReactNode) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={18}
-      height={18}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {children}
-    </svg>
-  );
-}
-
-const MODE_ICONS: Record<ReachMode, ReactNode> = {
-  // A walking person.
-  walk: svg(
-    <>
-      <circle cx="13" cy="4" r="1.5" />
-      <path d="M13 7.5 11 12l3 3 1 6" />
-      <path d="m11 12-2 3-3 1" />
-      <path d="m10 9-3 2" />
-      <path d="m13 8 3 2h2" />
-      <path d="m11 12-1 9" />
-    </>,
-  ),
-  transit: svg(
-    <>
-      <rect x="5" y="3" width="14" height="14" rx="3" />
-      <path d="M5 11h14" />
-      <path d="m8 21 2-4M16 21l-2-4" />
-      <path d="M9 14h.01M15 14h.01" />
-    </>,
-  ),
-  drive: svg(
-    <>
-      <path d="M5 16V11l2-5h10l2 5v5" />
-      <path d="M3 16h18v3H3z" />
-      <path d="M7 13h.01M17 13h.01" />
-    </>,
-  ),
-};
-
-function TravelControl({ name, mode, minutes, onChange }: TravelControlProps) {
-  const current = MODES.find((m) => m.mode === mode) ?? MODES[2];
-  const step = current.minutes.indexOf(minutes);
-  const move = (delta: number) => {
-    const next = current.minutes[Math.min(Math.max(step + delta, 0), current.minutes.length - 1)];
-    onChange({ mode, minutes: next });
-  };
-  return (
-    <div className={styles.travel}>
-      <div className={styles.modes} role="group" aria-label={`Travel mode for ${name}`}>
-        {MODES.map((m) => (
-          <button
-            key={m.mode}
-            type="button"
-            className={styles.mode}
-            aria-label={m.label}
-            aria-pressed={m.mode === mode}
-            onClick={() =>
-              m.mode !== mode && onChange({ mode: m.mode, minutes: m.initial })
-            }
-          >
-            {MODE_ICONS[m.mode]}
-          </button>
-        ))}
-      </div>
-      <div className={styles.stepper} role="group" aria-label={`Minutes for ${name}`}>
-        <button
-          type="button"
-          className={styles.step}
-          aria-label={`Fewer minutes for ${name}`}
-          disabled={step <= 0}
-          onClick={() => move(-1)}
-        >
-          &minus;
-        </button>
-        <span className={styles.minutes}>{minutes} min</span>
-        <button
-          type="button"
-          className={styles.step}
-          aria-label={`More minutes for ${name}`}
-          disabled={step >= current.minutes.length - 1}
-          onClick={() => move(1)}
-        >
-          +
-        </button>
-      </div>
-    </div>
-  );
-}
 
 const BADGES = ["★", "1", "2"];
 
@@ -203,11 +80,11 @@ function RowFields({ row, index, planner, client, setInput, onRemove }: RowField
           {row.error}
         </p>
       ) : null}
-      <TravelControl
+      <TravelModePicker
         name={name}
         mode={row.mode}
         minutes={row.minutes}
-        onChange={(travel) => planner.setTravel(row.id, travel)}
+        onChange={(mode, minutes) => planner.setTravel(row.id, { mode, minutes })}
       />
     </fieldset>
   );
@@ -232,6 +109,7 @@ function areasFound(count: number): string {
  * `useTripPlanner`; the Workspace owns the hook so the map and URL can follow.
  */
 export function TripPlanner({ planner, client, onSelectResult, onNeedSpace }: TripPlannerProps) {
+  const rootId = useId();
   const { rows, status, data } = planner;
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const addButton = useRef<HTMLButtonElement>(null);
@@ -337,8 +215,10 @@ export function TripPlanner({ planner, client, onSelectResult, onNeedSpace }: Tr
 
       {status === "ready" && data ? (
         <div className={styles.results}>
-          <h3 className={styles.heading}>Best areas in the overlap</h3>
-          <ol className={styles.list}>
+          <h3 id={`${rootId}-results`} className={styles.heading}>
+            Best areas in the overlap
+          </h3>
+          <ol className={styles.list} aria-labelledby={`${rootId}-results`}>
             {data.results.map((result) => (
               <li key={`${result.lat},${result.lon}`}>
                 <button

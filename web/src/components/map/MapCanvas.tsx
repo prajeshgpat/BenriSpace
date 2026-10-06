@@ -31,6 +31,9 @@ import { addWaterMask, isOverWater } from "@/lib/map/waterMask";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
+import type { TripOverlay } from "@/hooks/useTripPlanner";
+
+import { useTriangulationLayers } from "./useTriangulationLayers";
 import { usePmtilesCells } from "./usePmtilesCells";
 
 // See scripts/copy-maplibre-worker.mjs for why the worker is served by us.
@@ -125,6 +128,8 @@ interface MapCanvasProps {
   previewAreaGeometry?: AreaGeometry | null;
   /** The area reachable from the selected place (isochrone): a magenta outline on top. */
   reachGeometry?: AreaGeometry | null;
+  /** Travel-time areas, their overlap and numbered pins for "+ Point of interest"; null draws nothing. */
+  triangulation?: TripOverlay | null;
   previewPin?: PinSpec | null;
   /**
    * Local scores for the view, to colour the PMTiles grid (only used when
@@ -376,6 +381,7 @@ export function MapCanvas({
   areaGeometry = null,
   previewAreaGeometry = null,
   reachGeometry = null,
+  triangulation = null,
   previewPin = null,
   tileCells = null,
   onTilesFailed,
@@ -691,6 +697,8 @@ export function MapCanvas({
       else delete button.dataset.active;
     });
   }, [activeMarkerId, markers, ready]);
+
+  useTriangulationLayers({ mapRef, ready, theme, overlay: triangulation });
 
   usePmtilesCells({
     mapRef,
