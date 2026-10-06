@@ -147,7 +147,7 @@ aliases.
   they are the area-weighted average of the overlapping cells' latest scores, so
   small areas inherit similar scores (`precision=point`, A8, scores sample points
   inside the polygon instead).
-- Scores are relative within a metro area, so no place scores 100 on everything
+- Scores (v2.1 and earlier) are relative within a metro area; v2.2 is absolute (A10). Either way no place scores 100 on everything
   (factors pull in opposite directions: dense places have the best transit and
   cafes and also the most traffic and siren noise).
 - **Known weakness (fixed in v3).** Min-max normalization is skewed by outlier
