@@ -27,6 +27,7 @@ import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
 import type { TileCells } from "@/lib/map/tileScores";
 import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
+import { addWaterMask, isOverWater } from "@/lib/map/waterMask";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
@@ -487,6 +488,8 @@ export function MapCanvas({
     // arrives without our layers, so they are put back on top of it.
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
+      // Basemap water redrawn over the cells, under the area/reach/preview layers.
+      addWaterMask(map, overlayAnchorId(map.getStyle().layers, styleTheme.current));
       addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
       addReachLayers(map, styleTheme.current, Boolean(latest.current.reachGeometry));
       (map.getSource(REACH_SOURCE_ID) as GeoJSONSource).setData(
@@ -516,7 +519,7 @@ export function MapCanvas({
     map.on("load", () => {
       map.on("click", FILL_LAYER, (event) => {
         const feature = event.features?.[0];
-        if (!feature) return;
+        if (!feature || isOverWater(map, event.point)) return;
         callbacks.current.onCellClick({
           geohash: String(feature.properties.geohash),
           score: Number(feature.properties.score),
