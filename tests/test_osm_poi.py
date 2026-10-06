@@ -478,3 +478,18 @@ def test_extract_places():
     assert places[0].brand is None
     assert (places[1].latitude, places[1].longitude) == (40.2, -73.2)
     assert places[1].brand == "Whole Foods"
+
+
+def test_categorize_fitness_studios_and_ymcas_as_gym():
+    assert categorize_poi({"leisure": "fitness_centre"}) == "gym"
+    assert categorize_poi({"sport": "fitness", "name": "The Edge Fitness Clubs"}) == "gym"
+    assert categorize_poi({"sport": "pilates"}) == "gym"
+    assert categorize_poi({"leisure": "sports_centre", "name": "Wilton Family YMCA"}) == "gym"
+    assert categorize_poi({"leisure": "sports_centre", "name": "Core Club and Gym"}) == "gym"
+
+
+def test_categorize_outdoor_equipment_and_gymnastics_are_not_gyms():
+    assert categorize_poi({"leisure": "fitness_station", "sport": "fitness"}) is None
+    assert categorize_poi({"leisure": "pitch", "sport": "fitness"}) is None
+    assert categorize_poi({"leisure": "sports_centre", "name": "Next Dimension Gymnastics"}) is None
+    assert categorize_poi({"leisure": "sports_centre", "name": "Ice Arena"}) is None

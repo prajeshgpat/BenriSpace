@@ -19,7 +19,8 @@ MAX_DM = 32000  # values above this are stored as UNREACHABLE
 MODES = ("walk", "drive")
 CAR_DENSITY_PER_SQ_MI = 10_000  # below this a cell's travel mode is car (SCORING.md)
 
-WALK_M_PER_MIN = 80.467  # 3 mph
+WALK_MPH = 3.0
+WALK_M_PER_MIN = 80.467  # 3 mph; metric alias kept for the API readers
 CIRCUITY = 1.3
 
 # Per-mode search caps (minutes) used by the precompute and the API.

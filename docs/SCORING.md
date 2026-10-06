@@ -23,8 +23,9 @@ Stored scores are whole points: sub-scores are `smallint` (0-100) and the compos
 | Version | `weights_version` | Factors | State |
 | --- | --- | --- | --- |
 | v1 | `v1-handtuned` | 11 | retired; rows deleted from the database |
-| v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | **live in production** (cutover 2026-10-03, 64,320 rows) |
-| v2.1 | `v2.1-handtuned` | 13, all user-facing pills | built; migration 0009 applied; full ingestion in progress; cutover pending owner approval |
+| v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | retired; rows deleted from the database |
+| v2.1 | `v2.1-handtuned` | 13, all user-facing pills | **live in production**; per-metro relative scales |
+| v2.2 | `v2.2-density` | 13, same pills and default weights | built; scored per area from routed travel times on one absolute scale (A10); cutover pending |
 
 Rollback is a Terraform variable (`scoring_weights_version`). The API reports the
 version that produced a response in `weightsVersion`. A new version gets new rows
@@ -202,6 +203,38 @@ drive free-flow x 0.8; amenity search caps walk 30 min / drive 45 min (beyond = 
 which a time curve should score as zero); train times are weekday AM peak and include the wait.
 
 ---
+
+## A10. v2.2 (`v2.2-density`): routed density per area
+
+Why: v2.1 scales every factor within its sub-region and mostly by distance, so a hamlet
+with one bar 1,500 ft away scored 100 on bars (Lloyd, NY: the best in the Hudson Valley
+cohort), and 23-36 % of all cells scored 90+ on each amenity. v2.2 scores each
+road-bounded area once, on one absolute scale for the whole region, from routed travel
+times. Owner decisions 2026-10-05.
+
+| Factor | Score |
+| --- | --- |
+| Restaurants, cafes, bars, shopping | 100 % density: places per sq mi over the area plus its walkable neighbours (weight 1 within 5 min, linear to 0 at 20), on a log scale (full marks at 60 restaurants, 20 cafes, 15 bars or 60 shops per sq mi). Drive-mode areas also score for the best dense cluster by car: full within 5 min, linear to 0 at 15, worth at most 80 %. |
+| Groceries, gym, gas & convenience | 70 % proximity (minutes to the nearest; walk curve everywhere, a drive curve worth at most 80 % in drive-mode areas), 30 % density |
+| Transit | minutes to a train station (walk 10 -> 30 min; drive-mode areas also park-and-ride by car 5 -> 20 min at 80 %); a bus stop at most half. No density. |
+| Schools | 20 % proximity (routed) + 80 % district rating (statewide percentile) |
+| Airport | drive minutes to JFK / LGA / EWR: full within 20, 0 at 75 |
+| Traffic, noise corridor, recreation | the v2.1 signals, scaled once over the whole region (2nd-98th percentile) |
+
+Densities, tallies and minutes are internal inputs and are never shown to users; only the
+0-100 factor scores leave `scoring/density.py`. Units are miles, sq mi, mph and minutes.
+
+Pipeline (offline, about 20 minutes on a laptop; nothing heavy runs in CI or the API):
+
+    python -m ingestion.routing.pbf                       # Geofabrik NY/NJ/CT -> walk + drive networks
+    python -m ingestion.routing.reach --sync-places       # production places -> build/reach/reach.npz
+    python -m scoring.area_run [--preview DIR] [--write]  # scores, area file, DB rows
+
+`--write` stores one `area_scores` row per area (migration 0023) and gives every grid cell
+its area's scores in `scores`, so the map, hover, card, score file and `/v1/score` agree.
+`GET /v1/area` serves the stored row for a density version. The weekly job does not
+recompute v2.2 (`scoring.run` skips it); re-run the pipeline after a data refresh.
+Calibration against reference places: `scripts/calibrate_density.py`.
 
 # Part B: v3 framework (planned, `v3-timeaccess`)
 

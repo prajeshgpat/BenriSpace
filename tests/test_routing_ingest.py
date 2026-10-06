@@ -175,3 +175,49 @@ def test_neighbor_minutes_edges_are_symmetric_on_a_two_way_line():
     east, west = edges[0, 2], edges[0, 6]
     assert east > 0 and abs(int(east) - int(west)) <= 2
     assert edges[0, 0] == -1 or edges[0, 0] > 0  # north cell centre is off the line: allowed
+
+
+def test_pbf_tag_rules_match_the_overpass_filters():
+    from ingestion.routing.pbf import drive_ok, walk_ok
+
+    assert walk_ok({"highway": "footway"})
+    assert walk_ok({"highway": "residential"})
+    assert not walk_ok({"highway": "motorway_link"})
+    assert not walk_ok({"highway": "steps"})
+    assert not walk_ok({"highway": "residential", "access": "private"})
+    assert not walk_ok({"highway": "pedestrian", "area": "yes"})
+    assert drive_ok({"highway": "residential"})
+    assert drive_ok({"highway": "service"})
+    assert not drive_ok({"highway": "service", "service": "driveway"})
+    assert not drive_ok({"highway": "footway"})
+    assert not drive_ok({"highway": "primary", "motor_vehicle": "no"})
+
+
+def test_pbf_builder_costs_minutes_from_miles_and_dedupes():
+    from ingestion.routing.pbf import _Builder
+
+    b = _Builder()
+    # 0.01 deg of latitude = 0.69172 mi; at 3 mph that is 13.83 minutes.
+    b.add_way([1, 2], [-74.0, -74.0], [40.70, 40.71], 3.0, 0)
+    b.add_way([1, 2], [-74.0, -74.0], [40.70, 40.71], 30.0, 1)  # same pair, faster, one way
+    data = b.finish()
+    assert list(data.node_ids) == [1, 2]
+    pairs = dict(zip(zip(data.edge_u.tolist(), data.edge_v.tolist()), data.minutes.tolist()))
+    assert pairs[(1, 2)] == pytest.approx(1.383, abs=0.01)  # the faster duplicate wins
+    assert pairs[(2, 1)] == pytest.approx(13.83, abs=0.05)
+
+
+def test_keep_connected_drops_small_fragments():
+    from ingestion.routing.pbf import keep_connected
+
+    data = NetworkData(
+        node_ids=np.array([1, 2, 3, 10, 11], dtype=np.int64),
+        x=np.zeros(5),
+        y=np.zeros(5),
+        edge_u=np.array([1, 2, 10], dtype=np.int64),
+        edge_v=np.array([2, 3, 11], dtype=np.int64),
+        minutes=np.ones(3, dtype=np.float32),
+    )
+    kept = keep_connected(data, min_nodes=3)
+    assert list(kept.node_ids) == [1, 2, 3]
+    assert list(kept.edge_u) == [1, 2]

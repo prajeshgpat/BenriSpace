@@ -36,11 +36,11 @@ multi-destination solver, not a lookup tool.
 
 | Area | State |
 | --- | --- |
-| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres (328 MB of 500 MB after deleting v1 and v2 scores) |
+| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres (286 MB of 500 MB after compaction, 2026-10-05) |
 | Scoring served | `v2.1-handtuned`, 13 factor pills, 64,320 rows; v1 and v2 rows deleted 2026-10-05 |
-| Areas | Production: 49,158 road-bounded areas capped at 0.8 sq mi. `scratch`: density-capped road-hierarchy areas (0.1-1 sq mi, 35,943 areas) in local `areas_slim`, cutover pending |
+| Areas | Production: 35,943 density-capped road-hierarchy areas (0.1-1 sq mi) in `areas_slim`, simplified outlines; full detail in the PMTiles on R2 |
 | Features live | score, area click, address search, Best areas, improve, similar areas, places, AI explanations, optimizer, Ask Benri chat, data page, feedback, map, mobile sheet, Home page |
-| On `scratch` (owner testing) | on-demand point scoring, inline Ask Benri with brand lookups, density-capped polygons, routing precompute + isochrones + real triangulate, storage compaction, browser-side best areas, PMTiles (flag), compare differences, chat streaming (infra not applied) |
+| Shipped 2026-10-05 (PR #26) | on-demand point scoring, R2 static delivery (score file, per-area scores, PMTiles), browser-side best areas and similar areas, inline Ask Benri with brand lookups, density-capped polygons, storage compaction, routing precompute + isochrones (sample data only), compare differences, walk-first travel card, CloudWatch alarms. Not applied: chat streaming infra, edge cache |
 | Planned | Full routing run, scoring v3, density-tiered grid for a 5 hr radius, auth and tiers |
 
 ## Done
@@ -96,18 +96,16 @@ multi-destination solver, not a lookup tool.
 
 ## Next
 
-1. **Ship `scratch`** after owner testing (PR to dev-benrispace, then main).
-2. **R2 static delivery (built on `scratch`, files live).** Score file, PMTiles and
-   per-area scores are on `tiles.benrispace.com` behind a versioned manifest; the web
-   reads them when `NEXT_PUBLIC_STATIC_URL` is set. Remaining: set the env var in
-   Amplify, copy simplified polygons to prod. See PLANNED.md Wave 2.
-3. **Full routing run.** Swap Overpass for a Geofabrik extract, run walk and drive
+1. **Ship v2.2 routed density scoring** (SCORING.md A10): migration 0023, ingestion run,
+   area scoring from production places, publish, switch. Then migration 0021 after a
+   successful weekly ingestion on the new code.
+2. **Full routing run.** Swap Overpass for a Geofabrik extract, run walk and drive
    tiles for the whole metro, and add a geohash5 graph for drive trips over 90 min.
-4. **Scoring v3 (`v3-timeaccess`).** Per-factor time curves reading `cell_travel`,
+3. **Scoring v3 (`v3-timeaccess`).** Per-factor time curves reading `cell_travel`,
    frontage-based noise, quality placeholders. See [SCORING.md](SCORING.md) Part B.
-5. **Density-tiered grid** (geohash6 where dense, geohash5 elsewhere) as the
+4. **Density-tiered grid** (geohash6 where dense, geohash5 elsewhere) as the
    foundation for a ~5 hour radius.
-6. **Natural-language search** as a first-class flow on top of the chat tools.
+5. **Natural-language search** as a first-class flow on top of the chat tools.
 
 ## Later
 

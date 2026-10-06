@@ -1,53 +1,102 @@
+"""v2.2 density scoring on hand-made reach data (no network, no database)."""
+
+import numpy as np
 import pytest
 
-from ingestion import density
+from ingestion.routing.reach import NEAR_CATEGORIES, TALLY_CATEGORIES
+from scoring import density
 
 
-def test_travel_mode_threshold():
-    assert density.travel_mode(None) is None
-    assert density.travel_mode(9999.9) == "drive"
-    assert density.travel_mode(10000) == "walk"
+def make_reach(tallies, sq_mi, mode, walk_pairs=(), drive_pairs=(), walk_near=None):
+    n = len(sq_mi)
+    tally = np.zeros((n, len(TALLY_CATEGORIES)), dtype=np.uint16)
+    for i, row in enumerate(tallies):
+        for cat, count in row.items():
+            tally[i, TALLY_CATEGORIES.index(cat)] = count
+
+    def pairs(items):
+        items = list(items)
+        return (
+            np.array([p[0] for p in items], dtype=np.int32),
+            np.array([p[1] for p in items], dtype=np.int32),
+            np.array([p[2] for p in items], dtype=np.float32),
+        )
+
+    ws, wd, wm = pairs(walk_pairs)
+    ds, dd, dm = pairs(drive_pairs)
+    near = np.full((n, len(NEAR_CATEGORIES)), np.nan, dtype=np.float32)
+    for (i, cat), minutes in (walk_near or {}).items():
+        near[i, NEAR_CATEGORIES.index(cat)] = minutes
+    return density.Reach(
+        area_id=np.arange(n),
+        area_sq_mi=np.asarray(sq_mi, dtype=np.float64),
+        mode=np.asarray(mode, dtype=np.uint8),
+        tally=tally,
+        tally_categories=TALLY_CATEGORIES,
+        near_categories=NEAR_CATEGORIES,
+        walk_src=ws, walk_dst=wd, walk_min=wm,
+        drive_src=ds, drive_dst=dd, drive_min=dm,
+        walk_near=near,
+        drive_near=np.full_like(near, np.nan),
+    )  # fmt: skip
 
 
-def test_block_group_density():
-    assert density.block_group_density(100, 0) is None
-    assert density.block_group_density(2589, density.SQ_M_PER_SQ_MI) == pytest.approx(2589)
-
-
-def test_cell_density_is_area_weighted_and_skips_undefined():
-    assert density.cell_density([(1.0, 100.0), (3.0, 200.0)]) == pytest.approx(175.0)
-    assert density.cell_density([(1.0, None), (2.0, 50.0), (0.0, 999.0)]) == 50.0
-    assert density.cell_density([]) is None
-
-
-def test_parse_pl_block_groups():
-    def geo(sumlev, rec, geoid, land):
-        parts = [""] * 96
-        parts[2], parts[7], parts[9], parts[84] = sumlev, rec, geoid, land
-        return "|".join(parts)
-
-    geo_text = "\n".join(
-        [geo("050", "0000002", "09001", "5"), geo("150", "0000010", "090010101011", "2589988")]
+def test_more_bars_per_sq_mi_scores_higher_whatever_the_polygon_size():
+    r = make_reach(
+        [{"bar": 5}, {"bar": 2}, {"bar": 1}],
+        sq_mi=[1.0, 1.0, 0.1],  # the third is a tiny polygon: 10 bars per sq mi on its own
+        mode=[1, 1, 0],
     )
-    data_text = "PLST|CT|000|01|0000010|1234|9\nPLST|CT|000|01|0000002|99|9"
-    assert density.parse_pl_block_groups(geo_text, data_text) == {"090010101011": (1234, 2589988.0)}
+    bar = density.score(r)["bar"]
+    assert bar[0] > bar[1]
+    assert bar[2] > bar[0]  # density, not raw count
 
 
-def test_densities_for_cells_weights_by_intersection():
-    pytest.importorskip("shapely")
-    from shapely.geometry import box
+def test_neighbours_count_less_the_further_they_are():
+    near = make_reach(
+        [{}, {"restaurant": 20}], sq_mi=[0.5, 0.5], mode=[0, 0], walk_pairs=[(0, 1, 4.0)]
+    )
+    far = make_reach(
+        [{}, {"restaurant": 20}], sq_mi=[0.5, 0.5], mode=[0, 0], walk_pairs=[(0, 1, 15.0)]
+    )
+    out_of_reach = make_reach(
+        [{}, {"restaurant": 20}], sq_mi=[0.5, 0.5], mode=[0, 0], walk_pairs=[(0, 1, 22.0)]
+    )
+    a, b, c = (density.score(x)["restaurant"][0] for x in (near, far, out_of_reach))
+    assert a > b > c == 0
 
-    polys = [box(0, 0, 1, 1), box(1, 0, 2, 1)]
-    rects = [(0.5, 0.0, 1.5, 1.0), (0.1, 0.1, 0.2, 0.2), (5, 5, 6, 6)]
-    out = density.densities_for_cells(rects, polys, [100.0, 300.0])
-    assert out[0] == pytest.approx(200.0)
-    assert out[1] == pytest.approx(100.0)
-    assert out[2] is None
+
+def test_a_suburb_scores_for_a_dense_cluster_a_short_drive_away():
+    def suburb(minutes):
+        # Area 0: a suburb with no restaurants; area 1: a dense cluster `minutes` away by car.
+        return make_reach(
+            [{}, {"restaurant": 30}], [0.6, 0.3], [1, 0], drive_pairs=[(0, 1, minutes)]
+        )
+
+    cluster = density.score(suburb(4.0))["restaurant"][1]
+    near, mid, far = (density.score(suburb(m))["restaurant"][0] for m in (4.0, 10.0, 16.0))
+    assert near == pytest.approx(density.DRIVE_CREDIT * cluster)  # full credit within 5 min
+    assert near > mid > far == 0
+    walkable = make_reach([{}, {"restaurant": 30}], [0.6, 0.3], [0, 0])
+    assert density.score(walkable)["restaurant"][0] == 0  # walk-mode areas get no drive credit
 
 
-def test_geohash_rect_contains_center():
-    import pygeohash as pgh
+def test_transit_values_a_train_station_over_a_bus_stop():
+    r = make_reach(
+        [{}, {}],
+        [0.5, 0.5],
+        [0, 0],
+        walk_near={(0, "rail"): 8.0, (1, "bus"): 2.0},
+    )
+    transit = density.score(r)["transit"]
+    assert transit[0] == pytest.approx(100.0)
+    assert transit[1] == pytest.approx(100.0 * density.BUS_CREDIT)
 
-    lat, lon = pgh.decode("dr5ru7")
-    min_lon, min_lat, max_lon, max_lat = density.geohash_rect("dr5ru7")
-    assert min_lon < lon < max_lon and min_lat < lat < max_lat
+
+def test_curve_and_scale_shapes():
+    curve = density.Curve(5.0, 20.0)
+    assert list(curve(np.array([0.0, 5.0, 12.5, 20.0, np.nan]))) == [1.0, 1.0, 0.5, 0.0, 0.0]
+    scale = density.DensityScale(full=15.0, soft=1.5)
+    low, mid, high = scale(np.array([2.0, 5.0, 40.0]))
+    assert 0 < low < mid < high == 100.0
+    assert (mid - low) > (scale(np.array([28.0]))[0] - scale(np.array([25.0]))[0])
