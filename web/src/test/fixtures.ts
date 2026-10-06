@@ -107,6 +107,7 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getImprove: unexpected("getImprove"),
     getSimilar: unexpected("getSimilar"),
     getReach: unexpected("getReach"),
+    triangulate: unexpected("triangulate"),
     suggestAddresses: unexpected("suggestAddresses"),
     reverseGeocode: unexpected("reverseGeocode"),
     getMapCells: unexpected("getMapCells"),

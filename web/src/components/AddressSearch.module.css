@@ -33,8 +33,36 @@
   font-size: 1rem;
 }
 
-.input[data-adorned] {
+.input[data-adorned="1"] {
   padding-right: 3rem;
+}
+
+.input[data-adorned="2"] {
+  padding-right: 5.25rem;
+}
+
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.clear:hover {
+  color: var(--text);
+  background: var(--surface-sunken);
+}
+
+.clear:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 .adornment {
@@ -139,4 +167,53 @@
   .field {
     flex: 1;
   }
+}
+
+/* Compact: one small row, no submit button, a clear button inside the field. */
+.compact .row {
+  flex-direction: row;
+}
+
+.compact .field {
+  flex: 1;
+}
+
+.compact .input {
+  height: 2.5rem;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-md);
+}
+
+.compact .input[data-adorned] {
+  padding-right: 2.5rem;
+}
+
+/* Pill: a very small, fully rounded box; the parent puts its own button on the right. */
+.pill .field {
+  width: 100%;
+  min-width: 0;
+}
+
+.pill .input {
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+}
+
+.pill .input[data-adorned] {
+  padding-right: 1.875rem;
+}
+
+.pill .adornment {
+  right: 0.25rem;
+}
+
+/* Wider than the box so addresses stay readable; the parent can shift it left. */
+.pill .listbox {
+  inset: calc(100% + 0.25rem) auto auto var(--list-left, 0);
+  width: max-content;
+  min-width: 16rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+  font-size: 0.875rem;
 }

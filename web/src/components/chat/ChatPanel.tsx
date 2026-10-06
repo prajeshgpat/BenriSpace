@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -14,17 +15,12 @@ import { isApiError } from "@/lib/api/errors";
 import type { ChatContext, ChatResult } from "@/lib/api/types";
 
 import { FeedbackThumbs } from "../Feedback";
+import { starterQuestions } from "./starterQuestions";
 import styles from "./ChatPanel.module.css";
 
 export const CHAT_INPUT_LIMIT = 500;
 export const CHAT_STORAGE_KEY = "benrispace.chat.v1";
 const MAX_STORED_MESSAGES = 40;
-
-export const STARTER_QUESTIONS = [
-  "Is it good for groceries and transit?",
-  "Find a quieter area near here",
-  "Find a neighborhood near my work, a Trader Joe's and a Planet Fitness",
-] as const;
 
 export interface ChatMessageView {
   id: string;
@@ -306,9 +302,16 @@ export function ChatPanel({
   }
 
   const empty = hydrated && !messages.some((m) => m.role !== "note");
+  const hasPlace = Boolean(context?.address) || context?.latitude !== undefined;
+  const starters = useMemo(
+    () => starterQuestions(context?.factors, hasPlace),
+    [context?.factors, hasPlace],
+  );
   const nearLimit = input.length >= CHAT_INPUT_LIMIT - 100;
 
   return (
+    <div className={styles.enter}>
+      <div className={styles.enterInner}>
     <section className={styles.chat} aria-label="Ask Benri">
       <header className={styles.header}>
         <h2 className={styles.title}>Ask Benri</h2>
@@ -352,10 +355,10 @@ export function ChatPanel({
             <p className={styles.introText}>
               Ask about neighborhoods in the New York metro. I only use
               BenriSpace data, so I can compare scores, find places near an
-              address and weigh trips to work, stores and gyms.
+              address and weigh trips to work, cafes, gyms, etc.
             </p>
             <ul className={styles.chips} aria-label="Suggested questions">
-              {STARTER_QUESTIONS.map((question) => (
+              {starters.map((question) => (
                 <li key={question}>
                   <button
                     type="button"
@@ -496,5 +499,7 @@ export function ChatPanel({
         </div>
       </form>
     </section>
+      </div>
+    </div>
   );
 }

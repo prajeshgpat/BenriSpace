@@ -10,7 +10,9 @@ import { APP_PATH } from "@/lib/site";
 
 import {
   createSelection,
+  DEFAULT_FACTOR_KEYS,
   isAllSelected,
+  isDefaultSelection,
   type FactorSelection,
   type ImportanceOverrides,
 } from "./selection";
@@ -24,7 +26,19 @@ export interface ExplorerUrlState {
   center: LatLon | null;
   zoom: number | null;
   selection: FactorSelection;
+  /** Extra places for triangulation (`pt=lat,lon`, repeated). */
+  points: UrlPoint[];
 }
+
+/** A point of interest in the URL. Its label is looked up again on load. */
+export interface UrlPoint {
+  lat: number;
+  lon: number;
+}
+
+/** The planner holds two points of interest besides the searched place. */
+export const MAX_URL_POINTS = 2;
+const POINT_PARAM = "pt";
 
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 19;
@@ -63,6 +77,7 @@ function parseZoom(raw: string | null): number | null {
 function parseFactors(raw: string | null): FactorKey[] | null {
   if (raw === null) return null;
   if (raw === "none") return [];
+  if (raw === "all") return [...FACTOR_KEYS];
   const keys = [
     ...new Set(raw.split(",").flatMap((key) => canonicalFactorKey(key) ?? [])),
   ];
@@ -81,6 +96,20 @@ function parseImportance(raw: string | null): ImportanceOverrides {
   return overrides;
 }
 
+/** `lat,lon`; the older `lat,lon,mode,minutes` form is accepted and the rest ignored. */
+function parsePoint(raw: string): UrlPoint | null {
+  const [lat, lon, ...rest] = raw.split(",");
+  if (rest.length !== 0 && rest.length !== 2) return null;
+  return parseCenter(`${lat},${lon}`);
+}
+
+function parsePoints(params: URLSearchParams): UrlPoint[] {
+  return params
+    .getAll(POINT_PARAM)
+    .flatMap((raw) => parsePoint(raw) ?? [])
+    .slice(0, MAX_URL_POINTS);
+}
+
 /** Unknown or malformed values fall back to defaults instead of erroring. */
 export function parseExplorerParams(
   params: URLSearchParams,
@@ -92,9 +121,10 @@ export function parseExplorerParams(
     center: parseCenter(params.get("center")),
     zoom: parseZoom(params.get("z")),
     selection: createSelection(
-      parseFactors(params.get("factors")) ?? FACTOR_KEYS,
+      parseFactors(params.get("factors")) ?? DEFAULT_FACTOR_KEYS,
       parseImportance(params.get("importance")),
     ),
+    points: parsePoints(params),
   };
 }
 
@@ -120,6 +150,7 @@ export interface ExplorerUrlInput {
   /** Left out until the map has something worth restoring. */
   view: MapView | null;
   selection: FactorSelection;
+  points?: readonly UrlPoint[];
 }
 
 function formatCentre({ lat, lon }: LatLon): string {
@@ -131,6 +162,7 @@ export function serializeExplorerParams({
   target,
   view,
   selection,
+  points = [],
 }: ExplorerUrlInput): string {
   const params = new URLSearchParams();
   if (target?.kind === "address") {
@@ -146,14 +178,23 @@ export function serializeExplorerParams({
     if (!atTarget) params.set("center", centre);
     params.set("z", String(Math.round(view.zoom * 100) / 100));
   }
+  // The app's default set is left out of links; everything else is spelled out.
   if (selection.factors.length === 0) {
     params.set("factors", "none");
-  } else if (!isAllSelected(selection)) {
+  } else if (isAllSelected(selection)) {
+    params.set("factors", "all");
+  } else if (!isDefaultSelection(selection)) {
     params.set("factors", selection.factors.join(","));
   }
   const importance = Object.entries(selection.importance);
   if (importance.length > 0) {
     params.set("importance", importance.map(([k, v]) => `${k}:${v}`).join(","));
+  }
+  for (const point of points.slice(0, MAX_URL_POINTS)) {
+    params.append(
+      POINT_PARAM,
+      `${point.lat.toFixed(5)},${point.lon.toFixed(5)}`,
+    );
   }
   return params.toString();
 }

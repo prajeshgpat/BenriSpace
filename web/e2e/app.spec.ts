@@ -18,9 +18,9 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await page.goto("/app");
   await page.getByRole("combobox").first().fill("350 5th");
   await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
-  // The card recomputes the overall score for the selected factors (all of
-  // them here) from the mock sub-scores, so not the API's compositeScore of 77.
-  await expect(page.getByTestId("composite-score")).toHaveText("63");
+  // The card recomputes the overall score for the selected factors (the seven
+  // switched on by default) from the mock sub-scores, not the API's compositeScore of 77.
+  await expect(page.getByTestId("composite-score")).toHaveText("54");
   await expect(page.getByRole("heading", { name: "Midtown, Manhattan" })).toBeVisible();
 
   await page
@@ -32,6 +32,37 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await expect(page.getByRole("table")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("points of interest: add two, see the overlap list, remove them", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/app");
+  await page.getByRole("combobox").first().fill("350 5th");
+  await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
+  await expect(page.getByTestId("composite-score")).toBeVisible();
+
+  const add = page.getByRole("button", { name: "Point of interest", exact: true });
+  await add.click();
+  const first = page.getByRole("combobox", { name: "Point of interest 1 address" });
+  await expect(first).toBeFocused();
+  await first.fill("grand central");
+  await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
+
+  await expect(page.getByRole("heading", { name: "Best areas in the overlap" })).toBeVisible();
+  await expect(
+    page.getByRole("list", { name: "Best areas in the overlap" }).getByRole("button"),
+  ).toHaveCount(2);
+
+  // Two points of interest is the most: the pill goes away after the second box opens.
+  await add.click();
+  await expect(page.getByRole("combobox", { name: "Point of interest 2 address" })).toBeFocused();
+  await expect(add).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Remove point of interest 2" }).click();
+  await expect(add).toBeVisible();
+  await page.getByRole("button", { name: "Remove point of interest 1" }).click();
+  await expect(page.getByRole("combobox", { name: /Point of interest/ })).toHaveCount(0);
+  await expect(add).toBeVisible();
 });
 
 test("toggling a factor recolours the map and re-ranks best areas", async ({ page }) => {

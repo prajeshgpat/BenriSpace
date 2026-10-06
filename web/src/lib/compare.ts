@@ -28,6 +28,28 @@ export function addPlace(
   return [...places, place];
 }
 
+/**
+ * The Compare toggle for a place found elsewhere (a best area): unpins it when
+ * pinned; otherwise pins it along with `current` (the place being looked at)
+ * when that is a different, unpinned place and both fit. Else only `place`.
+ */
+export function pinWithCurrent(
+  places: readonly ComparePlace[],
+  place: ComparePlace,
+  current?: ComparePlace | null,
+): ComparePlace[] {
+  if (places.some((p) => p.id === place.id)) return removePlace(places, place.id);
+  if (
+    current &&
+    current.id !== place.id &&
+    !places.some((p) => p.id === current.id) &&
+    places.length + 2 <= MAX_COMPARE
+  ) {
+    return addPlace(addPlace(places, current), place);
+  }
+  return addPlace(places, place);
+}
+
 export function removePlace(
   places: readonly ComparePlace[],
   id: string,

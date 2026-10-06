@@ -7,6 +7,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type Ref,
 } from "react";
 
 import { useAddressSuggestions } from "@/hooks/useAddressSuggestions";
@@ -42,6 +43,25 @@ interface AddressSearchProps {
   endAdornment?: ReactNode;
   /** Every keystroke, so a parent can use text that was never submitted. */
   onTextChange?: (text: string) => void;
+  /** Accessible name of the field; defaults to "Address". */
+  label?: string;
+  placeholder?: string;
+  /** Text of the submit button; defaults to "Get score". */
+  submitLabel?: string;
+  /**
+   * A smaller single-row field with no submit button (Enter still submits)
+   * and a clear button; autocomplete works as usual.
+   */
+  compact?: boolean;
+  /**
+   * A very small, fully rounded box with no clear button of its own; the parent
+   * supplies the right-hand button through `endAdornment`. Implies `compact`.
+   */
+  pill?: boolean;
+  /** Called after the clear button empties the field (compact only). */
+  onClear?: () => void;
+  /** Receives the input element, e.g. to move focus to it. */
+  inputRef?: Ref<HTMLInputElement>;
 }
 
 export function AddressSearch({
@@ -52,13 +72,26 @@ export function AddressSearch({
   suggestClient,
   endAdornment,
   onTextChange,
+  label = "Address",
+  placeholder = "Enter an address",
+  submitLabel = "Get score",
+  compact: compactProp = false,
+  pill = false,
+  onClear,
+  inputRef: externalInputRef,
 }: AddressSearchProps) {
+  const compact = compactProp || pill;
   const id = useId();
   const inputId = `${id}-input`;
   const errorId = `${id}-error`;
   const listboxId = `${id}-listbox`;
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const setInputRef = (element: HTMLInputElement | null) => {
+    inputRef.current = element;
+    if (typeof externalInputRef === "function") externalInputRef(element);
+    else if (externalInputRef) externalInputRef.current = element;
+  };
   const [value, setValue] = useState(initialValue);
   const [error, setError] = useState<string | null>(initialError);
 
@@ -95,6 +128,15 @@ export function AddressSearch({
     setError(null);
     reset();
     onSearch(result.value);
+  }
+
+  function clear() {
+    setValue("");
+    setError(null);
+    reset();
+    onTextChange?.("");
+    onClear?.();
+    inputRef.current?.focus();
   }
 
   function select(suggestion: Suggestion) {
@@ -139,20 +181,26 @@ export function AddressSearch({
 
   return (
     <form
-      className={styles.form}
-      role="search"
+      className={
+        pill
+          ? `${styles.form} ${styles.compact} ${styles.pill}`
+          : compact
+            ? `${styles.form} ${styles.compact}`
+            : styles.form
+      }
+      role={compact ? undefined : "search"}
       action={APP_PATH}
       method="get"
       noValidate
       onSubmit={handleSubmit}
     >
       <label className="sr-only" htmlFor={inputId}>
-        Address
+        {label}
       </label>
       <div className={styles.row}>
         <div className={styles.field}>
           <input
-            ref={inputRef}
+            ref={setInputRef}
             id={inputId}
             className={styles.input}
             type="text"
@@ -166,7 +214,7 @@ export function AddressSearch({
             }}
             onKeyDown={handleKeyDown}
             onBlur={autocomplete ? suggestions.dismiss : undefined}
-            placeholder="Enter an address"
+            placeholder={placeholder}
             maxLength={ADDRESS_MAX_LENGTH}
             autoComplete="off"
             autoCapitalize="words"
@@ -183,12 +231,44 @@ export function AddressSearch({
                     activeIndex >= 0 ? optionId(listboxId, activeIndex) : undefined,
                 }
               : {})}
-            data-adorned={endAdornment ? "true" : undefined}
+            data-adorned={
+              pill
+                ? endAdornment
+                  ? "1"
+                  : undefined
+                : endAdornment || value
+                  ? endAdornment && value
+                    ? "2"
+                    : "1"
+                  : undefined
+            }
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
-          {endAdornment ? (
-            <div className={styles.adornment}>{endAdornment}</div>
+          {endAdornment || (value && !pill) ? (
+            <div className={styles.adornment}>
+              {value && !pill ? (
+                <button
+                  type="button"
+                  className={styles.clear}
+                  aria-label={`Clear ${label.toLowerCase()}`}
+                  // Keep focus in the box: a mousedown blur would close the list first.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={clear}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path
+                      d="M6 6l12 12M18 6L6 18"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              ) : null}
+              {endAdornment}
+            </div>
           ) : null}
           {autocomplete ? (
             <ul
@@ -210,9 +290,11 @@ export function AddressSearch({
             </ul>
           ) : null}
         </div>
-        <button className={styles.button} type="submit">
-          Get score
-        </button>
+        {compact ? null : (
+          <button className={styles.button} type="submit">
+            {submitLabel}
+          </button>
+        )}
       </div>
       {autocomplete ? (
         <p className="sr-only" role="status">

@@ -14,6 +14,7 @@ import {
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
 import { Workspace } from "./Workspace";
+import { DEFAULT_FACTOR_KEYS } from "@/lib/map/selection";
 
 type CanvasProps = Parameters<typeof MapCanvasType>[0];
 
@@ -76,7 +77,11 @@ function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
     getMapTop: vi.fn(async () => ({
       factors: [], weights: {}, weightsVersion: "v1", results: [],
     })) as unknown as ApiClient["getMapTop"],
-    reverseGeocode: vi.fn(async ({ lat, lon }) => ({ label: null, latitude: lat, longitude: lon })),
+    reverseGeocode: vi.fn(async ({ lat, lon }) => ({
+      label: lat === 40.7492 ? "350 5th Avenue, New York, NY" : null,
+      latitude: lat,
+      longitude: lon,
+    })),
     getImprove: vi.fn(async () => { throw new Error("improve unavailable"); }),
     getSimilar: vi.fn(async () => { throw new Error("similar unavailable"); }),
   };
@@ -173,7 +178,23 @@ describe("Workspace: Ask Benri", () => {
     await user.click(screen.getByRole("button", { name: "Ask Benri" }));
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
     await screen.findByText("Darien looks best.");
-    expect(chat.mock.calls[0][1]).toEqual({ address: "10 Main St, Stamford" });
+    expect(chat.mock.calls[0][1]).toEqual({
+      address: "10 Main St, Stamford",
+      factors: [...DEFAULT_FACTOR_KEYS],
+    });
+  });
+
+  it("sends the street address, not the words Your location, after locating", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup("address=Your+location&lat=40.7492&lon=-73.985");
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).toMatchObject({
+      address: "350 5th Avenue, New York, NY",
+      latitude: 40.7492,
+      longitude: -73.985,
+    });
   });
 
   it("opens the chat on load for ?chat=1 and pre-fills ?ask= without scoring", async () => {
@@ -184,7 +205,10 @@ describe("Workspace: Ask Benri", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
     await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
     await screen.findByText("Darien looks best.");
-    expect(chat.mock.calls[0][1]).toEqual({ address: "12 Elm St" });
+    expect(chat.mock.calls[0][1]).toEqual({
+      address: "12 Elm St",
+      factors: [...DEFAULT_FACTOR_KEYS],
+    });
   });
 
   it("opens the chat on load for a bare ?chat=1", () => {

@@ -17,6 +17,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useCompare } from "@/hooks/useCompare";
 import { useLatest } from "@/hooks/useLatest";
+import { AskIcon } from "./AskIcon";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
@@ -32,7 +33,7 @@ import {
 } from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
-import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
+import type { ChatResult, MapTopResult, ReachMode, Suggestion } from "@/lib/api/types";
 import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
 import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
 import { provisionalArea } from "@/lib/static/provisional";
@@ -44,7 +45,12 @@ import {
 } from "@/lib/geolocation";
 import type { SheetSnap } from "@/lib/sheetSnap";
 import { needsReadableAddress } from "@/lib/reverseTarget";
-import { originBounds, previewBounds, type Preview } from "@/lib/map/preview";
+import {
+  originBounds,
+  pointsAndAreasBounds,
+  previewBounds,
+  type Preview,
+} from "@/lib/map/preview";
 import { placeId, type ComparePlace } from "@/lib/compare";
 import { areaTitle, describeMapStatus } from "@/lib/map/presentation";
 import { priorityQuery } from "@/lib/map/selection";
@@ -59,6 +65,8 @@ import { bandLabel, roundScore } from "@/lib/score/presentation";
 import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
+import { TripPlanner } from "./TripPlanner";
+import { useTripPlanner } from "@/hooks/useTripPlanner";
 import { BottomSheet } from "./BottomSheet";
 import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
@@ -238,11 +246,16 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // Every selection resolves the road-bounded area, like a map click.
   const target: ScoreTarget | null = urlTarget;
   // A clicked point is labelled with coordinates until its street address is looked up.
-  const readableAddress = useReverseGeocode(
-    needsReadableAddress(target) ? { lat: target.lat, lon: target.lon } : null,
+  // "Your location" keeps its label on screen, but its street address is looked up too so
+  // the chat gets a real place instead of the words "Your location".
+  const located = target?.kind === "coordinates" && target.label === YOUR_LOCATION_LABEL;
+  const reversed = useReverseGeocode(
+    needsReadableAddress(target) || located ? { lat: target.lat, lon: target.lon } : null,
     client,
   ).label;
+  const readableAddress = located ? null : reversed;
   const address = readableAddress ?? (target ? targetLabel(target) : null);
+  const chatAddress = (located ? reversed : null) ?? address;
   const placeKey = target ? targetKey(target) : null;
 
   const [selection, setSelection] = useState(initial.selection);
@@ -344,6 +357,77 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
   }, [lookup, selection.factors, weights]);
 
+  // "+ Point of interest": up to two extra places whose travel-time areas must overlap.
+  const tripPlace = useMemo(
+    () =>
+      state.status === "success"
+        ? {
+            label: chatAddress ?? state.address,
+            lat: state.score.latitude,
+            lon: state.score.longitude,
+          }
+        : null,
+    [state, chatAddress],
+  );
+  // The Travel time row in Factors: the searched place and the points of interest share it.
+  const [travel, setTravel] = useState<{ mode: ReachMode; minutes: number } | null>(null);
+  const planner = useTripPlanner(client, tripPlace, travel);
+  // A press on the map while a point-of-interest box is selected (cursor blinking) fills that
+  // box with the tapped place instead of scoring it. The press is noted at pointerdown, before
+  // the box loses focus; the click that follows consults it.
+  const armedPoi = useRef<string | null>(null);
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const active = document.activeElement;
+      const id = active instanceof HTMLElement ? (active.dataset.poiId ?? null) : null;
+      armedPoi.current = id && target?.closest(".maplibregl-map") ? id : null;
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+  const poiRows = planner.rows;
+  const setPoiPlace = planner.setPlaceFromMap;
+  const fillPoiFromMap = useCallback(
+    (point: { lat: number; lon: number }): boolean => {
+      const id = armedPoi.current;
+      armedPoi.current = null;
+      if (!id || !poiRows.some((row) => row.id === id)) return false;
+      setPoiPlace(id, point);
+      return true;
+    },
+    [setPoiPlace, poiRows],
+  );
+  // When an overlap (or the news that there is none) arrives, bring the places and their
+  // travel areas into view.
+  const overlapKey =
+    planner.data && planner.overlay.pins.length > 1
+      ? `${planner.status}:${planner.overlay.pins.length}:${planner.data.combined?.areaSqMi ?? "none"}`
+      : null;
+  useEffect(() => {
+    if (!overlapKey || !planner.data) return;
+    const box = pointsAndAreasBounds(planner.overlay.pins, [
+      planner.data.combined?.geometry,
+      ...planner.overlay.anchors.map((anchor) => anchor.geometry),
+    ]);
+    if (!box) return;
+    setFlyRequest({
+      lat: (box[1] + box[3]) / 2,
+      lon: (box[0] + box[2]) / 2,
+      nonce: Date.now(),
+      bounds: box,
+    });
+    // Only when a new overlap arrives, not on every planner render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlapKey]);
+  // Points in a shared link restore the planner once, on load.
+  const hydratedPoints = useRef(false);
+  useEffect(() => {
+    if (hydratedPoints.current) return;
+    hydratedPoints.current = true;
+    if (initial.points.length > 0) planner.hydrate(initial.points);
+  }, [initial.points, planner]);
+
   // A map click that landed in a known area shows that area's static scores
   // while `/area` loads; the API's answer replaces them.
   const [areaHint, setAreaHint] = useState<{ key: string; areaId: number } | null>(null);
@@ -385,6 +469,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // that map panning causes.
   const showPreviewRef = useLatest(showPreview);
   const selectTopRef = useLatest(selectTop);
+  const currentPlaceRef = useLatest(currentPlace);
   const onPreview = useCallback(
     (next: Preview) => showPreviewRef.current(next),
     [showPreviewRef],
@@ -399,9 +484,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       isPinned: (r: MapTopResult) =>
         pinned.some((p) => p.id === placeId(r.latitude, r.longitude)),
       full: compareFull,
-      onToggle: (r: MapTopResult) => toggleCompare(topPlace(r)),
+      // Pinning an area also pins the place that was searched, so the two can be compared.
+      onToggle: (r: MapTopResult) =>
+        toggleCompare(topPlace(r), currentPlaceRef.current ?? undefined),
     }),
-    [pinned, compareFull, toggleCompare],
+    [pinned, compareFull, toggleCompare, currentPlaceRef],
   );
   const successScore = state.status === "success" ? state.score : null;
   const scoreCoordinates = useMemo(
@@ -503,6 +590,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     target,
     view: urlView,
     selection,
+    points: planner.urlPoints,
   });
   // A rejected address in the URL has no state of its own to write back.
   const preserveUrl = target === null && rawAddress !== null;
@@ -518,6 +606,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     setPreview(null);
     if (next && target && targetKey(next) === targetKey(target)) {
       retry();
+      planner.retry();
       if (point) {
         setFlyRequest({ ...point, zoom: PLACE_ZOOM, nonce: Date.now() });
       }
@@ -530,12 +619,16 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     window.history.pushState(
       null,
       "",
-      explorerHref({ target: next, view: urlView, selection }),
+      explorerHref({ target: next, view: urlView, selection, points: planner.urlPoints }),
     );
   }
 
-  const handleSearch = (next: string) =>
+  // "Get score": the typed points of interest are looked up first, then the searched place is
+  // scored and the overlap is worked out for all of them.
+  const handleSearch = async (next: string) => {
+    await planner.resolvePending();
     navigate({ kind: "address", address: next });
+  };
 
   const handleSelectSuggestion = ({ label, latitude, longitude }: Suggestion) =>
     navigate({ kind: "coordinates", lat: latitude, lon: longitude, label });
@@ -717,8 +810,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const chatProps = {
     client,
     context: {
-      ...(target && address
-        ? { address }
+      ...(target && chatAddress
+        ? { address: chatAddress }
         : typedText.trim()
           ? { address: typedText.trim().slice(0, 300) }
           : {}),
@@ -726,7 +819,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       ...(priorities.factors ? { factors: priorities.factors } : {}),
       ...(priorities.weights ? { weights: priorities.weights } : {}),
     },
-    place: { key: placeKey, label: target ? address : null },
+    place: { key: placeKey, label: target ? chatAddress : null },
     onShowOnMap: showChatResult,
     onScoreArea: scoreChatResult,
     onClose: () => setChatOpen(false),
@@ -764,13 +857,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             ) : null}
           </div>
         </div>
+        <TripPlanner
+          planner={planner}
+          client={client}
+          onSelectResult={({ lat, lon, label }) =>
+            navigate({ kind: "coordinates", lat, lon, label })
+          }
+          onNeedSpace={(kind) => setSnap(kind)}
+        />
       </div>
-
-      {chatOpen ? null : (
-        <button type="button" className={styles.ask} onClick={openChat}>
-          Ask Benri
-        </button>
-      )}
 
       <p className="sr-only" role="status">
         {locating ? "Finding your location\u2026" : ""}
@@ -835,6 +930,13 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </section>
       ) : null}
 
+      {chatOpen ? null : (
+        <button type="button" className={styles.ask} onClick={openChat}>
+          <AskIcon className={styles.askIcon} />
+          Ask Benri
+        </button>
+      )}
+
       <div className={styles.controls}>
         <FactorControls
           selection={selection}
@@ -844,7 +946,21 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               ? state.score.subScores
               : (provisional?.subScores ?? null)
           }
-        />
+        >
+          {/* Always mounted, so a switched-on travel area survives a change of place. */}
+          <ReachCard
+            coordinates={
+              state.status === "success"
+                ? { lat: state.score.latitude, lon: state.score.longitude }
+                : null
+            }
+            travelMode={state.status === "success" ? state.score.travelMode : null}
+            client={client}
+            onReach={setReachGeometry}
+            suspended={planner.active}
+            onTravelChange={setTravel}
+          />
+        </FactorControls>
         {state.status === "success" ? (
           <>
             <ScoreSummary
@@ -858,15 +974,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
               client={client}
               priorities={priorities}
               onPreview={onPreview}
-            />
-            <ReachCard
-              coordinates={{
-                lat: state.score.latitude,
-                lon: state.score.longitude,
-              }}
-              travelMode={state.score.travelMode}
-              client={client}
-              onReach={setReachGeometry}
             />
             <SimilarCard
               coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
@@ -927,6 +1034,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
           reachGeometry={reachGeometry}
+          triangulation={planner.active ? planner.overlay : null}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}
@@ -938,12 +1046,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             } else setTopViewport((current) => current ?? next);
           }}
           onCellClick={(cell) => {
+            if (fillPoiFromMap({ lat: cell.lat, lon: cell.lon })) return;
             revealMap();
             selectCell(cell);
           }}
           onMarkerClick={(geohash) => {
-            revealMap();
             const result = topResults?.find((r) => r.geohash === geohash);
+            if (result && fillPoiFromMap({ lat: result.latitude, lon: result.longitude })) return;
+            revealMap();
             if (result) selectTop(result);
           }}
           onUnavailable={() => setMapUnavailable(true)}

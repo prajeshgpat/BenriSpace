@@ -27,9 +27,13 @@ import { tuneDarkStyle } from "@/lib/map/darkStyle";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
 import type { TileCells } from "@/lib/map/tileScores";
 import { METRO_BBOX, initialMetroView, type MapView } from "@/lib/map/viewport";
+import { addWaterMask, isOverWater } from "@/lib/map/waterMask";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import styles from "./MapCanvas.module.css";
+import type { TripOverlay } from "@/hooks/useTripPlanner";
+
+import { useTriangulationLayers } from "./useTriangulationLayers";
 import { usePmtilesCells } from "./usePmtilesCells";
 
 // See scripts/copy-maplibre-worker.mjs for why the worker is served by us.
@@ -124,6 +128,8 @@ interface MapCanvasProps {
   previewAreaGeometry?: AreaGeometry | null;
   /** The area reachable from the selected place (isochrone): a magenta outline on top. */
   reachGeometry?: AreaGeometry | null;
+  /** Travel-time areas, their overlap and numbered pins for "+ Point of interest"; null draws nothing. */
+  triangulation?: TripOverlay | null;
   previewPin?: PinSpec | null;
   /**
    * Local scores for the view, to colour the PMTiles grid (only used when
@@ -375,6 +381,7 @@ export function MapCanvas({
   areaGeometry = null,
   previewAreaGeometry = null,
   reachGeometry = null,
+  triangulation = null,
   previewPin = null,
   tileCells = null,
   onTilesFailed,
@@ -487,6 +494,8 @@ export function MapCanvas({
     // arrives without our layers, so they are put back on top of it.
     map.on("style.load", () => {
       addCellLayers(map, styleTheme.current);
+      // Basemap water redrawn over the cells, under the area/reach/preview layers.
+      addWaterMask(map, overlayAnchorId(map.getStyle().layers, styleTheme.current));
       addAreaLayers(map, styleTheme.current, Boolean(latest.current.areaGeometry));
       addReachLayers(map, styleTheme.current, Boolean(latest.current.reachGeometry));
       (map.getSource(REACH_SOURCE_ID) as GeoJSONSource).setData(
@@ -516,7 +525,7 @@ export function MapCanvas({
     map.on("load", () => {
       map.on("click", FILL_LAYER, (event) => {
         const feature = event.features?.[0];
-        if (!feature) return;
+        if (!feature || isOverWater(map, event.point)) return;
         callbacks.current.onCellClick({
           geohash: String(feature.properties.geohash),
           score: Number(feature.properties.score),
@@ -688,6 +697,8 @@ export function MapCanvas({
       else delete button.dataset.active;
     });
   }, [activeMarkerId, markers, ready]);
+
+  useTriangulationLayers({ mapRef, ready, theme, overlay: triangulation });
 
   usePmtilesCells({
     mapRef,

@@ -6,6 +6,7 @@ const gl = vi.hoisted(() => ({
   handlers: {} as Record<string, () => void>,
   removed: false,
   elements: [] as HTMLElement[],
+  layers: [] as { id: string; [k: string]: unknown }[],
 }));
 
 vi.mock("maplibre-gl/dist/maplibre-gl.css", () => ({}));
@@ -31,10 +32,16 @@ vi.mock("maplibre-gl", () => {
       return { clientHeight: 600 };
     }
     getStyle() {
-      return { layers: [] };
+      return { layers: gl.layers };
     }
     addSource() {}
-    addLayer() {}
+    addLayer(layer: { id: string }, before?: string) {
+      const i = before ? gl.layers.findIndex((l) => l.id === before) : -1;
+      gl.layers.splice(i < 0 ? gl.layers.length : i, 0, layer);
+    }
+    removeLayer(id: string) {
+      gl.layers.splice(gl.layers.findIndex((l) => l.id === id), 1);
+    }
     getSource() {
       return { setData() {} };
     }
@@ -91,6 +98,10 @@ import { MapCanvas } from "./MapCanvas";
 beforeEach(() => {
   gl.calls = [];
   gl.elements = [];
+  gl.layers = [
+    { id: "water", type: "fill", source: "o", "source-layer": "water" },
+    { id: "label", type: "symbol", source: "o" },
+  ];
   vi.spyOn(window, "matchMedia").mockImplementation(
     (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }) as unknown as MediaQueryList,
   );
@@ -120,6 +131,34 @@ describe("MapCanvas teardown", () => {
     const last = gl.calls.lastIndexOf("map.remove");
     expect(last).toBe(gl.calls.length - 1);
     expect(gl.calls.filter((c) => c === "marker.remove").length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("MapCanvas water mask", () => {
+  it("draws the basemap water above the cells and below the area layers, once", () => {
+    render(
+      <MapCanvas
+        initialView={{ lat: 40, lon: -74, zoom: 12 }}
+        cells={{ type: "FeatureCollection", features: [] } as never}
+        markers={[]}
+        activeMarkerId={null}
+        highlightGeohash={null}
+        theme="light"
+        pin={null}
+        previewPin={null}
+        flyRequest={null}
+        onViewportChange={() => {}}
+        onCellClick={() => {}}
+        onMarkerClick={() => {}}
+        onUnavailable={() => {}}
+      />,
+    );
+    act(() => gl.handlers["style.load"]?.());
+    const ids = gl.layers.map((l) => l.id);
+    expect(ids.filter((id) => id === "benri-water:water")).toHaveLength(1);
+    const water = ids.indexOf("benri-water:water");
+    expect(water).toBeGreaterThan(ids.indexOf("cells-fill"));
+    expect(water).toBeLessThan(ids.indexOf("area-fill"));
   });
 });
 

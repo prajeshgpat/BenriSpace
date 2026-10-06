@@ -1,40 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type { ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, ReachMode } from "@/lib/api/types";
+import { defaultTravel } from "@/lib/travel";
 
 import styles from "./ReachCard.module.css";
+import { TravelModePicker } from "./TravelModePicker";
 
 export interface ReachCardProps {
+  /** The scored place; null while none is shown (the control stays, disabled). */
   coordinates: { lat: number; lon: number } | null;
   /** How people here usually travel (from density); walk in the city, else drive. */
   travelMode?: "walk" | "drive" | null;
   client: Pick<ApiClient, "getReach">;
   /** The polygon to draw on the map, or null to clear it. */
   onReach: (geometry: AreaGeometry | null) => void;
-}
-
-/** 5, 10, 15 ... up to `max` minutes. */
-function everyFive(max: number): readonly number[] {
-  return Array.from({ length: max / 5 }, (_, i) => (i + 1) * 5);
-}
-
-/** Every mode steps by 5 minutes: walk and train 5-45, drive 5-60. */
-const OPTIONS: ReadonlyArray<{
-  mode: ReachMode;
-  label: string;
-  minutes: readonly number[];
-  initial: number;
-}> = [
-  { mode: "walk", label: "Walk", minutes: everyFive(45), initial: 10 },
-  { mode: "transit", label: "Train", minutes: everyFive(45), initial: 20 },
-  { mode: "drive", label: "Drive", minutes: everyFive(60), initial: 15 },
-];
-
-function optionFor(mode: ReachMode) {
-  return OPTIONS.find((o) => o.mode === mode) ?? OPTIONS[2];
+  /** True while travel areas are showing for points of interest instead: switch off, no fetch. */
+  suspended?: boolean;
+  /**
+   * The row's mode and minutes, on mount and whenever either changes: the points of interest
+   * and the searched place share them.
+   */
+  onTravelChange?: (travel: { mode: ReachMode; minutes: number }) => void;
 }
 
 type State =
@@ -43,25 +32,37 @@ type State =
   | { status: "ready"; areaSqMi: number; estimate: boolean; empty: boolean }
   | { status: "error" };
 
-/** "How far can I get in N minutes": draws the reachable area on the map. */
-export function ReachCard({ coordinates, travelMode, client, onReach }: ReachCardProps) {
-  const startMode: ReachMode = travelMode === "walk" ? "walk" : "drive";
-  const [mode, setMode] = useState<ReachMode>(startMode);
-  const [minutes, setMinutes] = useState(optionFor(startMode).initial);
-  // A new place starts from its own default: walking in the city, driving elsewhere.
-  const [seenMode, setSeenMode] = useState(startMode);
-  if (seenMode !== startMode) {
-    setSeenMode(startMode);
-    setMode(startMode);
-    setMinutes(optionFor(startMode).initial);
+/**
+ * "How far can I get in N minutes", as one line in the factor controls: an on/off switch,
+ * the travel mode and the minutes. It stays mounted while places change, so a switched-on
+ * area follows each new place with the same mode and minutes. Until the user picks a mode,
+ * the mode follows the place (a 20 min train in dense places, a 15 min drive elsewhere).
+ */
+export function ReachCard({ coordinates, travelMode, client, onReach, suspended, onTravelChange }: ReachCardProps) {
+  const labelId = useId();
+  const placeDefault = defaultTravel(travelMode);
+  const placeKey = travelMode === "walk" ? "walk" : "drive";
+  const [chosen, setChosen] = useState(false);
+  const [mode, setMode] = useState<ReachMode>(placeDefault.mode);
+  const [minutes, setMinutes] = useState(placeDefault.minutes);
+  const [seenPlaceKey, setSeenPlaceKey] = useState(placeKey);
+  if (travelMode && seenPlaceKey !== placeKey) {
+    setSeenPlaceKey(placeKey);
+    if (!chosen) {
+      setMode(placeDefault.mode);
+      setMinutes(placeDefault.minutes);
+    }
   }
-  const [on, setOn] = useState(false);
+  useEffect(() => {
+    onTravelChange?.({ mode, minutes });
+  }, [mode, minutes, onTravelChange]);
+  const [on, setOn] = useState(true);
   const [state, setState] = useState<State>({ status: "off" });
   const lat = coordinates?.lat;
   const lon = coordinates?.lon;
 
   useEffect(() => {
-    if (!on || lat === undefined || lon === undefined) {
+    if (!on || suspended || lat === undefined || lon === undefined) {
       onReach(null);
       setState({ status: "off" });
       return;
@@ -85,68 +86,45 @@ export function ReachCard({ coordinates, travelMode, client, onReach }: ReachCar
         setState({ status: "error" });
       });
     return () => controller.abort();
-  }, [on, lat, lon, mode, minutes, client, onReach]);
+  }, [on, suspended, lat, lon, mode, minutes, client, onReach]);
 
   useEffect(() => () => onReach(null), [onReach]);
 
-  if (!coordinates) return null;
-  const current = optionFor(mode);
-  const step = current.minutes.indexOf(minutes);
+  const noPlace = !coordinates;
+  const shownOn = on && !suspended;
 
   return (
-    <section className={styles.card} aria-label="Reachable area">
-      <div className={styles.summary}>
-        <h3 className={styles.title}>How far can I get?</h3>
+    <div className={styles.travel} role="group" aria-labelledby={labelId}>
+      <p id={labelId} className={styles.legend}>
+        Travel time
+      </p>
+      <div className={styles.line}>
+        <TravelModePicker
+          name="Travel time"
+          mode={mode}
+          minutes={minutes}
+          onChange={(m, min) => {
+            setChosen(true);
+            setMode(m);
+            setMinutes(min);
+          }}
+        />
         <button
           type="button"
-          className={styles.toggle}
-          aria-pressed={on}
+          role="switch"
+          className={styles.switch}
+          aria-checked={shownOn}
+          aria-label="Show travel time on the map"
+          title={noPlace ? "Pick a place first" : "Show travel time on the map"}
+          disabled={noPlace || suspended}
           onClick={() => setOn((v) => !v)}
         >
-          {on ? "Hide on map" : "Show on map"}
+          <span className={styles.thumb} aria-hidden="true" />
         </button>
       </div>
-      <div className={styles.row} role="group" aria-label="Travel mode">
-        {OPTIONS.map((o) => (
-          <button
-            key={o.mode}
-            type="button"
-            className={o.mode === mode ? styles.chipOn : styles.chip}
-            aria-pressed={o.mode === mode}
-            onClick={() => {
-              setMode(o.mode);
-              setMinutes(o.initial);
-            }}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-      <div className={styles.stepper} role="group" aria-label="Minutes">
-        <button
-          type="button"
-          className={styles.step}
-          aria-label="Fewer minutes"
-          disabled={step <= 0}
-          onClick={() => setMinutes(current.minutes[Math.max(step - 1, 0)])}
-        >
-          &minus;
-        </button>
-        <span className={styles.value} aria-live="polite">
-          {minutes} min
-        </span>
-        <button
-          type="button"
-          className={styles.step}
-          aria-label="More minutes"
-          disabled={step >= current.minutes.length - 1}
-          onClick={() =>
-            setMinutes(current.minutes[Math.min(step + 1, current.minutes.length - 1)])
-          }
-        >
-          +
-        </button>
-      </div>
+      {suspended ? (
+        <p className={styles.note}>Travel areas are showing for your points of interest.</p>
+      ) : null}
       {state.status === "loading" ? (
         <p className={styles.meta} role="status">
           Working out the reachable area…
@@ -157,9 +135,7 @@ export function ReachCard({ coordinates, travelMode, client, onReach }: ReachCar
           {state.empty
             ? "Nothing reachable in that time."
             : `About ${state.areaSqMi.toFixed(1)} sq mi within ${minutes} min.`}
-          {state.estimate
-            ? " Estimated as a straight-line circle: road routing is not computed for this area yet."
-            : ""}
+          {state.estimate ? " Estimated as a straight-line circle here." : ""}
         </p>
       ) : null}
       {state.status === "error" ? (
@@ -167,6 +143,6 @@ export function ReachCard({ coordinates, travelMode, client, onReach }: ReachCar
           Couldn&rsquo;t load the reachable area. Try again.
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }

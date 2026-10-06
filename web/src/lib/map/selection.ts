@@ -53,6 +53,30 @@ export function createSelection(
 
 export const ALL_FACTORS: FactorSelection = createSelection(FACTOR_KEYS);
 
+/** Off when the app opens: the everyday-errands factors stay on, the rest are opt-in. */
+const OFF_BY_DEFAULT: ReadonlySet<FactorKey> = new Set<FactorKey>([
+  "shopping",
+  "airport",
+  "gasConvenience",
+  "traffic",
+  "school",
+  "emergencyCorridor",
+]);
+
+/** The factors switched on when the app opens without a `factors` link parameter. */
+export const DEFAULT_FACTOR_KEYS: readonly FactorKey[] = FACTOR_KEYS.filter(
+  (key) => !OFF_BY_DEFAULT.has(key),
+);
+
+export const DEFAULT_SELECTION: FactorSelection = createSelection(DEFAULT_FACTOR_KEYS);
+
+export function isDefaultSelection(selection: FactorSelection): boolean {
+  return (
+    selection.factors.length === DEFAULT_FACTOR_KEYS.length &&
+    DEFAULT_FACTOR_KEYS.every((key) => selection.factors.includes(key))
+  );
+}
+
 export function isAllSelected(selection: FactorSelection): boolean {
   return selection.factors.length === FACTOR_KEYS.length;
 }

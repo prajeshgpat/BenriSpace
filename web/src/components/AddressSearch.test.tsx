@@ -101,6 +101,17 @@ describe("AddressSearch combobox", () => {
     expect(ctx.input).toHaveFocus();
   });
 
+  it("clears the box with the x button and keeps focus there", async () => {
+    const ctx = setup();
+    const box = screen.getByRole("combobox", { name: "Address" });
+    expect(screen.queryByRole("button", { name: "Clear address" })).not.toBeInTheDocument();
+    await ctx.user.type(box, "350 5th");
+    await ctx.user.click(screen.getByRole("button", { name: "Clear address" }));
+    expect(box).toHaveValue("");
+    expect(box).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Clear address" })).not.toBeInTheDocument();
+  });
+
   it("submits the typed text with Enter when no option is active", async () => {
     const ctx = setup();
     await open(ctx);

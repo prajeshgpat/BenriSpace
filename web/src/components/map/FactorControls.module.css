@@ -55,7 +55,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--surface);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -137,7 +137,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   background: var(--surface);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
@@ -292,18 +292,7 @@
   font-size: 0.8125rem;
 }
 
-.note {
-  padding: 0.625rem 0.75rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  line-height: 1.4;
-}
 
-.note strong {
-  color: var(--text);
-}
 
 .icon {
   flex: none;

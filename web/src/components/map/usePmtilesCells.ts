@@ -14,6 +14,7 @@ import {
   type TileCells,
   type TileScores,
 } from "@/lib/map/tileScores";
+import { firstWaterMaskId, isOverWater } from "@/lib/map/waterMask";
 import type { ResolvedTheme } from "@/lib/theme";
 
 import type { CellClick } from "./MapCanvas";
@@ -49,7 +50,9 @@ const FILL_COLOR = [
 ] as never;
 
 function addTileLayers(map: MaplibreMap, theme: ResolvedTheme, url: string) {
-  const anchor = overlayAnchorId(map.getStyle().layers, theme);
+  // Under the water mask when there is one (cells < water < overlays); the mask
+  // is already above these layers, so nothing needs moving afterwards.
+  const anchor = firstWaterMaskId(map) ?? overlayAnchorId(map.getStyle().layers, theme);
   // A cell has no colour until the score file has given it a state.
   const opacity = [
     "case",
@@ -244,6 +247,7 @@ export function usePmtilesCells({
       lngLat: { lat: number; lng: number };
       point: { x: number; y: number };
     }) => {
+      if (isOverWater(map, event.point)) return;
       const feature = event.features?.[0];
       const geohash = feature?.properties?.g;
       const score = Number(feature?.state?.score);
