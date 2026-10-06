@@ -54,10 +54,12 @@ Last updated 2026-10-05.
 ## Wave 3 — Data foundation
 
 - [x] **Population density per cell** (Census 2020, migration 0012).
-- [x] **PostGIS** geometry and GiST indexes; `road_segments` table and ingestion.
-- [~] **Imperial column rename.** Expand (0020, applied in prod) / contract (0021, run
-  only after a weekly ingestion succeeds on the new code) with `common/feature_columns.py`
-  translating at the database boundary. `areas.area_sq_m` not renamed yet.
+- [x] **PostGIS** geometry and GiST indexes; `road_segments` table and ingestion (not run
+  weekly: nothing reads it yet and it took 97 MB; the table is emptied, run
+  `python -m ingestion.road_segments` when the frontage-noise factor needs it).
+- [x] **Imperial column rename.** Expand (0020) and contract (0021, applied 2026-10-06,
+  `feature_store` 77 -> 22 MB) with `common/feature_columns.py` translating at the code
+  boundary. `areas.area_sq_m` is not renamed yet.
 - [~] **Faster ingestion.** cKDTree for POIs, shops, transit, and now parks and schools
   (schools' nearest distance is now the true nearest).
 - [x] **Density-capped road polygons.** 0.1 sq mi at ≥20k people/sq mi up to 1 sq mi below
@@ -71,14 +73,16 @@ Last updated 2026-10-05.
 
 ## Wave 4 — Routing precompute
 
-- [~] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana, migration 0022).
+- [x] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana, migration 0022).
   Full region computed locally from the Geofabrik networks in 25 min
-  (`run --all --networks build/routing --steps amenity,graph,hubs`); 51 MB of tables.
-  Moves to production with `scripts/copy_routing.py` (one transaction, size-guarded).
-- [~] **Drive matrices** to airports and rail stations: computed for every cell on the
-  arterial network (`pbf.py` `arterial` mode); ships with the copy above.
-- [~] **Train times.** Connection Scan over GTFS rail, 933 stations, 273k connections,
-  matrix in 24 s; refreshed locally, ships with the copy above.
+  (`run --all --networks build/routing --steps amenity,graph,hubs`); 51 MB of tables, copied
+  to production 2026-10-06 with `scripts/copy_routing.py` (database 394 -> 443 MB). The
+  isochrone card, triangulate and the optimizer now return routed times. Re-run and re-copy
+  after a Geofabrik refresh; the weekly job does not recompute them.
+- [x] **Drive matrices** to airports and rail stations: every cell, on the arterial network
+  (`pbf.py` `arterial` mode); in production.
+- [x] **Train times.** Connection Scan over GTFS rail, 933 stations, 273k connections,
+  matrix in 24 s; in production.
 - [~] **Isochrones** `GET /v1/isochrone` from a stored cell graph (pure Python, 2-27 ms);
   web "How far can I get?" card. Cell resolution is coarse: checked against routed
   area-to-area times, walking is within about +-30 % and driving within 0.85-1.05x in rural

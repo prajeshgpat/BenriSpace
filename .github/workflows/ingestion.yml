@@ -72,7 +72,9 @@ jobs:
           python-version: "3.11"
       - run: pip install -e ".[ingestion]"
       - run: python -m ingestion.density
-      - run: python -m ingestion.road_segments
+      # ingestion.road_segments (major roads + rail for a future frontage-noise factor) is not
+      # run weekly: nothing reads the table yet and it was 97 MB of the 500 MB free tier.
+      # Run it by hand when that factor is built.
 
   ingest:
     needs: [grid, density]
