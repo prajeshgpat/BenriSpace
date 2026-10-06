@@ -7,11 +7,11 @@ import { ApiError } from "@/lib/api/errors";
 import type { ChatReply } from "@/lib/api/types";
 import { stubClient } from "@/test/fixtures";
 
+import { starterQuestions } from "./starterQuestions";
 import {
   CHAT_INPUT_LIMIT,
   CHAT_STORAGE_KEY,
   ChatPanel,
-  STARTER_QUESTIONS,
 } from "./ChatPanel";
 
 const REPLY: ChatReply = {
@@ -38,17 +38,28 @@ describe("ChatPanel", () => {
     const user = userEvent.setup();
     const { chat } = setup();
     const chips = within(screen.getByRole("list", { name: "Suggested questions" })).getAllByRole("button");
-    expect(chips.map((c) => c.textContent)).toEqual([...STARTER_QUESTIONS]);
+    expect(chips.map((c) => c.textContent)).toEqual(starterQuestions(undefined, false));
 
     await user.click(chips[0]);
 
     await screen.findByText("Shippan Point looks best.");
     expect(chat).toHaveBeenCalledWith(
-      [{ role: "user", content: STARTER_QUESTIONS[0] }],
+      [{ role: "user", content: starterQuestions(undefined, false)[0] }],
       undefined,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(screen.queryByRole("list", { name: "Suggested questions" })).not.toBeInTheDocument();
+  });
+
+  it("shows the owner's intro and chips that follow the selected factors", () => {
+    setup(undefined, { context: { address: "5 Main St", factors: ["transit" as const, "gym" as const] } });
+    expect(
+      screen.getByText(
+        "Ask about neighborhoods in the New York metro. I only use BenriSpace data, so I can compare scores, find places near an address and weigh trips to work, cafes, gyms, etc.",
+      ),
+    ).toBeInTheDocument();
+    const chips = within(screen.getByRole("list", { name: "Suggested questions" })).getAllByRole("button");
+    expect(chips.map((c) => c.textContent)).toEqual(starterQuestions(["transit", "gym"], true));
   });
 
   it("sends on Enter, keeps Shift+Enter for a newline, and sends the context", async () => {

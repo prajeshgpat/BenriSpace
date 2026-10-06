@@ -6,6 +6,7 @@ import { useState } from "react";
 import { APP_PATH } from "@/lib/site";
 
 import styles from "./HomePage.module.css";
+import { AskIcon } from "../AskIcon";
 import { HomeSearch } from "./HomeSearch";
 
 /** Where "Ask Benri" goes: the chat opens, the typed text is only handed over. */
@@ -35,14 +36,7 @@ export function HeroSearch() {
           Explore the map
         </Link>
         <Link className={styles.explore} href={askHref(text)} prefetch={false}>
-          <svg
-            className={styles.exploreIcon}
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path d="M4 5h16v11H9l-5 4z" />
-          </svg>
+          <AskIcon className={styles.exploreIcon} />
           Ask Benri
         </Link>
       </div>

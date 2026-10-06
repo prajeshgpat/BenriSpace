@@ -466,6 +466,20 @@ describe("Workspace: the map and its controls", () => {
     expect(getMapCells).not.toHaveBeenCalled();
   });
 
+  it("pins the searched place along with a best area when Compare is clicked", async () => {
+    const user = userEvent.setup();
+    window.sessionStorage.clear();
+    setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
+    await screen.findByRole("heading", { level: 2, name: "350 5th Ave, New York, NY" });
+    const compareButtons = await screen.findAllByRole("button", { name: "Compare: Unnamed area" });
+    await user.click(compareButtons[0]);
+
+    const removeButtons = await screen.findAllByRole("button", { name: /^Remove from compare: / });
+    const names = removeButtons.map((b) => b.getAttribute("aria-label"));
+    expect(names).toHaveLength(2);
+    expect(names.some((n) => n?.includes("350 5th Ave"))).toBe(true);
+  });
+
   it("loads the map after the search is on screen", async () => {
     setup();
     expect(screen.getByRole("combobox", { name: "Address" })).toBeInTheDocument();
