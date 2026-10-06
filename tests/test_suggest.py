@@ -389,49 +389,33 @@ def _resp(status, payload):
     return httpx.Response(status, json=payload, request=httpx.Request("GET", "https://x"))
 
 
-def test_locationiq_and_photon_are_merged_locationiq_first(monkeypatch):
+def test_locationiq_is_used_when_a_key_is_set_and_photon_is_not_called(monkeypatch):
     monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "secret-key-123")
     seen = []
     monkeypatch.setattr(
         suggest_mod.httpx, "Client", _fake_client(_resp(200, LIQ_RESULTS), seen=seen)
     )
-    photon_calls = []
-
-    def photon(q, limit):
-        photon_calls.append(q)
-        return load("350_5th_ave")
-
-    monkeypatch.setattr(suggest_mod, "fetch_photon_features", photon)
+    monkeypatch.setattr(
+        suggest_mod, "fetch_photon_features", lambda q, limit: pytest.fail("Photon called")
+    )
     resp = client.get("/v1/suggest", params={"q": "350 5th"})
     assert resp.status_code == 200
     assert resp.json()["suggestions"][0]["label"] == "350 5th Avenue, New York, NY"
-    assert photon_calls == ["350 5th"]  # asked in parallel, fills what LocationIQ misses
     url, params = seen[0]
     assert url == suggest_mod.LOCATIONIQ_URL
     assert params["key"] == "secret-key-123" and params["bounded"] == 1
 
 
-def test_locationiq_no_matches_404_still_shows_photon_matches(monkeypatch):
+def test_locationiq_no_matches_404_is_an_empty_result_not_a_fallback(monkeypatch):
     monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "k")
     monkeypatch.setattr(
         suggest_mod.httpx, "Client", _fake_client(_resp(404, {"error": "Unable to geocode"}))
     )
-    monkeypatch.setattr(suggest_mod, "fetch_photon_features", lambda q, limit: [])
+    monkeypatch.setattr(
+        suggest_mod, "fetch_photon_features", lambda q, limit: pytest.fail("Photon called")
+    )
     resp = client.get("/v1/suggest", params={"q": "zzzzzz"})
     assert resp.status_code == 200 and resp.json() == {"suggestions": []}
-
-
-def test_a_photon_failure_keeps_the_locationiq_results(monkeypatch):
-    monkeypatch.setenv(suggest_mod.LOCATIONIQ_KEY_ENV, "k")
-    monkeypatch.setattr(suggest_mod.httpx, "Client", _fake_client(_resp(200, LIQ_RESULTS)))
-
-    def down(q, limit):
-        raise suggest_mod.SuggestUnavailable("Photon down")
-
-    monkeypatch.setattr(suggest_mod, "fetch_photon_features", down)
-    resp = client.get("/v1/suggest", params={"q": "350 5th"})
-    assert resp.status_code == 200
-    assert resp.json()["suggestions"][0]["label"] == "350 5th Avenue, New York, NY"
 
 
 @pytest.mark.parametrize(
