@@ -212,7 +212,15 @@ export function ChatPanel({
     if (!pending && !failure && last?.role === "assistant" && reply) {
       const offset = reply.getBoundingClientRect().top - log.getBoundingClientRect().top;
       log.scrollTop += offset - 8;
-      return;
+      // The page (or the phone's bottom sheet) may also have scrolled, e.g. to keep the input
+      // in view: after that settles, bring the reply's first line on screen if it is not.
+      const frame = requestAnimationFrame(() => {
+        const top = reply.getBoundingClientRect().top;
+        if (top < 0 || top > window.innerHeight * 0.6) {
+          reply.scrollIntoView?.({ block: "start" });
+        }
+      });
+      return () => cancelAnimationFrame(frame);
     }
     log.scrollTop = log.scrollHeight;
   }, [messages, pending, failure]);
