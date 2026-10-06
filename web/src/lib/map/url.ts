@@ -4,7 +4,7 @@ import {
   type LatLon,
   type ScoreTarget,
 } from "@/lib/address";
-import type { FactorKey, ReachMode } from "@/lib/api/types";
+import type { FactorKey } from "@/lib/api/types";
 import { FACTOR_KEYS, canonicalFactorKey } from "@/lib/score/factors";
 import { APP_PATH } from "@/lib/site";
 
@@ -26,22 +26,19 @@ export interface ExplorerUrlState {
   center: LatLon | null;
   zoom: number | null;
   selection: FactorSelection;
-  /** Extra places for triangulation (`pt=lat,lon,mode,minutes`, repeated). */
+  /** Extra places for triangulation (`pt=lat,lon`, repeated). */
   points: UrlPoint[];
 }
 
-/** A triangulation place in the URL. Its label is looked up again on load. */
+/** A point of interest in the URL. Its label is looked up again on load. */
 export interface UrlPoint {
   lat: number;
   lon: number;
-  mode: ReachMode;
-  minutes: number;
 }
 
-/** The planner holds a "your place" row and two points of interest. */
-export const MAX_URL_POINTS = 3;
+/** The planner holds two points of interest besides the searched place. */
+export const MAX_URL_POINTS = 2;
 const POINT_PARAM = "pt";
-const MAX_POINT_MINUTES = 120;
 
 const MIN_ZOOM = 3;
 const MAX_ZOOM = 19;
@@ -99,24 +96,11 @@ function parseImportance(raw: string | null): ImportanceOverrides {
   return overrides;
 }
 
-const MODES: readonly string[] = ["walk", "transit", "drive"];
-
+/** `lat,lon`; the older `lat,lon,mode,minutes` form is accepted and the rest ignored. */
 function parsePoint(raw: string): UrlPoint | null {
-  const [lat, lon, mode, minutes, ...rest] = raw.split(",");
-  const centre = parseCenter(`${lat},${lon}`);
-  const mins = number(minutes);
-  if (
-    rest.length > 0 ||
-    !centre ||
-    !MODES.includes(mode) ||
-    mins === null ||
-    !Number.isInteger(mins) ||
-    mins < 1 ||
-    mins > MAX_POINT_MINUTES
-  ) {
-    return null;
-  }
-  return { ...centre, mode: mode as ReachMode, minutes: mins };
+  const [lat, lon, ...rest] = raw.split(",");
+  if (rest.length !== 0 && rest.length !== 2) return null;
+  return parseCenter(`${lat},${lon}`);
 }
 
 function parsePoints(params: URLSearchParams): UrlPoint[] {
@@ -209,7 +193,7 @@ export function serializeExplorerParams({
   for (const point of points.slice(0, MAX_URL_POINTS)) {
     params.append(
       POINT_PARAM,
-      `${point.lat.toFixed(5)},${point.lon.toFixed(5)},${point.mode},${point.minutes}`,
+      `${point.lat.toFixed(5)},${point.lon.toFixed(5)}`,
     );
   }
   return params.toString();

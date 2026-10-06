@@ -33,7 +33,7 @@ import {
 } from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
-import type { ChatResult, MapTopResult, Suggestion } from "@/lib/api/types";
+import type { ChatResult, MapTopResult, ReachMode, Suggestion } from "@/lib/api/types";
 import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
 import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
 import { provisionalArea } from "@/lib/static/provisional";
@@ -365,12 +365,13 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             label: chatAddress ?? state.address,
             lat: state.score.latitude,
             lon: state.score.longitude,
-            travelMode: state.score.travelMode,
           }
         : null,
     [state, chatAddress],
   );
-  const planner = useTripPlanner(client, tripPlace);
+  // The Travel time row in Factors: the searched place and the points of interest share it.
+  const [travel, setTravel] = useState<{ mode: ReachMode; minutes: number } | null>(null);
+  const planner = useTripPlanner(client, tripPlace, travel);
   // When an overlap (or the news that there is none) arrives, bring the places and their
   // travel areas into view.
   const overlapKey =
@@ -579,6 +580,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     setPreview(null);
     if (next && target && targetKey(next) === targetKey(target)) {
       retry();
+      planner.retry();
       if (point) {
         setFlyRequest({ ...point, zoom: PLACE_ZOOM, nonce: Date.now() });
       }
@@ -595,8 +597,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     );
   }
 
-  const handleSearch = (next: string) =>
+  // "Get score": the typed points of interest are looked up first, then the searched place is
+  // scored and the overlap is worked out for all of them.
+  const handleSearch = async (next: string) => {
+    await planner.resolvePending();
     navigate({ kind: "address", address: next });
+  };
 
   const handleSelectSuggestion = ({ label, latitude, longitude }: Suggestion) =>
     navigate({ kind: "coordinates", lat: latitude, lon: longitude, label });
@@ -825,23 +831,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             ) : null}
           </div>
         </div>
+        <TripPlanner
+          planner={planner}
+          client={client}
+          onSelectResult={({ lat, lon, label }) =>
+            navigate({ kind: "coordinates", lat, lon, label })
+          }
+          onNeedSpace={(kind) => setSnap(kind)}
+        />
       </div>
-
-      <TripPlanner
-        planner={planner}
-        client={client}
-        onSelectResult={({ lat, lon, label }) =>
-          navigate({ kind: "coordinates", lat, lon, label })
-        }
-        onNeedSpace={(kind) => setSnap(kind)}
-      />
-
-      {chatOpen ? null : (
-        <button type="button" className={styles.ask} onClick={openChat}>
-          <AskIcon className={styles.askIcon} />
-          Ask Benri
-        </button>
-      )}
 
       <p className="sr-only" role="status">
         {locating ? "Finding your location\u2026" : ""}
@@ -906,6 +904,13 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         </section>
       ) : null}
 
+      {chatOpen ? null : (
+        <button type="button" className={styles.ask} onClick={openChat}>
+          <AskIcon className={styles.askIcon} />
+          Ask Benri
+        </button>
+      )}
+
       <div className={styles.controls}>
         <FactorControls
           selection={selection}
@@ -927,6 +932,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             client={client}
             onReach={setReachGeometry}
             suspended={planner.active}
+            onTravelChange={setTravel}
           />
         </FactorControls>
         {state.status === "success" ? (

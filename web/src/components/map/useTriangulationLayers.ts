@@ -4,7 +4,7 @@ import { Marker, type GeoJSONSource, type Map as MaplibreMap } from "maplibre-gl
 import { useEffect, type RefObject } from "react";
 
 import { useLatest } from "@/hooks/useLatest";
-import type { TripOverlay } from "@/hooks/useTripPlanner";
+import { anchorName, type TripOverlay } from "@/hooks/useTripPlanner";
 import { TRI_STYLE } from "@/lib/map/colors";
 import { overlayAnchorId } from "@/lib/map/overlayAnchor";
 import type { ResolvedTheme } from "@/lib/theme";
@@ -138,7 +138,7 @@ function pinElement(
   const element = document.createElement("div");
   element.dataset.triPin = String(pin.index);
   element.setAttribute("role", "img");
-  element.setAttribute("aria-label", pin.index === 0 ? "Your place" : `Point ${pin.index}`);
+  element.setAttribute("aria-label", anchorName(pin.index));
   element.textContent = PIN_LABELS[pin.index] ?? "";
   Object.assign(element.style, {
     width: "26px",

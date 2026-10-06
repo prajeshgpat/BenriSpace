@@ -64,9 +64,12 @@
   margin: auto -1rem 0;
 }
 
+/* No grid gap: the empty live region under the field must not add space. The
+   geolocation note and error bring their own margin, and the point-of-interest
+   row below sits a sliver away. */
 .search {
   display: grid;
-  gap: 0.875rem;
+  gap: 0;
 }
 
 /* The collapsed sheet has room for the field alone; the label stays for
@@ -242,7 +245,11 @@
 .locate {
   display: grid;
   justify-items: start;
-  gap: 0.5rem;
+}
+
+.locateNote,
+.locateError {
+  margin-top: 0.5rem;
 }
 
 .locateNote {
@@ -276,7 +283,7 @@
   }
 }
 
-/* The entry point to the chat, directly under the search field. */
+/* The entry point to the chat, directly under the score card. */
 .ask {
   display: inline-flex;
   align-items: center;

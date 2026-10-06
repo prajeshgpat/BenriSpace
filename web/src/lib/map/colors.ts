@@ -49,18 +49,18 @@ export const TRI_STYLE = {
   light: {
     casing: "#ffffff",
     anchors: [
-      { name: "Your place", line: "#c026d3", dash: null },
-      { name: "Point 1", line: "#ea580c", dash: [3, 1.5] },
-      { name: "Point 2", line: "#be123c", dash: [1, 1.5] },
+      { name: "Searched place", line: "#c026d3", dash: null },
+      { name: "Point of interest 1", line: "#ea580c", dash: [3, 1.5] },
+      { name: "Point of interest 2", line: "#be123c", dash: [1, 1.5] },
     ],
     overlap: { fill: "#ffffff", fillOpacity: 0.25, line: "#111827", casing: "#f8fafc" },
   },
   dark: {
     casing: "#0b1020",
     anchors: [
-      { name: "Your place", line: "#f0abfc", dash: null },
-      { name: "Point 1", line: "#fdba74", dash: [3, 1.5] },
-      { name: "Point 2", line: "#fda4af", dash: [1, 1.5] },
+      { name: "Searched place", line: "#f0abfc", dash: null },
+      { name: "Point of interest 1", line: "#fdba74", dash: [3, 1.5] },
+      { name: "Point of interest 2", line: "#fda4af", dash: [1, 1.5] },
     ],
     overlap: { fill: "#ffffff", fillOpacity: 0.18, line: "#f8fafc", casing: "#111827" },
   },

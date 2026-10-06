@@ -19,6 +19,11 @@ export interface ReachCardProps {
   onReach: (geometry: AreaGeometry | null) => void;
   /** True while travel areas are showing for points of interest instead: switch off, no fetch. */
   suspended?: boolean;
+  /**
+   * The row's mode and minutes, on mount and whenever either changes: the points of interest
+   * and the searched place share them.
+   */
+  onTravelChange?: (travel: { mode: ReachMode; minutes: number }) => void;
 }
 
 type State =
@@ -33,7 +38,7 @@ type State =
  * area follows each new place with the same mode and minutes. Until the user picks a mode,
  * the mode follows the place (a 20 min train in dense places, a 15 min drive elsewhere).
  */
-export function ReachCard({ coordinates, travelMode, client, onReach, suspended }: ReachCardProps) {
+export function ReachCard({ coordinates, travelMode, client, onReach, suspended, onTravelChange }: ReachCardProps) {
   const labelId = useId();
   const placeDefault = defaultTravel(travelMode);
   const placeKey = travelMode === "walk" ? "walk" : "drive";
@@ -48,6 +53,9 @@ export function ReachCard({ coordinates, travelMode, client, onReach, suspended 
       setMinutes(placeDefault.minutes);
     }
   }
+  useEffect(() => {
+    onTravelChange?.({ mode, minutes });
+  }, [mode, minutes, onTravelChange]);
   const [on, setOn] = useState(true);
   const [state, setState] = useState<State>({ status: "off" });
   const lat = coordinates?.lat;

@@ -53,6 +53,11 @@ interface AddressSearchProps {
    * and a clear button; autocomplete works as usual.
    */
   compact?: boolean;
+  /**
+   * A very small, fully rounded box with no clear button of its own; the parent
+   * supplies the right-hand button through `endAdornment`. Implies `compact`.
+   */
+  pill?: boolean;
   /** Called after the clear button empties the field (compact only). */
   onClear?: () => void;
   /** Receives the input element, e.g. to move focus to it. */
@@ -70,10 +75,12 @@ export function AddressSearch({
   label = "Address",
   placeholder = "Enter an address",
   submitLabel = "Get score",
-  compact = false,
+  compact: compactProp = false,
+  pill = false,
   onClear,
   inputRef: externalInputRef,
 }: AddressSearchProps) {
+  const compact = compactProp || pill;
   const id = useId();
   const inputId = `${id}-input`;
   const errorId = `${id}-error`;
@@ -174,7 +181,13 @@ export function AddressSearch({
 
   return (
     <form
-      className={compact ? `${styles.form} ${styles.compact}` : styles.form}
+      className={
+        pill
+          ? `${styles.form} ${styles.compact} ${styles.pill}`
+          : compact
+            ? `${styles.form} ${styles.compact}`
+            : styles.form
+      }
       role={compact ? undefined : "search"}
       action={APP_PATH}
       method="get"
@@ -218,13 +231,23 @@ export function AddressSearch({
                     activeIndex >= 0 ? optionId(listboxId, activeIndex) : undefined,
                 }
               : {})}
-            data-adorned={endAdornment || value ? (endAdornment && value ? "2" : "1") : undefined}
+            data-adorned={
+              pill
+                ? endAdornment
+                  ? "1"
+                  : undefined
+                : endAdornment || value
+                  ? endAdornment && value
+                    ? "2"
+                    : "1"
+                  : undefined
+            }
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
-          {endAdornment || value ? (
+          {endAdornment || (value && !pill) ? (
             <div className={styles.adornment}>
-              {value ? (
+              {value && !pill ? (
                 <button
                   type="button"
                   className={styles.clear}

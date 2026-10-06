@@ -145,6 +145,27 @@ describe("ReachCard", () => {
     expect(
       screen.getByText("Travel areas are showing for your points of interest."),
     ).toBeTruthy();
+    // Mode and minutes stay usable: the points of interest share them.
+    expect((screen.getByRole("button", { name: "Train" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "More minutes" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("reports the mode and minutes on mount and on every change, even when suspended", () => {
+    const onTravelChange = vi.fn();
+    render(
+      <ReachCard
+        coordinates={{ lat: 40.7, lon: -74 }}
+        client={{ getReach: vi.fn().mockResolvedValue(reach()) }}
+        onReach={() => {}}
+        suspended
+        onTravelChange={onTravelChange}
+      />,
+    );
+    expect(onTravelChange).toHaveBeenLastCalledWith({ mode: "drive", minutes: 15 });
+    fireEvent.click(screen.getByRole("button", { name: "More minutes" }));
+    expect(onTravelChange).toHaveBeenLastCalledWith({ mode: "drive", minutes: 20 });
+    fireEvent.click(screen.getByRole("button", { name: "Train" }));
+    expect(onTravelChange).toHaveBeenLastCalledWith({ mode: "transit", minutes: 20 });
   });
 
   it("steps every mode by 5 minutes: train up to 45, drive up to 60", () => {

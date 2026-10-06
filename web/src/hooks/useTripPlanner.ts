@@ -13,8 +13,8 @@ import type {
 } from "@/lib/api/types";
 import type { UrlPoint } from "@/lib/map/url";
 
-/** Your place plus two points of interest. */
-export const MAX_TRIP_ROWS = 3;
+/** At most two points of interest, besides the searched place. */
+export const MAX_POIS = 2;
 /** Wait for the last edit before asking the server. */
 export const TRIANGULATE_DEBOUNCE_MS = 400;
 /** Overlap results closer than this are one place to the reader. */
@@ -22,24 +22,30 @@ export const MIN_RESULT_SEPARATION_MI = 0.25;
 export const MAX_TRIP_RESULTS = 5;
 export const NOT_FOUND_MESSAGE = "Couldn't find that address. Pick one from the list.";
 
+/** A point of interest. Its travel mode and minutes come from the Travel time row. */
 export interface TripRow {
   id: string;
+  /** The confirmed place's name (or what was submitted). */
   label: string;
   lat?: number;
   lon?: number;
-  mode: ReachMode;
-  minutes: number;
+  /** What is typed in the box right now, when it was never confirmed. */
+  draft?: string;
   /** Set when typed text could not be resolved to a place. */
   error: string | null;
 }
 
-/** The place being scored, from which row 0 is created. */
+/** The place being scored: the first anchor. */
 export interface TripPlace {
   label: string;
   lat: number;
   lon: number;
-  /** How people here usually travel: "walk" means dense. */
-  travelMode?: "walk" | "drive" | null;
+}
+
+/** The shared Travel time row: every anchor uses it. */
+export interface TripTravel {
+  mode: ReachMode;
+  minutes: number;
 }
 
 export interface TripResult {
@@ -61,7 +67,7 @@ export interface TripData {
 export type TripStatus = "idle" | "loading" | "ready" | "empty" | "error";
 
 export interface TripOverlayAnchor {
-  /** 0 = your place, 1 and 2 = points of interest. */
+  /** 0 = the searched place, 1 and 2 = points of interest. */
   index: number;
   label: string;
   lat: number;
@@ -78,17 +84,6 @@ export interface TripOverlay {
 }
 
 type ClientSubset = Pick<ApiClient, "triangulate" | "reverseGeocode" | "suggestAddresses">;
-
-/** Default minutes when a mode is picked (also the starting value for a new row). */
-export const DEFAULT_MINUTES: Record<ReachMode, number> = {
-  walk: 10,
-  transit: 20,
-  drive: 15,
-};
-
-export function defaultTravelFor(dense: boolean): { mode: ReachMode; minutes: number } {
-  return dense ? { mode: "transit", minutes: 20 } : { mode: "drive", minutes: 15 };
-}
 
 const EARTH_RADIUS_MI = 3958.8;
 
@@ -126,16 +121,25 @@ function hasCoordinates(row: TripRow): row is TripRow & { lat: number; lon: numb
 }
 
 function anchorName(index: number): string {
-  return index === 0 ? "Your place" : `Point ${index}`;
+  return index === 0 ? "Searched place" : `Point of interest ${index}`;
+}
+
+/** Does this typed text still need resolving to a place? */
+function needsResolving(row: TripRow): boolean {
+  const text = row.draft?.trim() ?? "";
+  if (text === "") return false;
+  return !hasCoordinates(row) || text !== row.label;
 }
 
 type Settled =
   | { key: string; status: "ready" | "empty"; data: TripData }
   | { key: string; status: "error" };
 
+
 export interface TripPlannerState {
+  /** The points of interest, in order (at most two). */
   rows: TripRow[];
-  /** Any row exists: the single-place travel area should step aside. */
+  /** Any point of interest exists: the single-place travel area steps aside. */
   active: boolean;
   /** The "+ Point of interest" control is usable. */
   canAdd: boolean;
@@ -144,31 +148,34 @@ export interface TripPlannerState {
   status: TripStatus;
   data: TripData | null;
   overlay: TripOverlay;
-  /** Rows with coordinates, for the shared URL. */
+  /** Points with coordinates, for the shared URL. */
   urlPoints: UrlPoint[];
   add: () => void;
-  /** Removing row 0 or the last point of interest removes the whole planner. */
   remove: (id: string) => void;
-  setTravel: (id: string, travel: { mode: ReachMode; minutes: number }) => void;
   /** A suggestion was picked for this row. */
   selectSuggestion: (id: string, suggestion: Suggestion) => void;
   /** Typed text was submitted without picking a suggestion. */
   submitText: (id: string, text: string) => void;
-  /** The row's x button: forget its place. */
+  /** Every keystroke in the row's box, so unconfirmed text can be resolved later. */
+  setText: (id: string, text: string) => void;
+  /** Forget the row's place. */
   clearPlace: (id: string) => void;
+  /** Resolve every box whose text was never confirmed; settles when all are done. */
+  resolvePending: () => Promise<void>;
   /** Rebuild the planner from URL points; labels are looked up afterwards. */
   hydrate: (points: readonly UrlPoint[]) => void;
   retry: () => void;
 }
 
 /**
- * The state behind the "+ Point of interest" planner: up to three anchors
- * (row 0 is a frozen copy of the searched place), a debounced call to
- * `POST /triangulate`, and the spread-out list of best areas in the overlap.
+ * The state behind the "+ Point of interest" planner: up to two points of interest,
+ * a debounced call to `POST /triangulate` for the searched place plus those points
+ * (all with the shared Travel time), and the spread-out list of best areas in the overlap.
  */
 export function useTripPlanner(
   client: ClientSubset,
   place: TripPlace | null,
+  travel: TripTravel | null,
 ): TripPlannerState {
   const [rows, setRows] = useState<TripRow[]>([]);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
@@ -178,8 +185,10 @@ export function useTripPlanner(
   const resolving = useRef(new Map<string, number>());
   const labels = useRef(new Map<string, string | null>());
   const clientRef = useRef(client);
+  const rowsRef = useRef(rows);
   useEffect(() => {
     clientRef.current = client;
+    rowsRef.current = rows;
   });
 
   const nextId = () => `trip-${(counter.current += 1)}`;
@@ -189,39 +198,16 @@ export function useTripPlanner(
   }, []);
 
   const add = useCallback(() => {
-    if (rows.length >= MAX_TRIP_ROWS) return;
-    // New rows follow the searched place's density, even once row 0 exists.
-    const travel = defaultTravelFor(place?.travelMode === "walk");
-    const added: TripRow[] = [];
-    if (rows.length === 0) {
-      added.push({
-        id: nextId(),
-        label: place?.label ?? "",
-        lat: place?.lat,
-        lon: place?.lon,
-        ...travel,
-        error: null,
-      });
-    }
-    const point: TripRow = { id: nextId(), label: "", ...travel, error: null };
-    added.push(point);
+    if (rows.length >= MAX_POIS) return;
+    const point: TripRow = { id: nextId(), label: "", error: null };
     setLastAddedId(point.id);
-    setRows([...rows, ...added]);
-  }, [rows, place]);
+    setRows([...rows, point]);
+  }, [rows]);
 
   const remove = useCallback((id: string) => {
-    setRows((current) => {
-      const index = current.findIndex((r) => r.id === id);
-      if (index === -1) return current;
-      if (index === 0 || current.length <= 2) return [];
-      return current.filter((r) => r.id !== id);
-    });
+    resolving.current.delete(id);
+    setRows((current) => current.filter((r) => r.id !== id));
   }, []);
-
-  const setTravel = useCallback(
-    (id: string, travel: { mode: ReachMode; minutes: number }) => patchRow(id, travel),
-    [patchRow],
-  );
 
   const selectSuggestion = useCallback(
     (id: string, suggestion: Suggestion) => {
@@ -230,6 +216,7 @@ export function useTripPlanner(
         label: suggestion.label,
         lat: suggestion.latitude,
         lon: suggestion.longitude,
+        draft: undefined,
         error: null,
       });
     },
@@ -239,18 +226,29 @@ export function useTripPlanner(
   const clearPlace = useCallback(
     (id: string) => {
       resolving.current.delete(id);
-      patchRow(id, { label: "", lat: undefined, lon: undefined, error: null });
+      patchRow(id, { label: "", lat: undefined, lon: undefined, draft: undefined, error: null });
     },
     [patchRow],
   );
 
-  const submitText = useCallback(
+  const setText = useCallback(
     (id: string, text: string) => {
+      if (text.trim() === "") {
+        clearPlace(id);
+        return;
+      }
+      patchRow(id, { draft: text, error: null });
+    },
+    [patchRow, clearPlace],
+  );
+
+  const resolveText = useCallback(
+    (id: string, text: string): Promise<void> => {
       const query = text.trim();
-      if (query === "") return;
+      if (query === "") return Promise.resolve();
       const token = (resolving.current.get(id) ?? 0) + 1;
       resolving.current.set(id, token);
-      clientRef.current
+      return clientRef.current
         .suggestAddresses(query, { limit: 1 })
         .then((found) => {
           if (resolving.current.get(id) !== token) return;
@@ -263,6 +261,7 @@ export function useTripPlanner(
             label: first.label,
             lat: first.latitude,
             lon: first.longitude,
+            draft: undefined,
             error: null,
           });
         })
@@ -274,19 +273,28 @@ export function useTripPlanner(
     [patchRow],
   );
 
+  const submitText = useCallback(
+    (id: string, text: string) => {
+      void resolveText(id, text);
+    },
+    [resolveText],
+  );
+
+  const resolvePending = useCallback(async () => {
+    const pending = rowsRef.current.filter(needsResolving);
+    await Promise.all(pending.map((row) => resolveText(row.id, row.draft as string)));
+  }, [resolveText]);
+
   const hydrate = useCallback(
     (points: readonly UrlPoint[]) => {
-      const restored: TripRow[] = points.slice(0, MAX_TRIP_ROWS).map((p) => ({
+      const restored: TripRow[] = points.slice(0, MAX_POIS).map((p) => ({
         id: nextId(),
         label: formatLatLon(p),
         lat: p.lat,
         lon: p.lon,
-        mode: p.mode,
-        minutes: p.minutes,
         error: null,
       }));
-      setRows(restored.length >= 2 ? restored : []);
-      if (restored.length < 2) return;
+      setRows(restored);
       for (const row of restored) {
         clientRef.current
           .reverseGeocode({ lat: row.lat as number, lon: row.lon as number })
@@ -308,24 +316,37 @@ export function useTripPlanner(
     [],
   );
 
+  // Index 0 is the searched place, then the points of interest that have a place.
+  const placed = useMemo(() => {
+    const list: { index: number; label: string; lat: number; lon: number }[] = [];
+    if (place) {
+      list.push({ index: 0, label: place.label || anchorName(0), lat: place.lat, lon: place.lon });
+    }
+    rows.forEach((row, i) => {
+      if (hasCoordinates(row)) {
+        list.push({
+          index: i + 1,
+          label: row.label || anchorName(i + 1),
+          lat: row.lat,
+          lon: row.lon,
+        });
+      }
+    });
+    return list;
+  }, [place, rows]);
+
+  const mode = travel?.mode;
+  const minutes = travel?.minutes;
   const anchors = useMemo<TriangulateAnchor[]>(
     () =>
-      rows.flatMap((row, index) =>
-        hasCoordinates(row)
-          ? [
-              {
-                label: row.label || anchorName(index),
-                lat: row.lat,
-                lon: row.lon,
-                mode: row.mode,
-                minutes: row.minutes,
-              },
-            ]
-          : [],
-      ),
-    [rows],
+      mode === undefined || minutes === undefined
+        ? []
+        : placed.map((p) => ({ label: p.label, lat: p.lat, lon: p.lon, mode, minutes })),
+    [placed, mode, minutes],
   );
-  const anchorKey = anchors.length < 2 ? null : `${JSON.stringify(anchors)}#${nonce}`;
+  const hasPoi = placed.some((p) => p.index > 0);
+  const anchorKey =
+    place && hasPoi && anchors.length >= 2 ? `${JSON.stringify(anchors)}#${nonce}` : null;
 
   useEffect(() => {
     if (anchorKey === null) return;
@@ -404,35 +425,16 @@ export function useTripPlanner(
   const data = status === "ready" || status === "empty" ? (settled as { data: TripData }).data : null;
 
   const overlay = useMemo<TripOverlay>(() => {
-    const placed = rows.flatMap((row, index) =>
-      hasCoordinates(row) ? [{ row, index }] : [],
-    );
     const iso = data?.isochrones ?? [];
     return {
-      anchors: placed.map(({ row, index }, i) => ({
-        index,
-        label: row.label || anchorName(index),
-        lat: row.lat,
-        lon: row.lon,
-        geometry: iso[i]?.geometry ?? null,
-      })),
+      anchors: placed.map((p, i) => ({ ...p, geometry: iso[i]?.geometry ?? null })),
       combined: data?.combined?.geometry ?? null,
-      pins: placed.map(({ row, index }) => ({
-        index,
-        label: row.label || anchorName(index),
-        lat: row.lat,
-        lon: row.lon,
-      })),
+      pins: placed.map((p) => ({ ...p })),
     };
-  }, [rows, data]);
+  }, [placed, data]);
 
   const urlPoints = useMemo<UrlPoint[]>(
-    () =>
-      rows.flatMap((row) =>
-        hasCoordinates(row)
-          ? [{ lat: row.lat, lon: row.lon, mode: row.mode, minutes: row.minutes }]
-          : [],
-      ),
+    () => rows.flatMap((row) => (hasCoordinates(row) ? [{ lat: row.lat, lon: row.lon }] : [])),
     [rows],
   );
 
@@ -441,7 +443,7 @@ export function useTripPlanner(
   return {
     rows,
     active: rows.length > 0,
-    canAdd: rows.length < MAX_TRIP_ROWS,
+    canAdd: rows.length < MAX_POIS,
     lastAddedId,
     status,
     data,
@@ -449,10 +451,11 @@ export function useTripPlanner(
     urlPoints,
     add,
     remove,
-    setTravel,
     selectSuggestion,
     submitText,
+    setText,
     clearPlace,
+    resolvePending,
     hydrate,
     retry,
   };

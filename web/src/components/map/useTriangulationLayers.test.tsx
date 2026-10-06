@@ -126,7 +126,7 @@ describe("useTriangulationLayers", () => {
     );
     expect(gl.markers.map((m) => m.element.textContent)).toEqual(["★", "1"]);
     expect(gl.markers[1].element.style.background).toContain("rgb(234, 88, 12)");
-    expect(gl.markers[1].element.getAttribute("aria-label")).toBe("Point 1");
+    expect(gl.markers[1].element.getAttribute("aria-label")).toBe("Point of interest 1");
 
     view.unmount();
     expect(gl.markers.every((m) => m.removed)).toBe(true);

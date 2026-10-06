@@ -34,17 +34,18 @@ test("app result flow: pick a suggestion, see the score, pin it to compare", asy
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("points of interest: add one, see the overlap list, remove it", async ({ page }) => {
+test("points of interest: add two, see the overlap list, remove them", async ({ page }) => {
   await mockApi(page);
   await page.goto("/app");
   await page.getByRole("combobox").first().fill("350 5th");
   await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
   await expect(page.getByTestId("composite-score")).toBeVisible();
 
-  const add = page.getByRole("button", { name: /Point of interest/ });
+  const add = page.getByRole("button", { name: "Point of interest", exact: true });
   await add.click();
-  const point = page.getByRole("group", { name: "Point 1" });
-  await point.getByRole("combobox").fill("grand central");
+  const first = page.getByRole("combobox", { name: "Point of interest 1 address" });
+  await expect(first).toBeFocused();
+  await first.fill("grand central");
   await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
 
   await expect(page.getByRole("heading", { name: "Best areas in the overlap" })).toBeVisible();
@@ -52,14 +53,16 @@ test("points of interest: add one, see the overlap list, remove it", async ({ pa
     page.getByRole("list", { name: "Best areas in the overlap" }).getByRole("button"),
   ).toHaveCount(2);
 
-  // Two points of interest is the most: the add button goes away after the second.
+  // Two points of interest is the most: the pill goes away after the second box opens.
   await add.click();
+  await expect(page.getByRole("combobox", { name: "Point of interest 2 address" })).toBeFocused();
   await expect(add).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Remove Point 2" }).click();
-  await page.getByRole("button", { name: "Remove Point 1" }).click();
-  await expect(page.getByRole("group", { name: "Point 1" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Point of interest/ })).toBeVisible();
+  await page.getByRole("button", { name: "Remove point of interest 2" }).click();
+  await expect(add).toBeVisible();
+  await page.getByRole("button", { name: "Remove point of interest 1" }).click();
+  await expect(page.getByRole("combobox", { name: /Point of interest/ })).toHaveCount(0);
+  await expect(add).toBeVisible();
 });
 
 test("toggling a factor recolours the map and re-ranks best areas", async ({ page }) => {

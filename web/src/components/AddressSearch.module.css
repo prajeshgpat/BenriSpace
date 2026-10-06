@@ -187,3 +187,33 @@
 .compact .input[data-adorned] {
   padding-right: 2.5rem;
 }
+
+/* Pill: a very small, fully rounded box; the parent puts its own button on the right. */
+.pill .field {
+  width: 100%;
+  min-width: 0;
+}
+
+.pill .input {
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+}
+
+.pill .input[data-adorned] {
+  padding-right: 1.875rem;
+}
+
+.pill .adornment {
+  right: 0.25rem;
+}
+
+/* Wider than the box so addresses stay readable; the parent can shift it left. */
+.pill .listbox {
+  inset: calc(100% + 0.25rem) auto auto var(--list-left, 0);
+  width: max-content;
+  min-width: 16rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+  font-size: 0.875rem;
+}

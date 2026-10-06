@@ -1210,3 +1210,45 @@ describe("selection reaches the point endpoints", () => {
     expect(getSimilar).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Workspace: points of interest", () => {
+  const park = { label: "Park Ave, NY", latitude: 40.75, longitude: -73.97 };
+
+  it("Get score looks up typed points of interest first, then scores the main address", async () => {
+    const user = userEvent.setup();
+    const suggestAddresses = vi.fn<ApiClient["suggestAddresses"]>(async () => [park]);
+    setup("", liveApi, { suggestAddresses });
+
+    await user.type(screen.getByRole("combobox", { name: "Address" }), "350 5th Ave, New York");
+    await user.click(screen.getByRole("button", { name: "Point of interest" }));
+    await user.type(
+      screen.getByRole("combobox", { name: "Point of interest 1 address" }),
+      "park ave",
+    );
+    suggestAddresses.mockClear();
+    await user.click(screen.getByRole("button", { name: "Get score" }));
+
+    expect(suggestAddresses).toHaveBeenCalledWith("park ave", { limit: 1 });
+    await waitFor(() =>
+      expect(pushState).toHaveBeenCalledWith(null, "", expect.stringContaining("address=350+5th+Ave")),
+    );
+    expect(screen.getByRole("combobox", { name: "Point of interest 1 address" })).toHaveValue(
+      "Park Ave, NY",
+    );
+    // The resolved point is in the shared link.
+    await waitFor(() =>
+      expect(replaceState).toHaveBeenCalledWith(null, "", expect.stringContaining("pt=40.75000%2C-73.97000")),
+    );
+  });
+
+  it("puts Ask Benri directly below the score card", async () => {
+    setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
+    const card = await screen.findByRole("region", { name: "Selected location" });
+    const ask = screen.getByRole("button", { name: "Ask Benri" });
+    expect(card.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const pill = screen.getByRole("button", { name: "Point of interest" });
+    expect(pill.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const factors = screen.getByRole("group", { name: "Travel time" });
+    expect(ask.compareDocumentPosition(factors) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
