@@ -26,6 +26,7 @@ describe("parseExplorerParams", () => {
       target: null,
       targetError: null,
       center: null,
+      points: [],
       zoom: null,
       selection: ALL_FACTORS,
     });

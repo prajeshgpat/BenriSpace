@@ -140,3 +140,39 @@
     flex: 1;
   }
 }
+
+/* Compact: one small row, no submit button, a clear button inside the field. */
+.compact .row {
+  flex-direction: row;
+}
+
+.compact .field {
+  flex: 1;
+}
+
+.compact .input {
+  height: 2.5rem;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-md);
+}
+
+.compact .input[data-adorned] {
+  padding-right: 2.5rem;
+}
+
+.clear {
+  position: absolute;
+  inset-block: 0;
+  right: 0.125rem;
+  width: 2.5rem;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.clear:hover {
+  color: var(--text);
+}

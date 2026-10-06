@@ -144,6 +144,28 @@ export interface Reach {
   geometry: AreaGeometry | null;
 }
 
+/** One place in a triangulation: how far, and how, the user will travel to it. */
+export interface TriangulateAnchor {
+  label: string;
+  lat: number;
+  lon: number;
+  mode: ReachMode;
+  minutes: number;
+}
+
+/** A reachable area, as in `Reach`, plus how many cells it covers. */
+export interface Isochrone extends Reach {
+  label: string | null;
+  cellCount: number;
+}
+
+/** POST /triangulate: where the travel areas of several places overlap. */
+export interface Triangulation {
+  results: { lat: number; lon: number; score: number; address: string }[];
+  isochrones: Isochrone[];
+  combined: Isochrone | null;
+}
+
 export interface Similar {
   minSeparationMi: number;
   results: SimilarArea[];
