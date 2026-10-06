@@ -278,6 +278,9 @@
 
 /* The entry point to the chat, directly under the search field. */
 .ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   justify-self: start;
   min-height: 2.75rem;
   padding: 0 1.25rem;
@@ -288,6 +291,12 @@
   font: inherit;
   font-weight: 650;
   cursor: pointer;
+}
+
+.askIcon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
 }
 
 .ask:hover {

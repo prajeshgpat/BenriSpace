@@ -6,6 +6,7 @@ import {
   MAX_COMPARE,
   addPlace,
   loadPlaces,
+  pinWithCurrent,
   removePlace,
   savePlaces,
   type ComparePlace,
@@ -35,12 +36,8 @@ export function useCompare() {
   );
   const clear = useCallback(() => setPlaces([]), []);
   const toggle = useCallback(
-    (place: ComparePlace) =>
-      setPlaces((current) =>
-        current.some((p) => p.id === place.id)
-          ? removePlace(current, place.id)
-          : addPlace(current, place),
-      ),
+    (place: ComparePlace, companion?: ComparePlace) =>
+      setPlaces((current) => pinWithCurrent(current, place, companion)),
     [],
   );
   return { places, add, remove, clear, toggle, full: places.length >= MAX_COMPARE };

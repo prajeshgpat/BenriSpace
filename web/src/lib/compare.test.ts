@@ -10,6 +10,7 @@ import {
   biggestDifferences,
   gapFromBest,
   loadPlaces,
+  pinWithCurrent,
   removePlace,
   savePlaces,
   type ComparePlace,
@@ -63,5 +64,33 @@ describe("compare", () => {
     expect(diffs).toHaveLength(1);
     expect(diffs[0]).toMatchObject({ row: "grocery", spread: 30, leaderIds: ["a"], trailerIds: ["b"] });
     expect(biggestDifferences([list[0]])).toEqual([]);
+  });
+
+  describe("pinWithCurrent", () => {
+    const ids = (list: ComparePlace[]) => list.map((p) => p.id);
+
+    it("unpins a place that is already pinned, leaving the current place alone", () => {
+      const list = [place("a", 1), place("b", 2)];
+      expect(ids(pinWithCurrent(list, place("b", 2), place("c", 3)))).toEqual(["a"]);
+    });
+
+    it("pins the current place first, then the new one", () => {
+      expect(ids(pinWithCurrent([], place("area", 1), place("here", 2)))).toEqual(["here", "area"]);
+      expect(ids(pinWithCurrent([place("x", 1)], place("area", 1), place("here", 2)))).toEqual(["x", "here", "area"]);
+    });
+
+    it("pins only the place without a current, for the same place, or when current is pinned", () => {
+      expect(ids(pinWithCurrent([], place("area", 1)))).toEqual(["area"]);
+      expect(ids(pinWithCurrent([], place("area", 1), null))).toEqual(["area"]);
+      expect(ids(pinWithCurrent([], place("area", 1), place("area", 1)))).toEqual(["area"]);
+      expect(ids(pinWithCurrent([place("here", 2)], place("area", 1), place("here", 2)))).toEqual(["here", "area"]);
+    });
+
+    it("pins only the place when there is no room for both", () => {
+      const three = [place("a", 1), place("b", 1), place("c", 1)];
+      expect(ids(pinWithCurrent(three, place("area", 1), place("here", 2)))).toEqual(["a", "b", "c", "area"]);
+      const full = [...three, place("d", 1)];
+      expect(ids(pinWithCurrent(full, place("area", 1), place("here", 2)))).toEqual(["a", "b", "c", "d"]);
+    });
   });
 });

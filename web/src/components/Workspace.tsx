@@ -17,6 +17,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useCurrentLocation } from "@/hooks/useCurrentLocation";
 import { useCompare } from "@/hooks/useCompare";
 import { useLatest } from "@/hooks/useLatest";
+import { AskIcon } from "./AskIcon";
 import { useMapData } from "@/hooks/useMapData";
 import { useReverseGeocode } from "@/hooks/useReverseGeocode";
 import { useScoreLookup, type LookupState } from "@/hooks/useScoreLookup";
@@ -390,6 +391,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // that map panning causes.
   const showPreviewRef = useLatest(showPreview);
   const selectTopRef = useLatest(selectTop);
+  const currentPlaceRef = useLatest(currentPlace);
   const onPreview = useCallback(
     (next: Preview) => showPreviewRef.current(next),
     [showPreviewRef],
@@ -404,9 +406,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       isPinned: (r: MapTopResult) =>
         pinned.some((p) => p.id === placeId(r.latitude, r.longitude)),
       full: compareFull,
-      onToggle: (r: MapTopResult) => toggleCompare(topPlace(r)),
+      // Pinning an area also pins the place that was searched, so the two can be compared.
+      onToggle: (r: MapTopResult) =>
+        toggleCompare(topPlace(r), currentPlaceRef.current ?? undefined),
     }),
-    [pinned, compareFull, toggleCompare],
+    [pinned, compareFull, toggleCompare, currentPlaceRef],
   );
   const successScore = state.status === "success" ? state.score : null;
   const scoreCoordinates = useMemo(
@@ -773,6 +777,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
 
       {chatOpen ? null : (
         <button type="button" className={styles.ask} onClick={openChat}>
+          <AskIcon className={styles.askIcon} />
           Ask Benri
         </button>
       )}

@@ -1,3 +1,47 @@
+/*
+ * Opening: the wrapper grows from 0fr to 1fr while it fades in and drops 4px.
+ * The inner element clips only while that runs (the keyframes set the overflow,
+ * so it is gone afterwards and focus rings are never cut off).
+ */
+.enter {
+  display: grid;
+  grid-template-rows: 1fr;
+  flex: none;
+  animation: enter 240ms ease-out;
+}
+
+.enterInner {
+  min-height: 0;
+  animation: clip 240ms ease-out;
+}
+
+@keyframes enter {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes clip {
+  from,
+  to {
+    overflow: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter,
+  .enterInner {
+    animation: none;
+  }
+}
+
 .chat {
   /* Never squeezed by the sheet's flex column; the page scrolls instead. */
   flex: none;
@@ -112,7 +156,8 @@
 }
 
 .chips {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 0;
   padding: 0;
@@ -120,8 +165,9 @@
 }
 
 .chip {
-  width: 100%;
-  min-height: 2.75rem;
+  width: auto;
+  max-width: 100%;
+  min-height: 2.5rem;
   padding: 0.5rem 0.875rem;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
