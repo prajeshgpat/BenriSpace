@@ -31,9 +31,9 @@ variable "lambda_zip_path" {
 }
 
 variable "scoring_weights_version" {
-  description = "Scores weights_version the API serves (map, /score, /area). v2.1-handtuned since 2026-10-05; set back to v2-handtuned to roll back."
+  description = "Scores weights_version the API serves (map, /score, /area). v2.2-density since 2026-10-06 (routed density per area, SCORING.md A10); set back to v2.1-handtuned to roll back (its rows are kept)."
   type        = string
-  default     = "v2.1-handtuned"
+  default     = "v2.2-density"
 }
 
 variable "lambda_memory_mb" {

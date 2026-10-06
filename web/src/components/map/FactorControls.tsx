@@ -151,9 +151,11 @@ function FactorControlsImpl({
         </details>
 
         <p className={styles.note}>
-          <strong>Why isn&rsquo;t anywhere 100?</strong> Scores are relative
-          within each metro area, so no spot is the best on every factor at
-          once. Pick one or two factors to see where each is at its maximum.
+          <strong>Why isn&rsquo;t anywhere 100?</strong> Every place is scored
+          on one scale for the whole region, by how much is within a short walk
+          or drive. Dense, walkable blocks can reach 100 on amenities, but the
+          best spots for transit are also the busiest and noisiest, so nowhere
+          maxes out every factor.
         </p>
       </div>
     </section>

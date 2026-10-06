@@ -82,9 +82,9 @@ describe("FactorControls", () => {
   it("explains why nothing scores 100 everywhere", () => {
     render(<Harness />);
     expect(
-      screen.getByText(/relative within each metro area/),
+      screen.getByText(/one scale for the whole region/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/one or two factors/)).toBeInTheDocument();
+    expect(screen.getByText(/nowhere maxes out every factor/)).toBeInTheDocument();
   });
 });
 
