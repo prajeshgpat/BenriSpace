@@ -3,6 +3,8 @@
     python -m ingestion.routing.run --region jersey_city_hoboken --steps amenity,graph
     python -m ingestion.routing.run --region jersey_city_hoboken --steps transit,hubs
     python -m ingestion.routing.run --all --steps amenity,graph,transit,hubs      # whole metro
+    python -m ingestion.routing.run --all --networks build/routing --steps amenity,graph,hubs
+        # whole metro from the saved Geofabrik networks (ingestion/routing/pbf.py): no Overpass
 
 Steps (any subset, in this order):
   amenity  cell_travel: minutes to the 1st-3rd nearest place of each category, in the cell's own
@@ -20,6 +22,7 @@ timings without writing. Timings and peak RSS are printed per tile and in total.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import resource
 import sys
@@ -76,6 +79,115 @@ def build_tile_network(tile: tiles.Tile, mode: str, stats: Stats):
     stats.nodes += data.n_nodes
     stats.edges += data.n_edges
     return net
+
+
+def load_pandana(networks_dir, name: str, stats: Stats):
+    """A saved network (ingestion/routing/pbf.py) as a Pandana network, with road fragments
+    that are not joined to the main network dropped."""
+    from pathlib import Path
+
+    from ingestion.routing import pbf
+
+    t0 = time.time()
+    data = pbf.keep_connected(pbf.load_network(Path(networks_dir) / f"{name}.npz"))
+    net = network.to_pandana(data)
+    stats.add(f"{name}_network", time.time() - t0)
+    stats.nodes += data.n_nodes
+    stats.edges += data.n_edges
+    return net
+
+
+def fast_snapper(networks_dir, net):
+    """Snapper onto the saved collector network's nodes (pbf.py `collector`), or None."""
+    from pathlib import Path
+
+    from ingestion.routing import pbf
+
+    path = Path(networks_dir) / "collector.npz"
+    if not path.exists():
+        return None
+    data = pbf.load_network(path)
+    return travel.FastSnapper(data.node_ids, data.x, data.y, net.nodes_df.index.to_numpy())
+
+
+GRAPH_ROWS = 25  # grid rows per neighbour-minutes call: bounds memory and snapping cost
+
+
+def run_region(conn, networks_dir, region, modes, steps, stats: Stats, dry_run: bool) -> None:
+    """The whole region at once from saved networks: amenity minutes for every cell in its own
+    mode, then the cell-to-cell graph, one mode network at a time."""
+    cells = store.read_cells(conn, region)
+    stats.tiles, stats.cells = 1, len(cells)
+    by_key = {(c.iy, c.ix): i for i, c in enumerate(cells)}
+    iy_min = min(c.iy for c in cells)
+    iy_max = max(c.iy for c in cells) + 1
+    ix_min = min(c.ix for c in cells)
+    ix_max = max(c.ix for c in cells) + 1
+    places = store.read_places(conn, tiles.pad_box(region, 5000.0)) if "amenity" in steps else {}
+    for mode in modes:
+        mode_cells = [c for c in cells if c.mode == mode]
+        net = load_pandana(networks_dir, mode, stats)
+        print(f"[routing] {mode} network ready, peak {peak_rss_mb():.0f} MB", file=sys.stderr)
+        if "amenity" in steps and mode_cells:
+            t0 = time.time()
+            lat = np.array([c.lat for c in mode_cells])
+            lon = np.array([c.lon for c in mode_cells])
+            node_ids, _, snap_min, on_net = travel.snap(net, lat, lon, mode)
+            minutes = travel.amenity_minutes(net, node_ids, snap_min, on_net, places, mode)
+            stats.add("amenity_search", time.time() - t0)
+            written = 0 if dry_run else store.write_cell_travel(conn, mode_cells, minutes)
+            reached = int((minutes >= 0).any(axis=1).sum())
+            print(
+                f"[routing] {mode} amenity: {len(mode_cells):,} cells, {reached:,} reach a place,"
+                f" {written:,} written, {time.time() - t0:.0f}s",
+                file=sys.stderr,
+            )
+        if "graph" in steps:
+            t0 = time.time()
+            total = 0
+            fast = fast_snapper(networks_dir, net) if mode == "drive" else None
+            for y0 in range(iy_min, iy_max, GRAPH_ROWS):
+                y1 = min(y0 + GRAPH_ROWS, iy_max)
+                iys, ixs, edges = travel.neighbor_minutes(net, y0, ix_min, y1, ix_max, mode, fast)
+                pick = [by_key.get((int(y), int(x))) for y, x in zip(iys, ixs, strict=True)]
+                keep = [r for r, p in enumerate(pick) if p is not None]
+                if keep and not dry_run:
+                    total += store.write_cell_graph(
+                        conn, [cells[pick[r]] for r in keep], mode, edges[np.array(keep)]
+                    )
+            stats.add("graph_search", time.time() - t0)
+            print(
+                f"[routing] {mode} graph: {total:,} cells written, {time.time() - t0:.0f}s",
+                file=sys.stderr,
+            )
+        del net
+        gc.collect()
+
+
+def run_hubs_region(conn, networks_dir, region, stats: Stats, dry_run: bool) -> dict:
+    """Airport and rail-station drive minutes for every cell, on the saved arterial network."""
+    t0 = time.time()
+    net = load_pandana(networks_dir, "arterial", stats)
+    airports = hubs.airport_rows()
+    if not dry_run:
+        store.write_hubs(conn, airports)
+    kinds = {"airport": [(r[0], r[4], r[5]) for r in airports]}
+    rail = store.read_hubs(conn, "rail")
+    if rail:
+        kinds["rail"] = [(r[0], r[3], r[4]) for r in rail]
+    cells = store.read_cells(conn, region)
+    lat = np.array([c.lat for c in cells])
+    lon = np.array([c.lon for c in cells])
+    written = {}
+    for kind, hub_list in kinds.items():
+        ids, dm = hubs.nearest_hubs(net, lat, lon, hub_list)
+        if not dry_run:
+            written[kind] = store.write_cell_hubs(conn, [c.geohash for c in cells], kind, ids, dm)
+        else:
+            written[kind] = int((ids[:, 0] >= 0).sum())
+    stats.add("hubs_search", time.time() - t0)
+    print(f"[routing] hubs: {written}, {time.time() - t0:.0f}s", file=sys.stderr)
+    return {"cells_with_hubs": written, "rail_stations": len(rail)}
 
 
 def run_tile(conn, tile: tiles.Tile, modes, steps, stats: Stats, dry_run: bool) -> None:
@@ -182,6 +294,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--modes", default=",".join(MODES))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--max-tiles", type=int, default=0)
+    ap.add_argument(
+        "--networks",
+        help="directory of saved networks (walk.npz, drive.npz, arterial.npz from "
+        "ingestion.routing.pbf): the whole region at once, no Overpass",
+    )
     args = ap.parse_args(argv)
 
     steps = [s for s in args.steps.split(",") if s]
@@ -194,14 +311,21 @@ def main(argv: list[str] | None = None) -> None:
     summary: dict = {}
     with get_connection() as conn:
         if args.all:
-            region = store.cell_bounds_of(conn)
+            south, west, north, east = store.cell_bounds_of(conn)
+            eps = 1e-6  # read_cells is half-open: keep the cells on the north / east edge
+            region = (south - eps, west - eps, north + eps, east + eps)
         elif args.bbox:
             region = tuple(float(v) for v in args.bbox.split(","))
         else:
             region = REGIONS[args.region]
         if "transit" in steps:
             summary["transit"] = run_transit(conn, stats, args.dry_run)
-        if "amenity" in steps or "graph" in steps:
+        if args.networks:
+            if "amenity" in steps or "graph" in steps:
+                run_region(conn, args.networks, region, modes, steps, stats, args.dry_run)
+            if "hubs" in steps:
+                summary["hubs"] = run_hubs_region(conn, args.networks, region, stats, args.dry_run)
+        elif "amenity" in steps or "graph" in steps:
             by_mode: dict[str, list[tiles.Tile]] = {
                 m: tiles.plan_tiles(region, *TILE_CELLS[m]) for m in modes
             }
@@ -217,7 +341,7 @@ def main(argv: list[str] | None = None) -> None:
                         f"{time.time() - t0:.1f}s peak {peak_rss_mb():.0f} MB",
                         file=sys.stderr,
                     )
-        if "hubs" in steps:
+        if "hubs" in steps and not args.networks:
             summary["hubs"] = run_hubs(conn, region, stats, args.dry_run)
         if not args.dry_run and ("amenity" in steps or "graph" in steps):
             store.write_meta(conn, "layout", meta_blob())

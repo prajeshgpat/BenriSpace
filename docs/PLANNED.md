@@ -71,13 +71,19 @@ Last updated 2026-10-05.
 
 ## Wave 4 — Routing precompute
 
-- [~] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana per tile, migration
-  0022). Sample-run on Jersey City + Hoboken walk tiles only.
-- [~] **Drive matrices** to airports and rail stations (arterial backbone). Not run on
-  real data.
-- [~] **Train times.** Connection Scan over GTFS rail, 933-station matrix (12 s).
+- [~] **Walk / drive minutes per cell** (`ingestion/routing/`, Pandana, migration 0022).
+  Full region computed locally from the Geofabrik networks in 25 min
+  (`run --all --networks build/routing --steps amenity,graph,hubs`); 51 MB of tables.
+  Moves to production with `scripts/copy_routing.py` (one transaction, size-guarded).
+- [~] **Drive matrices** to airports and rail stations: computed for every cell on the
+  arterial network (`pbf.py` `arterial` mode); ships with the copy above.
+- [~] **Train times.** Connection Scan over GTFS rail, 933 stations, 273k connections,
+  matrix in 24 s; refreshed locally, ships with the copy above.
 - [~] **Isochrones** `GET /v1/isochrone` from a stored cell graph (pure Python, 2-27 ms);
-  web "How far can I get?" card.
+  web "How far can I get?" card. Cell resolution is coarse: checked against routed
+  area-to-area times, walking is within about +-30 % and driving within 0.85-1.05x in rural
+  areas, 0.6-0.7x for 20-minute trips in dense suburbs (drive cells snap to collector roads,
+  `travel.FastSnapper`). A finer or longer-range graph would tighten it.
 - [~] **Real `/triangulate`** (cell-set intersect / union) and **optimizer upgrades**
   (Weiszfeld seed, lower-bound pruning, stored times).
 - [x] **Geofabrik extract** instead of Overpass (`ingestion/routing/pbf.py`: NY/NJ/CT walk

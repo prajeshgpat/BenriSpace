@@ -193,6 +193,13 @@ A point is scored at its exact coordinates instead of reusing the stored score o
 
 ## A9. Routing precompute (inputs for time-based scoring)
 
+Whole-region run from Geofabrik extracts: `python -m ingestion.routing.pbf` builds the walk,
+drive, arterial and collector networks (about 3 min), then `python -m ingestion.routing.run
+--all --networks build/routing --steps amenity,graph,hubs` fills the migration 0022 tables
+in the local database (25 min, 9.5 GB peak) and `scripts/copy_routing.py` moves them to
+production. Edge times are network minutes between the two cells' nodes; drive cells snap to
+collector-or-larger roads within 1.2 mi so chained hops can stay on main roads.
+
 The Wave 4 precompute (`ingestion/routing/`, migration 0022, see ARCHITECTURE section 6) stores
 network minutes to the nearest, 2nd and 3rd nearest place of every category per cell (walk for
 cells at or above 10,000 people / sq mi, drive below), drive minutes to airports and rail

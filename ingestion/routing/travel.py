@@ -53,6 +53,29 @@ def snap(net, lat: np.ndarray, lon: np.ndarray, mode: str):
     return node_ids, snap_m, snap_m / LOCAL_M_PER_MIN[mode], snap_m <= MAX_SNAP_M
 
 
+class FastSnapper:
+    """Snaps points to the nearest node of a faster road class (collectors and up) within
+    `max_mi`, else leaves the default node. Used for the drive cell graph: a cell centre's nearest
+    node is usually a residential street, and chaining hops from one local street to the next
+    forces local-street speeds even where a main road runs through the cell."""
+
+    def __init__(self, node_ids, lon, lat, routable_ids, max_mi: float = 1.2):
+        from scipy.spatial import cKDTree
+
+        keep = np.isin(node_ids, routable_ids)
+        self.ids = np.asarray(node_ids)[keep]
+        self.ref = float(np.mean(lat[keep])) if keep.any() else 40.0
+        self.max_mi = max_mi
+        self.tree = cKDTree(self._xy(np.asarray(lat)[keep], np.asarray(lon)[keep]))
+
+    def _xy(self, lat, lon):
+        return np.column_stack([lon * 69.172 * np.cos(np.radians(self.ref)), lat * 69.172])
+
+    def __call__(self, lat: np.ndarray, lon: np.ndarray, default_ids: np.ndarray) -> np.ndarray:
+        dist, i = self.tree.query(self._xy(lat, lon))
+        return np.where(dist <= self.max_mi, self.ids[i], default_ids)
+
+
 def amenity_minutes(
     net,
     node_ids: np.ndarray,
@@ -90,19 +113,24 @@ def _grid_centres(iy0: int, ix0: int, iy1: int, ix1: int):
 
 
 def neighbor_minutes(
-    net, iy0: int, ix0: int, iy1: int, ix1: int, mode: str
+    net, iy0: int, ix0: int, iy1: int, ix1: int, mode: str, fast: FastSnapper | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Edge minutes for every cell of [iy0,iy1) x [ix0,ix1) to its 8 neighbours.
 
     Returns (iys, ixs, edges) where edges is (n_cells, 8) int16 deci-minutes in NEIGHBORS order
-    (-1 = no usable edge). Time = network time between the two cell centres' nodes + half of each
-    centre's door-to-node leg (so a chain of cells counts every leg once), never faster than a
-    straight line at the mode's top speed, and capped at the mode's search cap."""
+    (-1 = no usable edge). Time = network time between the two cell centres' nodes, never faster
+    than a straight line at the mode's top speed, and capped at the mode's search cap.
+
+    The door-to-node leg of a cell centre is NOT added: a trip along a road passes through a cell
+    without visiting its centre, so charging the leg at every hop made 20-minute drive reach 28-37 %
+    of the real network's in rural areas (checked against routed area-to-area times)."""
     # Snap the core plus a one-cell ring so edges that cross the tile border are exact.
     ey0, ex0, ey1, ex1 = iy0 - 1, ix0 - 1, iy1 + 1, ix1 + 1
     w = ex1 - ex0
     eys, exs, lat, lon = _grid_centres(ey0, ex0, ey1, ex1)
-    node_ids, _, snap_min, on_net = snap(net, lat, lon, mode)
+    node_ids, _, _, on_net = snap(net, lat, lon, mode)
+    if fast is not None:
+        node_ids = fast(lat, lon, node_ids)
     cap = CAP_MIN[mode]
     core = (eys >= iy0) & (eys < iy1) & (exs >= ix0) & (exs < ix1)
     core_idx = np.flatnonzero(core)
@@ -118,7 +146,7 @@ def neighbor_minutes(
         dlat = (lat[nb_idx] - lat[core_idx]) * M_PER_DEG_LAT
         dlon = (lon[nb_idx] - lon[core_idx]) * M_PER_DEG_LAT * np.cos(np.radians(lat[core_idx]))
         floor = np.hypot(dlat, dlon) / MIN_EDGE_M_PER_MIN[mode]
-        total = np.maximum(net_min + 0.5 * (snap_min[core_idx] + snap_min[nb_idx]), floor)
+        total = np.maximum(net_min, floor)
         ok = on_net[core_idx] & on_net[nb_idx] & np.isfinite(net_min) & (total <= cap)
         edges[:, d] = _to_dm(np.where(ok, total, 0.0), ok)
     return eys[core_idx], exs[core_idx], edges
