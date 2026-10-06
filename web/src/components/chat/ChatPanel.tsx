@@ -200,9 +200,29 @@ export function ChatPanel({
     }
   }, [placeKey, placeLabel, hydrated]);
 
+  // A new reply scrolls to ITS START, so the answer and its top results show first (jumping
+  // to the bottom hid them behind the last result card, worst on a phone). While a question
+  // is being sent or answered, or after an error, the log follows the bottom.
   useEffect(() => {
     const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
+    if (!log) return;
+    const replies = log.querySelectorAll<HTMLElement>('[data-role="assistant"]');
+    const last = messages[messages.length - 1];
+    const reply = replies[replies.length - 1];
+    if (!pending && !failure && last?.role === "assistant" && reply) {
+      const offset = reply.getBoundingClientRect().top - log.getBoundingClientRect().top;
+      log.scrollTop += offset - 8;
+      // The page (or the phone's bottom sheet) may also have scrolled, e.g. to keep the input
+      // in view: after that settles, bring the reply's first line on screen if it is not.
+      const frame = requestAnimationFrame(() => {
+        const top = reply.getBoundingClientRect().top;
+        if (top < 0 || top > window.innerHeight * 0.6) {
+          reply.scrollIntoView?.({ block: "start" });
+        }
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    log.scrollTop = log.scrollHeight;
   }, [messages, pending, failure]);
 
   const ask = useCallback(

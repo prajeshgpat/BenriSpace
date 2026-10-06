@@ -104,7 +104,23 @@ Last updated 2026-10-05.
   100 -> 30). Cutover: migration 0023, ingestion run, reach from production places,
   `scoring.area_run --write`, publish, switch `scoring_weights_version` + the repository
   variable. Not recomputed weekly yet (offline job).
-- [ ] Run the reach + area scoring in CI (needs ~10 GB RAM for the walk network, or tiles).
+- [ ] **Automate the v2.2 refresh** (`reach` -> `scoring.area_run --write` -> `publish_static.py
+  --weights-version v2.2-density`). Today these three run by hand, about monthly, after the
+  weekly ingestion; until then the scores keep the last run's data (nothing breaks).
+  *Why:* ingestion refreshes places and stations but v2.2 is computed from them offline.
+  *Shape:* a workflow triggered by `workflow_run` after a successful weekly ingestion (plus
+  `workflow_dispatch`): download the NY/NJ/CT Geofabrik extracts, `pbf.py`, `reach`,
+  `area_run --write`, `publish_static`. `reach` and `area_run` can read places, `areas_slim`
+  and the rail hubs straight from production (set `AREAS_DATABASE_URL` to `DATABASE_URL`), so
+  `--sync-places` is not needed there. Add a sanity gate before writing (area count, pair
+  counts, median composite in range) so a bad extract cannot publish garbage; add a `reach`
+  extra to `pyproject.toml` without osmnx.
+  *Blocker:* the repo is private, so hosted runners have 7 GB of RAM and the walk network
+  peaked at about 8.6 GB. Options: (a) tile the walk network by region so each piece fits
+  (the right answer, a few hours), (b) a scheduled `launchd` job on the laptop (same
+  commands, only runs when the Mac is awake), (c) make the repo public (16 GB runners).
+  Also measure `reach`'s own peak memory first (not yet measured); the routed travel tables
+  (`run --all --networks ...` + `copy_routing.py`) could join the same workflow later.
 - [ ] Better places coverage (Overture Maps): OpenStreetMap misses many gyms and shops.
 
 - [ ] Per-factor time curves by travel mode, reading `cell_travel` ([SCORING.md](SCORING.md)

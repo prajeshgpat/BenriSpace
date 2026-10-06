@@ -122,7 +122,7 @@ interface MapCanvasProps {
   areaGeometry?: AreaGeometry | null;
   /** A previewed (not selected) area: drawn dashed, in orange. */
   previewAreaGeometry?: AreaGeometry | null;
-  /** The area reachable from the selected place (isochrone): dashed teal. */
+  /** The area reachable from the selected place (isochrone): a magenta outline on top. */
   reachGeometry?: AreaGeometry | null;
   previewPin?: PinSpec | null;
   /**
@@ -291,30 +291,22 @@ function addReachLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean
     },
     firstLabel?.id,
   );
-  map.addLayer(
-    {
-      id: REACH_CASING_LAYER,
-      type: "line",
-      source: REACH_SOURCE_ID,
-      layout: { "line-join": "round" },
-      paint: { "line-color": style.casing, "line-width": 5, "line-opacity": 0.85 },
-    },
-    firstLabel?.id,
-  );
-  map.addLayer(
-    {
-      id: REACH_LINE_LAYER,
-      type: "line",
-      source: REACH_SOURCE_ID,
-      layout: { "line-join": "round" },
-      paint: {
-        "line-color": style.line,
-        "line-width": 2.5,
-        "line-dasharray": [3, 2],
-      },
-    },
-    firstLabel?.id,
-  );
+  // The outline goes on top of everything (no beforeId): the score cells are added later
+  // below the labels too, and would otherwise cover it.
+  map.addLayer({
+    id: REACH_CASING_LAYER,
+    type: "line",
+    source: REACH_SOURCE_ID,
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": style.casing, "line-width": 7, "line-opacity": 0.95 },
+  });
+  map.addLayer({
+    id: REACH_LINE_LAYER,
+    type: "line",
+    source: REACH_SOURCE_ID,
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": style.line, "line-width": 3.5 },
+  });
 }
 
 function addPreviewLayers(map: MaplibreMap, theme: ResolvedTheme, visible: boolean) {

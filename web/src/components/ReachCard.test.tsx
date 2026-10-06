@@ -45,8 +45,8 @@ describe("ReachCard", () => {
     expect(getReach).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
     await waitFor(() => expect(onReach).toHaveBeenCalledWith(SQUARE));
-    expect(getReach.mock.calls[0].slice(0, 4)).toEqual([40.7, -74, "drive", 30]);
-    expect(screen.getByRole("status").textContent).toContain("12.3 sq mi within 30 min");
+    expect(getReach.mock.calls[0].slice(0, 4)).toEqual([40.7, -74, "drive", 15]);
+    expect(screen.getByRole("status").textContent).toContain("12.3 sq mi within 15 min");
   });
 
   it("switches mode and minutes, and says when the area is an estimate", async () => {
@@ -60,7 +60,7 @@ describe("ReachCard", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
     fireEvent.click(screen.getByRole("button", { name: "Walk" }));
-    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 15]));
+    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 10]));
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain("straight-line circle"),
     );
@@ -77,7 +77,7 @@ describe("ReachCard", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Show on map" }));
-    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 15]));
+    await waitFor(() => expect(getReach.mock.calls.at(-1)?.slice(2, 4)).toEqual(["walk", 10]));
     const fewer = screen.getByRole("button", { name: "Fewer minutes" });
     fireEvent.click(fewer);
     fireEvent.click(fewer);
@@ -87,7 +87,7 @@ describe("ReachCard", () => {
     expect(screen.getByText("10 min")).toBeTruthy();
   });
 
-  it("steps train and drive times 5, 10, 15, 30, 45, then every 15", () => {
+  it("steps every mode by 5 minutes: train up to 45, drive up to 60", () => {
     render(
       <ReachCard
         coordinates={{ lat: 40.7, lon: -74 }}
@@ -105,7 +105,11 @@ describe("ReachCard", () => {
       if ((more as HTMLButtonElement).disabled) break;
       fireEvent.click(more);
     }
-    expect(seen).toEqual([5, 10, 15, 30, 45, 60, 75, 90, 105, 120]);
+    expect(seen).toEqual([5, 10, 15, 20, 25, 30, 35, 40, 45]);
+    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    expect(screen.getByText("15 min")).toBeTruthy();
+    while (!(more as HTMLButtonElement).disabled) fireEvent.click(more);
+    expect(screen.getByText("60 min")).toBeTruthy();
   });
 
   it("clears the map when turned off and shows an error", async () => {

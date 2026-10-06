@@ -2,11 +2,22 @@ import Link from "next/link";
 
 import { SiteFooter } from "@/components/SiteFooter";
 import { FactorIcon } from "@/lib/factorIcons";
-import { FACTOR_GUIDE, FACTOR_GUIDE_ORDER } from "@/lib/home/factorGuide";
+import { FACTOR_GUIDE_ORDER } from "@/lib/home/factorGuide";
 import { scoreColor } from "@/lib/map/colors";
 import { FACTORS, FACTOR_GROUPS, type FactorGroup } from "@/lib/score/factors";
 import { APP_PATH } from "@/lib/site";
 
+import {
+  ExtraIcon,
+  GroupIcon,
+  NeighborhoodsIllustration,
+  OptimizationDiagram,
+  ReachIllustration,
+  ScoreDiagram,
+  ScoreIllustration,
+  StopsIllustration,
+  TriangulationDiagram,
+} from "./Diagrams";
 import { HeroSearch } from "./HeroSearch";
 import styles from "./HomePage.module.css";
 
@@ -17,42 +28,73 @@ const STEPS = [
   },
   {
     title: "See the score",
-    text: "Get one score out of 100, with a sub-score for every factor you pick, shown in feet and miles.",
+    text: "One score out of 100, with a sub-score for every factor, in feet and miles.",
   },
   {
     title: "Make it yours",
-    text: "Weight what matters, ask how to improve an area, find similar neighborhoods or plan several stops at once.",
+    text: "Weight what matters, find similar areas or plan several stops at once.",
   },
 ] as const;
 
-const BENEFITS = [
+const FEATURES = [
   {
-    title: "One score from 13 factors",
-    text: "A score out of 100 built from the factors you choose, from groceries and cafes to transit, schools and noise.",
+    title: "One score out of 100",
+    text: "Built from the factors you pick, from groceries to transit and noise.",
+    art: <ScoreIllustration />,
   },
   {
     title: "Real neighborhoods",
-    text: "Areas are polygons bounded by real streets and named for the neighborhood, not arbitrary squares.",
+    text: "Areas bounded by real streets and named for the neighborhood, not squares.",
+    art: <NeighborhoodsIllustration />,
   },
   {
-    title: "Plain-language summary",
-    text: "An AI-written summary explains what drives a score, using only that area's data.",
+    title: "Plan several stops",
+    text: "Work, groceries, the gym: the optimizer ranks areas by total weekly travel.",
+    art: <StopsIllustration />,
   },
   {
-    title: "Improve this area",
-    text: "See which nearby additions would lift a score, with named places on the map.",
+    title: "See how far you can get",
+    text: "Walking, train or car: a travel-time area drawn right on the map.",
+    art: <ReachIllustration />,
+  },
+] as const;
+
+const EXTRAS = [
+  { icon: "summary", title: "AI summary", text: "Plain words on what drives a score." },
+  { icon: "similar", title: "Similar neighborhoods", text: "Find areas that feel alike." },
+  { icon: "improve", title: "Improve this area", text: "See what would lift a score." },
+] as const;
+
+const GROUP_BLURB: Record<FactorGroup, string> = {
+  amenities: "Food, coffee, fitness and shopping close to home.",
+  mobility: "Trains, airports, gas and traffic for getting around.",
+  neighborhood: "Schools, quiet streets and green space.",
+};
+
+const DIAGRAMS = [
+  {
+    key: "score",
+    title: "How the score is built",
+    text: "Each neighborhood counts what is inside it and what you can walk to nearby, with farther places counting less, all on one scale for the whole region. Groceries, gyms and gas count mostly by the nearest one; transit by the walk (or short drive) to a train station. 13 weighted factors become one score out of 100.",
+    label:
+      "Rings around a neighborhood fade with distance, and thirteen weighted factors flow into a dial reading 78 out of 100.",
+    diagram: (label: string) => <ScoreDiagram label={label} />,
   },
   {
-    title: "Similar neighborhoods",
-    text: "Find other areas that feel like the one you like, wherever they are.",
+    key: "triangulate",
+    title: "Triangulate between places",
+    text: "Mark two or three places that matter, such as work, family and the gym. Each gets a travel-time area, and the best-scoring neighborhoods sit where they overlap. Times use real road and rail travel, not straight lines.",
+    label:
+      "Three travel-time areas for Work, Family and Gym overlap in the middle, where the best-scoring neighborhoods are marked.",
+    diagram: (label: string) => <TriangulationDiagram label={label} />,
   },
   {
-    title: "Plan multiple stops",
-    text: "Near work, Trader Joe's and Planet Fitness at once? The optimizer ranks areas by total travel.",
-  },
-  {
-    title: "The right way to travel",
-    text: "Walking and transit in dense areas, driving in the suburbs, so each place is judged fairly.",
+    key: "optimize",
+    title: "Optimize your week",
+    text: "Say how often you go to each place. Lines are weighted by trips per week, and the area with the lowest total weekly travel time that also scores well comes out on top.",
+    label:
+      "Work five times a week, groceries twice and the gym once connect to three candidate areas with lines weighted by trips; the most central area has the least weekly travel and wins.",
+    diagram: (label: string) => <OptimizationDiagram label={label} />,
   },
 ] as const;
 
@@ -115,10 +157,7 @@ export function HomePage() {
           <h1 className={styles.title}>
             Your 10-minute radius shapes your life.
           </h1>
-          <p className={styles.lead}>
-            See what is around any address in the New York metro area, scored
-            out of 100.
-          </p>
+          <p className={styles.lead}>Find your neighborhood.</p>
           <HeroSearch />
         </header>
 
@@ -126,11 +165,23 @@ export function HomePage() {
           <h2 id="what-you-get" className={styles.heading}>
             What you get
           </h2>
-          <ul className={styles.benefits}>
-            {BENEFITS.map((item) => (
-              <li key={item.title} className={styles.benefit}>
-                <h3 className={styles.benefitTitle}>{item.title}</h3>
-                <p className={styles.benefitText}>{item.text}</p>
+          <ul className={styles.features}>
+            {FEATURES.map((item) => (
+              <li key={item.title} className={styles.feature}>
+                <div className={styles.art}>{item.art}</div>
+                <h3 className={styles.featureTitle}>{item.title}</h3>
+                <p className={styles.featureText}>{item.text}</p>
+              </li>
+            ))}
+          </ul>
+          <ul className={styles.extras}>
+            {EXTRAS.map((item) => (
+              <li key={item.title} className={styles.extra}>
+                <ExtraIcon name={item.icon} className={styles.extraIcon} />
+                <div>
+                  <h3 className={styles.extraTitle}>{item.title}</h3>
+                  <p className={styles.extraText}>{item.text}</p>
+                </div>
               </li>
             ))}
           </ul>
@@ -140,26 +191,29 @@ export function HomePage() {
           <h2 id="what-we-score" className={styles.heading}>
             What we score
           </h2>
-          {GROUP_ORDER.map((group) => (
-            <div key={group} className={styles.group}>
-              <h3 className={styles.groupName}>{FACTOR_GROUPS[group]}</h3>
-              <ul className={styles.factors}>
-                {FACTOR_GUIDE_ORDER.filter(
-                  (key) => FACTORS[key].group === group,
-                ).map((key) => (
-                  <li key={key} className={styles.factor} data-factor={key}>
-                    <FactorIcon
-                      factor={key}
-                      className={styles.icon}
-                      aria-hidden="true"
-                    />
-                    <h4 className={styles.factorName}>{FACTORS[key].label}</h4>
-                    <p className={styles.factorText}>{FACTOR_GUIDE[key].blurb}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          <div className={styles.groups}>
+            {GROUP_ORDER.map((group) => (
+              <article key={group} className={styles.groupCard}>
+                <GroupIcon group={group} className={styles.groupIcon} />
+                <h3 className={styles.groupName}>{FACTOR_GROUPS[group]}</h3>
+                <p className={styles.groupText}>{GROUP_BLURB[group]}</p>
+                <ul className={styles.chips}>
+                  {FACTOR_GUIDE_ORDER.filter(
+                    (key) => FACTORS[key].group === group,
+                  ).map((key) => (
+                    <li key={key} className={styles.chip} data-factor={key}>
+                      <FactorIcon
+                        factor={key}
+                        className={styles.chipIcon}
+                        aria-hidden="true"
+                      />
+                      {FACTORS[key].label}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section className={styles.section} aria-labelledby="how-it-works">
@@ -177,6 +231,19 @@ export function HomePage() {
               </li>
             ))}
           </ol>
+
+          <h3 className={styles.subheading}>Behind the scenes</h3>
+          <div className={styles.diagrams}>
+            {DIAGRAMS.map((d) => (
+              <figure key={d.key} className={styles.figure} data-diagram={d.key}>
+                {d.diagram(d.label)}
+                <figcaption className={styles.caption}>
+                  <strong className={styles.captionTitle}>{d.title}</strong>
+                  {d.text}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
         </section>
 
         <section className={styles.section} aria-labelledby="coverage">
@@ -199,7 +266,7 @@ export function HomePage() {
 
         <section className={styles.closing} aria-labelledby="start">
           <h2 id="start" className={styles.closingTitle}>
-            See your neighborhood in color.
+            See what&apos;s around you
           </h2>
           <Link className={styles.cta} href={APP_PATH} prefetch={false}>
             Open the app

@@ -1,0 +1,220 @@
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+}
+
+.label {
+  fill: var(--text);
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.labelSub {
+  fill: var(--text-secondary);
+  font-size: 17px;
+}
+
+.halo {
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+
+.panel {
+  fill: color-mix(in srgb, var(--accent) 5%, var(--surface-sunken));
+  stroke: var(--border);
+}
+
+.road {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  opacity: 0.35;
+  fill: none;
+}
+
+.ring {
+  fill: var(--meter-fill);
+  stroke: var(--meter-fill);
+  stroke-width: 1;
+}
+
+.dot {
+  fill: var(--text-secondary);
+}
+
+.pin {
+  fill: var(--meter-fill);
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+.track {
+  fill: none;
+  stroke: var(--meter-track);
+  stroke-width: 14;
+}
+
+.arc {
+  fill: none;
+  stroke: var(--score-75);
+  stroke-width: 14;
+  stroke-linecap: round;
+  stroke-dasharray: 275 400;
+}
+
+.dialNum {
+  fill: var(--text);
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.flow {
+  fill: none;
+  stroke: var(--meter-fill);
+  stroke-width: 2;
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.bar {
+  fill: var(--meter-fill);
+  opacity: 0.85;
+}
+
+.blobA {
+  fill: var(--meter-fill);
+  stroke: var(--meter-fill);
+}
+
+.blobB {
+  fill: var(--score-55);
+  stroke: var(--score-55);
+}
+
+.blobC {
+  fill: var(--score-0);
+  stroke: var(--score-0);
+}
+
+.blobA,
+.blobB,
+.blobC {
+  fill-opacity: 0.18;
+  stroke-opacity: 0.8;
+  stroke-width: 2;
+}
+
+.overlap {
+  fill: var(--score-100);
+  fill-opacity: 0.45;
+}
+
+.best {
+  fill: var(--score-100);
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+.anchor {
+  fill: var(--surface);
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+.pill {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.cand {
+  fill: var(--surface);
+  stroke: var(--text-subtle);
+  stroke-width: 2.5;
+}
+
+.win {
+  fill: var(--score-100);
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+.winRing {
+  fill: none;
+  stroke: var(--score-100);
+  stroke-width: 3;
+}
+
+.lineDim {
+  stroke: var(--text-subtle);
+  opacity: 0.4;
+  stroke-linecap: round;
+}
+
+.lineWin {
+  stroke: var(--score-100);
+  stroke-linecap: round;
+}
+
+.glyph {
+  fill: none;
+  stroke: var(--meter-fill);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tileA {
+  fill: var(--meter-fill);
+  fill-opacity: 0.18;
+  stroke: var(--meter-fill);
+  stroke-width: 2;
+}
+
+.tile {
+  fill: var(--text-subtle);
+  fill-opacity: 0.12;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.walk,
+.train,
+.car {
+  stroke-width: 2.5;
+}
+
+.walk {
+  fill: var(--score-100);
+  fill-opacity: 0.3;
+  stroke: var(--score-100);
+}
+
+.train {
+  fill: var(--meter-fill);
+  fill-opacity: 0.2;
+  stroke: var(--meter-fill);
+}
+
+.car {
+  fill: var(--score-55);
+  fill-opacity: 0.18;
+  stroke: var(--score-55);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .arc {
+    animation: draw 1.6s 0.2s ease-out backwards;
+  }
+}
+
+@keyframes draw {
+  from {
+    stroke-dasharray: 0 400;
+  }
+}

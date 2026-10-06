@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
-import { FACTOR_GUIDE } from "@/lib/home/factorGuide";
 import { FACTOR_KEYS, FACTORS } from "@/lib/score/factors";
 
 import { HomePage } from "./HomePage";
@@ -37,27 +36,25 @@ describe("HomePage", () => {
     ).toHaveAttribute("type", "submit");
   });
 
-  it("lists the thirteen factors with icons, names and one sentence", () => {
+  it("shows the thirteen factors as icon chips inside three group cards", () => {
     render(<HomePage />);
     expect(FACTOR_KEYS).toHaveLength(13);
-    const items = screen
+    const chips = screen
       .getAllByRole("listitem")
       .filter((li) => li.hasAttribute("data-factor"));
-    expect(items).toHaveLength(13);
+    expect(chips).toHaveLength(13);
     for (const key of FACTOR_KEYS) {
-      const item = items.find((li) => li.getAttribute("data-factor") === key)!;
-      expect(
-        within(item).getByRole("heading", {
-          level: 4,
-          name: FACTORS[key].label,
-        }),
-      ).toBeInTheDocument();
-      expect(item).toHaveTextContent(FACTOR_GUIDE[key].blurb);
-      expect(item.querySelector("svg")).not.toBeNull();
+      const chip = chips.find((li) => li.getAttribute("data-factor") === key)!;
+      expect(chip).toHaveTextContent(FACTORS[key].label);
+      expect(chip.querySelector("svg")).not.toBeNull();
     }
-    expect(
-      screen.getByRole("heading", { level: 4, name: "Noise corridor" }),
-    ).toBeInTheDocument();
+    const section = screen.getByRole("region", { name: "What we score" });
+    expect(within(section).getAllByRole("article")).toHaveLength(3);
+    for (const name of ["Daily amenities", "Getting around", "Neighborhood"]) {
+      expect(
+        within(section).getByRole("heading", { level: 3, name }),
+      ).toBeInTheDocument();
+    }
   });
 
   it("shows the three steps and mentions feet and miles", () => {
@@ -70,30 +67,47 @@ describe("HomePage", () => {
     expect(screen.getByText(/feet and miles/)).toBeInTheDocument();
   });
 
-  it("states the value proposition and what you get", () => {
+  it("has the new hero line and the headline features", () => {
     render(<HomePage />);
     expect(
       screen.getByRole("heading", { level: 1, name: /10-minute radius/ }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Find your neighborhood.")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "What you get" }),
     ).toBeInTheDocument();
     for (const name of [
-      "One score from 13 factors",
+      "One score out of 100",
       "Real neighborhoods",
-      "Improve this area",
+      "Plan several stops",
+      "See how far you can get",
+      "AI summary",
       "Similar neighborhoods",
-      "Plan multiple stops",
+      "Improve this area",
     ]) {
       expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
     }
   });
 
-  it("groups the factors and explains coverage and data", () => {
-    render(<HomePage />);
-    for (const name of ["Daily amenities", "Getting around", "Neighborhood"]) {
-      expect(screen.getByRole("heading", { level: 3, name })).toBeInTheDocument();
+  it("explains the score, triangulation and optimization with labelled diagrams", () => {
+    const { container } = render(<HomePage />);
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Behind the scenes" }),
+    ).toBeInTheDocument();
+    const figures = container.querySelectorAll("figure[data-diagram]");
+    expect(figures).toHaveLength(3);
+    for (const figure of figures) {
+      const svg = figure.querySelector("svg")!;
+      expect(svg).toHaveAttribute("role", "img");
+      expect(svg.getAttribute("aria-label")).toBeTruthy();
+      expect(figure.querySelector("figcaption")).not.toBeNull();
     }
+    expect(screen.getByText(/real road and rail travel/)).toBeInTheDocument();
+    expect(screen.getByText(/lowest total weekly travel/)).toBeInTheDocument();
+  });
+
+  it("explains coverage and data", () => {
+    render(<HomePage />);
     expect(screen.getByText(/New York, New Jersey and Connecticut/)).toBeInTheDocument();
     expect(screen.getByText(/Built from OpenStreetMap/)).toBeInTheDocument();
   });
@@ -114,6 +128,9 @@ describe("HomePage", () => {
     expect(
       screen.getByRole("link", { name: "Explore the map" }),
     ).toHaveAttribute("href", "/app");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "See what's around you" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open the app" })).toHaveAttribute(
       "href",
       "/app",
