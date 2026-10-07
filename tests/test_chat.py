@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from api import chat, main
 
@@ -335,7 +336,7 @@ def test_trip_context_is_validated():
         {**TRIP, "areas": TRIP["areas"] * 6},
     ]
     for trip in bad:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             chat.ChatContext.model_validate({"trip": trip})
 
 
