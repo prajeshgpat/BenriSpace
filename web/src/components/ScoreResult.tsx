@@ -23,6 +23,8 @@ interface ScoreHeaderProps {
   area?: AreaInfo | null;
   /** Pin this place for the compare view. */
   compare?: { pinned: boolean; full: boolean; onToggle: () => void };
+  /** Leave out the copy-link action (it would copy the searched place's link). */
+  hideCopyLink?: boolean;
 }
 
 /** Compact header: address, composite score and the copy-link action. */
@@ -31,6 +33,7 @@ export function ScoreHeader({
   score,
   area = null,
   compare,
+  hideCopyLink = false,
 }: ScoreHeaderProps) {
   const neighborhood = score.neighborhood?.trim() || null;
   // Never street boundaries or coordinates: the neighborhood, else the address.
@@ -56,7 +59,7 @@ export function ScoreHeader({
           <p className={styles.precisionNote}>Exact-point score</p>
         ) : null}
         <div className={styles.actions}>
-          <CopyLinkButton />
+          {hideCopyLink ? null : <CopyLinkButton />}
           {compare ? (
             <CompareButton
               name={title}

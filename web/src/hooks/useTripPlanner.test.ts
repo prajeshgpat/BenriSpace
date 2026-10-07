@@ -230,6 +230,71 @@ describe("useTripPlanner triangulation", () => {
     ]);
   });
 
+  it("gives each point its own travel, falling back to the main one", async () => {
+    const { hook, triangulate } = setup();
+    act(() => hook.result.current.add());
+    act(() => hook.result.current.add());
+    const [first, second] = hook.result.current.rows;
+    act(() => hook.result.current.selectSuggestion(first.id, pick));
+    act(() => hook.result.current.selectSuggestion(second.id, { label: "Dock", latitude: 40.6, longitude: -74.02 }));
+    act(() => hook.result.current.setTravel(second.id, "walk", 10));
+    await flush();
+    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string; minutes: number }[]];
+    // The searched place and the first point follow the main Travel time; the second is its own.
+    expect(sent[0].map((a) => [a.mode, a.minutes])).toEqual([
+      ["transit", 20],
+      ["transit", 20],
+      ["walk", 10],
+    ]);
+
+    // Changing the main travel moves the followers, not the point that was set apart.
+    hook.rerender({ p: PLACE, t: { mode: "drive", minutes: 30 } });
+    await flush();
+    const again = triangulate.mock.calls.at(-1) as unknown as [{ mode: string; minutes: number }[]];
+    expect(again[0].map((a) => [a.mode, a.minutes])).toEqual([
+      ["drive", 30],
+      ["drive", 30],
+      ["walk", 10],
+    ]);
+  });
+
+  it("never lets a point's own travel change the searched place's", async () => {
+    const { hook, triangulate } = setup();
+    act(() => hook.result.current.add());
+    const [row] = hook.result.current.rows;
+    act(() => hook.result.current.selectSuggestion(row.id, pick));
+    act(() => hook.result.current.setTravel(row.id, "drive", 45));
+    await flush();
+    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string; minutes: number }[]];
+    expect(sent[0].map((a) => [a.mode, a.minutes])).toEqual([
+      ["transit", 20],
+      ["drive", 45],
+    ]);
+  });
+
+  it("arms a new box, and disarms it when it is filled, removed or re-armed elsewhere", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.add());
+    const [first] = hook.result.current.rows;
+    expect(hook.result.current.armedId).toBe(first.id);
+    act(() => hook.result.current.arm(null));
+    expect(hook.result.current.armedId).toBeNull();
+    act(() => hook.result.current.arm(first.id));
+    act(() => hook.result.current.setPlaceFromMap(first.id, { lat: 40.7, lon: -74 }));
+    expect(hook.result.current.armedId).toBeNull();
+    act(() => hook.result.current.arm(first.id));
+    act(() => hook.result.current.remove(first.id));
+    expect(hook.result.current.armedId).toBeNull();
+  });
+
+  it("reports whether any point has a place", () => {
+    const { hook } = setup();
+    act(() => hook.result.current.add());
+    expect(hook.result.current.hasPlaces).toBe(false);
+    act(() => hook.result.current.selectSuggestion(hook.result.current.rows[0].id, pick));
+    expect(hook.result.current.hasPlaces).toBe(true);
+  });
+
   it("waits 400 ms after the last change, then calls once", async () => {
     const { hook, triangulate } = setup();
     act(() => hook.result.current.add());

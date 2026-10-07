@@ -38,7 +38,7 @@ interface FactorControlsProps {
   onChange: (selection: FactorSelection) => void;
   /** When set, each selected factor shows its score on its toggle. */
   scores?: FactorScores | null;
-  /** Shown under the factor groups, inside the section (the travel-time row). */
+  /** Shown first, right under the heading, inside the section (the travel-time row). */
   children?: ReactNode;
 }
 
@@ -88,6 +88,8 @@ function FactorControlsImpl({
       </h2>
 
       <div className={styles.body}>
+        {children}
+
         {GROUPS.map((group) => (
           <fieldset key={group} className={styles.fieldset}>
             <legend className={styles.legend}>{FACTOR_GROUPS[group]}</legend>
@@ -127,8 +129,6 @@ function FactorControlsImpl({
             </div>
           </fieldset>
         ))}
-
-        {children}
 
         <details className={styles.importance}>
           <summary>

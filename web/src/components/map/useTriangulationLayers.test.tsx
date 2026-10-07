@@ -29,7 +29,7 @@ vi.mock("maplibre-gl", () => {
 import type { TripOverlay } from "@/hooks/useTripPlanner";
 import type { AreaGeometry } from "@/lib/api/types";
 
-import { useTriangulationLayers } from "./useTriangulationLayers";
+import { areaData, useTriangulationLayers } from "./useTriangulationLayers";
 
 const polygon: AreaGeometry = {
   type: "MultiPolygon",
@@ -101,11 +101,11 @@ describe("useTriangulationLayers", () => {
     expect(fake.layers.get("tri-anchor-0-line")!.paint).not.toHaveProperty("line-dasharray");
     expect(fake.layers.get("tri-overlap-fill")!.paint).toMatchObject({ "fill-opacity": 0.25 });
     expect(fake.layers.get("tri-overlap-line")!.paint).toMatchObject({ "line-color": "#111827", "line-width": 4.5 });
-    // The data has the searched place's area and the overlap, nothing else.
+    // With an overlap, the data is the overlap alone.
     const data = fake.sources.get("tri-areas")!.setData.mock.calls[0][0] as {
       features: { properties: { idx: number } }[];
     };
-    expect(data.features.map((f) => f.properties.idx).sort()).toEqual([-1, 0]);
+    expect(data.features.map((f) => f.properties.idx).sort()).toEqual([-1]);
   });
 
   it("draws just the searched place's boundary when there is no overlap", () => {
@@ -157,5 +157,19 @@ describe("useTriangulationLayers", () => {
     renderHook(() => useTriangulationLayers({ mapRef: ref, ready: false, theme: "light", overlay: overlay() }));
     expect(fake.layers.size).toBe(0);
     expect(gl.markers).toHaveLength(0);
+  });
+});
+
+describe("areaData", () => {
+  const anchors = [{ index: 0, label: "Home", lat: 40, lon: -74, geometry: polygon }];
+  const idxs = (o: TripOverlay) =>
+    (areaData(o).features as { properties: { idx: number } }[]).map((f) => f.properties.idx);
+
+  it("draws only the overlap when there is one", () => {
+    expect(idxs({ anchors, combined: polygon, pins: [] })).toEqual([-1]);
+  });
+
+  it("draws the searched place's boundary when nothing overlaps", () => {
+    expect(idxs({ anchors, combined: null, pins: [] })).toEqual([0]);
   });
 });

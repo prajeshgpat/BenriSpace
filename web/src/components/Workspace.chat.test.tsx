@@ -58,7 +58,10 @@ const REPLY: ChatReply = {
   limited: false,
 };
 
-function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
+function setup(
+  search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857",
+  overrides: Partial<ApiClient> = {},
+) {
   navigation.search = search;
   const fetchMock = vi.fn<typeof fetch>(async (input) =>
     String(input).includes("/explanation")
@@ -84,6 +87,7 @@ function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
     })),
     getImprove: vi.fn(async () => { throw new Error("improve unavailable"); }),
     getSimilar: vi.fn(async () => { throw new Error("similar unavailable"); }),
+    ...overrides,
   };
   render(<Workspace client={client} />);
   return { chat };
@@ -141,6 +145,50 @@ describe("Workspace: Ask Benri", () => {
     expect(screen.getByRole("button", { name: "Ask Benri" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Ask Benri" })).not.toBeInTheDocument();
     expect(screen.getByTestId("composite-score")).toBeInTheDocument();
+  });
+
+  it("sends the overlap, and leads with a question about it, when points of interest are placed", async () => {
+    const user = userEvent.setup();
+    const iso = {
+      label: null, mode: "transit" as const, minutes: 20, method: "network" as const,
+      areaSqMi: 1, cellCount: 3, geometry: null,
+    };
+    const { chat } = setup("address=350+5th+Ave&lat=40.7484&lon=-73.9857&pt=40.75%2C-73.97", {
+      triangulate: vi.fn(async () => ({
+        results: [{ lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" }],
+        isochrones: [iso, iso],
+        combined: iso,
+      })),
+    });
+    await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+    expect(
+      await screen.findByRole("button", { name: "What are the pros and cons of the areas in the overlap?" }),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "which is best?{Enter}");
+    await screen.findByText("Darien looks best.");
+    const trip = (chat.mock.calls[0][1] as { trip?: unknown }).trip as {
+      places: { label: string; mode: string; minutes: number }[];
+      areas: { label: string; score: number }[];
+      overlap: boolean;
+    };
+    expect(trip.places.map((p) => [p.mode, p.minutes])).toHaveLength(2);
+    expect(trip.places[0].label).toBeTruthy();
+    expect(trip.areas).toEqual([
+      { label: "1 Main St", latitude: 40.71, longitude: -73.99, score: 81 },
+    ]);
+    expect(trip.overlap).toBe(true);
+  });
+
+  it("does not send a trip without points of interest", async () => {
+    const user = userEvent.setup();
+    const { chat } = setup();
+    await screen.findByTestId("composite-score");
+    await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+    await user.type(screen.getByRole("textbox", { name: "Your question" }), "hi{Enter}");
+    await screen.findByText("Darien looks best.");
+    expect(chat.mock.calls[0][1]).not.toHaveProperty("trip");
   });
 
   it("Show on map previews the area without changing the selection", async () => {

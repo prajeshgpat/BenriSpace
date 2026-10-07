@@ -27,6 +27,23 @@ describe("snapOffsets", () => {
   });
 });
 
+describe("snapOffsets with a measured middle snap", () => {
+  it("shows what the content needs, between half and 85% of the sheet", () => {
+    expect(snapOffsets(800, 100, 560)).toEqual({ full: 0, half: 240, peek: 700 });
+    expect(snapOffsets(800, 100, 300).half).toBe(400);
+    expect(snapOffsets(800, 100, 790).half).toBe(120);
+  });
+
+  it("falls back to half without a measurement", () => {
+    expect(snapOffsets(800, 100, undefined).half).toBe(400);
+    expect(snapOffsets(800, 100, Number.NaN).half).toBe(400);
+  });
+
+  it("never lets the middle snap sit lower than peek", () => {
+    expect(snapOffsets(300, 200, 150).half).toBe(100);
+  });
+});
+
 describe("clampOffset", () => {
   it("limits a drag to the sheet's travel", () => {
     expect(clampOffset(-30, offsets)).toBe(0);

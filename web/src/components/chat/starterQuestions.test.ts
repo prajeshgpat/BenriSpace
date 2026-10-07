@@ -20,6 +20,14 @@ describe("starterQuestions", () => {
     ]);
   });
 
+  it("leads with the overlap question when places are being compared", () => {
+    expect(starterQuestions(undefined, true, true)).toEqual([
+      "What are the pros and cons of the areas in the overlap?",
+      "Is it good for groceries and restaurants?",
+      "Is there a good cafe within walking distance?",
+    ]);
+  });
+
   it("follows the selected factors in display order", () => {
     expect(starterQuestions(["recreation", "transit", "grocery", "airport"], true)).toEqual([
       "Is it good for groceries and transit?",

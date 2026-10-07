@@ -15,3 +15,6 @@ build/
 data/prototype/
 data/cache/
 data/areas/
+
+# Claude Code local state (agent worktrees, settings)
+.claude/

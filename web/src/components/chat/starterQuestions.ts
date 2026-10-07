@@ -35,6 +35,7 @@ const PER_FACTOR: Record<FactorKey, { here: string; metro: string }> = {
   recreation: { here: "Are there parks close by?", metro: "Which areas have the best parks and trails?" },
 };
 
+const TRIP_PROS_CONS = "What are the pros and cons of the areas in the overlap?";
 const MULTI_STOP = "Find a neighborhood near my work, a Trader Joe's and a Planet Fitness";
 
 /**
@@ -45,6 +46,7 @@ const MULTI_STOP = "Find a neighborhood near my work, a Trader Joe's and a Plane
 export function starterQuestions(
   factors: readonly FactorKey[] | undefined,
   hasPlace: boolean,
+  hasTrip = false,
 ): string[] {
   const picked = factors ? FACTOR_KEYS.filter((key) => factors.includes(key)) : FACTOR_KEYS;
   const single = (key: FactorKey) => PER_FACTOR[key][hasPlace ? "here" : "metro"];
@@ -62,5 +64,7 @@ export function starterQuestions(
   const second =
     picked.length >= 3 ? single(picked[2]) : picked.length === 2 ? single(picked[1]) : quiet;
   // One factor leaves nothing else to say about it; fall back to the generic quiet question.
-  return [first, picked.length === 1 ? quiet : second, MULTI_STOP];
+  const rest = picked.length === 1 ? quiet : second;
+  // Comparing places: the overlap question leads, and the multi-stop search gives way to it.
+  return hasTrip ? [TRIP_PROS_CONS, first, rest] : [first, rest, MULTI_STOP];
 }

@@ -66,10 +66,71 @@ const ICONS: Record<ReachMode, ReactNode> = {
   ),
 };
 
-/** Mode icon buttons plus a minus / value / plus minutes stepper. */
-export function TravelModePicker({ mode, minutes, onChange, name, disabled }: TravelModePickerProps) {
+/** The icon for one travel mode (decorative: the button around it carries the name). */
+export function TravelModeIcon({ mode }: { mode: ReachMode }) {
+  return ICONS[mode];
+}
+
+interface MinutesStepperProps {
+  mode: ReachMode;
+  minutes: number;
+  /** Called with the same mode and the neighbouring step. */
+  onChange: (mode: ReachMode, minutes: number) => void;
+  label: string;
+  fewerLabel: string;
+  moreLabel: string;
+  disabled?: boolean;
+  className?: string;
+}
+
+/** A minus / value / plus stepper over the minutes the mode allows. */
+export function MinutesStepper({
+  mode,
+  minutes,
+  onChange,
+  label,
+  fewerLabel,
+  moreLabel,
+  disabled,
+  className,
+}: MinutesStepperProps) {
   const current = travelOption(mode);
   const step = current.minutes.indexOf(minutes);
+  return (
+    <div
+      className={className ? `${styles.stepper} ${className}` : styles.stepper}
+      role="group"
+      aria-label={label}
+    >
+      <button
+        type="button"
+        className={styles.step}
+        aria-label={fewerLabel}
+        disabled={disabled || step <= 0}
+        onClick={() => onChange(mode, current.minutes[Math.max(step - 1, 0)])}
+      >
+        &minus;
+      </button>
+      <span className={styles.value} aria-live="polite">
+        {minutes} min
+      </span>
+      <button
+        type="button"
+        className={styles.step}
+        aria-label={moreLabel}
+        disabled={disabled || step >= current.minutes.length - 1}
+        onClick={() =>
+          onChange(mode, current.minutes[Math.min(step + 1, current.minutes.length - 1)])
+        }
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+/** Mode icon buttons plus a minus / value / plus minutes stepper. */
+export function TravelModePicker({ mode, minutes, onChange, name, disabled }: TravelModePickerProps) {
   const plain = name === "Travel time";
   const modeLabel = plain ? "Travel mode" : `Travel mode for ${name}`;
   const minutesLabel = plain ? "Minutes" : `Minutes for ${name}`;
@@ -94,31 +155,15 @@ export function TravelModePicker({ mode, minutes, onChange, name, disabled }: Tr
           </button>
         ))}
       </div>
-      <div className={styles.stepper} role="group" aria-label={minutesLabel}>
-        <button
-          type="button"
-          className={styles.step}
-          aria-label={fewerLabel}
-          disabled={disabled || step <= 0}
-          onClick={() => onChange(mode, current.minutes[Math.max(step - 1, 0)])}
-        >
-          &minus;
-        </button>
-        <span className={styles.value} aria-live="polite">
-          {minutes} min
-        </span>
-        <button
-          type="button"
-          className={styles.step}
-          aria-label={moreLabel}
-          disabled={disabled || step >= current.minutes.length - 1}
-          onClick={() =>
-            onChange(mode, current.minutes[Math.min(step + 1, current.minutes.length - 1)])
-          }
-        >
-          +
-        </button>
-      </div>
+      <MinutesStepper
+        mode={mode}
+        minutes={minutes}
+        onChange={onChange}
+        label={minutesLabel}
+        fewerLabel={fewerLabel}
+        moreLabel={moreLabel}
+        disabled={disabled}
+      />
     </div>
   );
 }

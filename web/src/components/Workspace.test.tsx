@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 
 import { ApiError } from "@/lib/api/errors";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
-import type { Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
+import type { AreaGeometry, Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
 import { emptySubScores, jsonResponse, makeAreaBody, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
@@ -213,7 +213,7 @@ describe("Workspace: scoring an address", () => {
     setup("", liveApi);
 
     await user.type(screen.getByRole("combobox", { name: "Address" }), "  350 5th Ave,  New York ");
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     expect(pushState).toHaveBeenCalledWith(null, "", "/app?address=350+5th+Ave%2C+New+York");
   });
@@ -222,7 +222,7 @@ describe("Workspace: scoring an address", () => {
     const user = userEvent.setup();
     const { fetchMock } = setup("", liveApi);
 
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     const input = screen.getByRole("combobox", { name: "Address" });
     expect(screen.getByRole("alert")).toHaveTextContent("Enter an address to score.");
@@ -351,7 +351,7 @@ describe("Workspace: scoring an address", () => {
     await screen.findByText(/strongest factor/);
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     // A fresh score, its explanation, and the travel-time area drawn again for the new lookup.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
@@ -855,7 +855,7 @@ describe("Workspace: choosing a place on the map", () => {
     await mapReady();
 
     await user.type(screen.getByRole("combobox", { name: "Address" }), "Grand Central");
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     await screen.findByTestId("composite-score");
     await waitFor(() => expect(map().flyRequest).not.toBeNull());
@@ -1019,7 +1019,7 @@ describe("Workspace: choosing a place on the map", () => {
     await waitFor(() => expect(map().flyRequest).not.toBeNull());
     const first = map().flyRequest;
 
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     await waitFor(() => expect(map().flyRequest).not.toBe(first));
   });
@@ -1214,7 +1214,7 @@ describe("selection reaches the point endpoints", () => {
 describe("Workspace: points of interest", () => {
   const park = { label: "Park Ave, NY", latitude: 40.75, longitude: -73.97 };
 
-  it("Get score looks up typed points of interest first, then scores the main address", async () => {
+  it("Score looks up typed points of interest first, then scores the main address", async () => {
     const user = userEvent.setup();
     const suggestAddresses = vi.fn<ApiClient["suggestAddresses"]>(async () => [park]);
     setup("", liveApi, { suggestAddresses });
@@ -1226,7 +1226,7 @@ describe("Workspace: points of interest", () => {
       "park ave",
     );
     suggestAddresses.mockClear();
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
 
     expect(suggestAddresses).toHaveBeenCalledWith("park ave", { limit: 1 });
     await waitFor(() =>
@@ -1252,24 +1252,200 @@ describe("Workspace: points of interest", () => {
     await screen.findByText(/strongest factor/);
     await user.click(screen.getByRole("button", { name: "Point of interest" }));
     const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
-    expect(box).toHaveFocus();
+    // The new box is armed ("Drop a pin") and the keyboard stays closed.
+    expect(box).not.toHaveFocus();
+    expect(box).toHaveAttribute("placeholder", "Drop a pin");
     pushState.mockClear();
 
-    // The press lands on the map while the box still has the cursor, then focus moves away.
-    const mapEl = document.createElement("div");
-    mapEl.className = "maplibregl-map";
-    document.body.append(mapEl);
-    mapEl.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7411, lon: -73.9897 }));
-    mapEl.remove();
 
     await waitFor(() => expect(box).toHaveValue("Tapped Plaza, NY"));
     expect(pushState).not.toHaveBeenCalled(); // the tapped place was not scored as the main one
+    expect(box).toHaveAttribute("placeholder", "Point of interest 1");
 
-    // With no box selected the next tap scores the place as before.
-    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    // Filling disarms the box: the next tap scores the place as before.
     act(() => map().onCellClick({ geohash: "dr5ru8", score: 77, lat: 40.76, lon: -73.98 }));
     await waitFor(() => expect(pushState).toHaveBeenCalled());
+  });
+
+  it("pressing elsewhere in the sheet disarms the box", async () => {
+    const user = userEvent.setup();
+    setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
+    await screen.findByText(/strongest factor/);
+    await user.click(screen.getByRole("button", { name: "Point of interest" }));
+    const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
+    expect(box).toHaveAttribute("placeholder", "Drop a pin");
+    await user.click(screen.getByRole("heading", { name: "Factors" }));
+    expect(box).toHaveAttribute("placeholder", "Point of interest 1");
+    pushState.mockClear();
+    act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.7411, lon: -73.9897 }));
+    await waitFor(() => expect(pushState).toHaveBeenCalled());
+  });
+
+  describe("with a point of interest placed", () => {
+    const polygon: AreaGeometry = {
+      type: "Polygon",
+      coordinates: [[[-74, 40.7], [-73.9, 40.7], [-73.9, 40.8], [-74, 40.7]]],
+    };
+    const iso = {
+      label: null,
+      mode: "transit" as const,
+      minutes: 20,
+      method: "network" as const,
+      areaSqMi: 1,
+      cellCount: 3,
+      geometry: polygon,
+    };
+    const triangulate = vi.fn<ApiClient["triangulate"]>(async () => ({
+      results: [
+        { lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" },
+        { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St" },
+      ],
+      isochrones: [iso, iso],
+      combined: iso,
+    }));
+    const withPoint = () =>
+      setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate });
+
+    it("hides the score card and suggestions, keeping the overlap results", async () => {
+      withPoint();
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      expect(screen.queryByRole("region", { name: "Selected location" })).toBeNull();
+      expect(screen.queryByTestId("composite-score")).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Best areas" })).toBeNull();
+      expect(map().areaGeometry).toBeNull();
+      // The searched place stays in the search box and on the map.
+      expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("350 5th Ave, New York, NY");
+      expect(map().pin).not.toBeNull();
+      expect(screen.getByRole("group", { name: "Travel areas legend" })).toBeInTheDocument();
+    });
+
+    it("draws the overlap best areas as the map's ranked markers", async () => {
+      withPoint();
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      expect(map().areaGeometry).toBeNull();
+      expect(map().highlightGeohash).toBeNull();
+      expect(map().markers.map((m) => [m.id, m.rank, m.tooltip])).toEqual([
+        ["overlap:40.71,-73.99", 1, "1 Main St \u00b7 81"],
+        ["overlap:40.8,-73.9", 2, "2 Side St \u00b7 70"],
+      ]);
+    });
+
+    it("labels the legend POI Overlap with no numbered point rows", async () => {
+      withPoint();
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      const legend = screen.getByRole("group", { name: "Travel areas legend" });
+      expect(legend).toHaveTextContent("POI Overlap");
+      expect(legend).not.toHaveTextContent("Point of interest");
+    });
+
+    it("keeps the main address boundary while a point row is added but has no place", async () => {
+      const user = userEvent.setup();
+      setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
+      await screen.findByRole("region", { name: "Selected location" });
+      const before = map().areaGeometry;
+      await user.click(screen.getByRole("button", { name: "Point of interest" }));
+      expect(map().triangulation).toBeNull();
+      expect(map().areaGeometry).toBe(before);
+    });
+
+    describe("picking an area in the overlap", () => {
+      const pickedScore = {
+        ...liveScoreBody,
+        compositeScore: 66,
+        subScores: { ...emptySubScores, grocery: 11, transit: 22, cafe: 33 },
+      };
+      const pickClient = createApiClient({
+        baseUrl: "http://api.test/v1",
+        fetch: async () => jsonResponse(pickedScore),
+      });
+      const withPick = () =>
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, {
+          triangulate,
+          getScoreByCoordinates: vi.fn<ApiClient["getScoreByCoordinates"]>(async (c) =>
+            pickClient.getScoreByCoordinates(c),
+          ),
+        });
+
+      function expectPicked(search: string) {
+        expect(screen.queryByText("Score this area")).toBeNull();
+        expect(screen.queryByRole("region", { name: "Previewed area" })).toBeNull();
+        expect(window.location.search).toBe(search);
+        expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue(
+          "350 5th Ave, New York, NY",
+        );
+        expect(map().previewPin).toBeNull();
+        expect(map().activeMarkerId).toBe("overlap:40.71,-73.99");
+        expect(map().flyRequest).toMatchObject({ lat: 40.71, lon: -73.99 });
+        expect(map().flyRequest?.zoom).toBeUndefined();
+      }
+
+      it("opens a score card above the results when a row is clicked", async () => {
+        const user = userEvent.setup();
+        withPick();
+        const heading = await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        const search = window.location.search;
+        pushState.mockClear();
+        await user.click(screen.getByRole("button", { name: /1 Main St/ }));
+
+        const card = await screen.findByRole("region", { name: "Area in the overlap" });
+        expect(
+          card.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+        expect(await within(card).findByTestId("composite-score")).toBeInTheDocument();
+        expect(within(card).getByText("1 Main St")).toBeInTheDocument();
+        expect(within(card).queryByRole("button", { name: /copy/i })).toBeNull();
+        expectPicked(search);
+        expect(pushState).not.toHaveBeenCalled();
+        expect(screen.getByRole("button", { name: /1 Main St/ })).toHaveAttribute(
+          "aria-pressed",
+          "true",
+        );
+      });
+
+      it("does the same from the map marker, and Factors show the area's sub-scores", async () => {
+        withPick();
+        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        const search = window.location.search;
+        const mainGrocery = screen.getByRole("checkbox", { name: /^Groceries, on, no data/ });
+        expect(mainGrocery).toBeInTheDocument();
+        act(() => map().onMarkerClick("overlap:40.71,-73.99"));
+        const card = await screen.findByRole("region", { name: "Area in the overlap" });
+        await within(card).findByTestId("composite-score");
+        expectPicked(search);
+        expect(
+          screen.getByRole("checkbox", { name: "Groceries, on, scored 11 out of 100" }),
+        ).toBeInTheDocument();
+
+        await userEvent.setup().click(
+          within(card).getByRole("button", { name: "Close area in the overlap" }),
+        );
+        expect(screen.queryByRole("region", { name: "Area in the overlap" })).toBeNull();
+        expect(map().activeMarkerId).toBeNull();
+        expect(screen.getByRole("checkbox", { name: /^Groceries, on, no data/ })).toBeInTheDocument();
+      });
+    });
+
+    it("brings the score card back once the last point is removed", async () => {
+      const user = userEvent.setup();
+      withPoint();
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await user.click(screen.getByRole("button", { name: "Remove point of interest 1" }));
+      expect(await screen.findByRole("region", { name: "Selected location" })).toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Travel areas legend" })).toBeNull();
+    });
+
+    it("keeps the score card and the searched place's travel area, and says so, when nothing overlaps", async () => {
+      const empty = vi.fn<ApiClient["triangulate"]>(async () => ({
+        results: [],
+        isochrones: [iso, iso],
+        combined: { ...iso, cellCount: 0 },
+      }));
+      setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: empty });
+      expect((await screen.findAllByText(/travel areas don't overlap/)).length).toBeGreaterThan(0);
+      expect(screen.getByRole("region", { name: "Selected location" })).toBeInTheDocument();
+      expect(map().triangulation?.anchors.find((a) => a.index === 0)?.geometry).not.toBeNull();
+    });
   });
 
   it("puts Ask Benri directly below the score card", async () => {

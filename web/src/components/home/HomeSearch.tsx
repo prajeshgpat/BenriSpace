@@ -210,7 +210,7 @@ export function HomeSearch({
           </div>
         </div>
         <button className={styles.submit} type="submit">
-          Score it
+          Score
         </button>
       </div>
       {locator.unsupported ? (

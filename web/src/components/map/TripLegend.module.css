@@ -1,0 +1,64 @@
+/*
+ * Colours mirror TRI_STYLE in lib/map/colors.ts (the map draws with those);
+ * keep the two in step. Index 0 is the searched place.
+ */
+.legend {
+  --tri-0: #c026d3;
+  --tri-overlap-line: #111827;
+
+  display: grid;
+  gap: 0.25rem;
+  width: 10rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 0.75rem;
+}
+
+:root[data-theme="dark"] .legend {
+  --tri-0: #f0abfc;
+  --tri-overlap-line: #f8fafc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .legend {
+    --tri-0: #f0abfc;
+    --tri-overlap-line: #f8fafc;
+  }
+}
+
+.title {
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.swatch {
+  flex: none;
+  stroke: var(--tri-0);
+}
+
+.overlapSwatch {
+  flex: none;
+  width: 1.25rem;
+  height: 0.75rem;
+  border: 2px solid var(--tri-overlap-line);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.4);
+}

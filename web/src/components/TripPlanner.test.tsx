@@ -34,7 +34,8 @@ function response(overrides: Partial<Triangulation> = {}): Triangulation {
 
 function Harness(props: {
   client: never;
-  onSelectResult: (r: { lat: number; lon: number; label: string }) => void;
+  onSelectResult: (r: { lat: number; lon: number; label: string; score: number }) => void;
+  selectedKey?: string | null;
   onNeedSpace?: (k: "full" | "half") => void;
 }) {
   const planner = useTripPlanner(props.client, PLACE, { mode: "transit", minutes: 20 });
@@ -43,6 +44,7 @@ function Harness(props: {
       planner={planner}
       client={props.client}
       onSelectResult={props.onSelectResult}
+      selectedKey={props.selectedKey}
       onNeedSpace={props.onNeedSpace}
     />
   );
@@ -78,15 +80,44 @@ describe("TripPlanner", () => {
     expect(screen.queryByRole("group")).toBeNull();
   });
 
-  it("opens a small box to the left of the pill and focuses it", async () => {
+  it("opens a pill to the left of the add pill, armed to drop a pin and without focusing it", async () => {
     const { user, onNeedSpace } = setup();
     await user.click(addButton()!);
     const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
-    expect(box).toHaveFocus();
-    expect(box).toHaveAttribute("placeholder", "Point of interest 1");
+    // No focus: that would open the phone's keyboard before the map has been tried.
+    expect(box).not.toHaveFocus();
+    expect(box).toHaveAttribute("placeholder", "Drop a pin");
+    expect(box.closest("[data-poi-box]")).toHaveAttribute("data-armed");
     expect(box.compareDocumentPosition(addButton()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove point of interest 1" })).toBeInTheDocument();
     expect(onNeedSpace).toHaveBeenCalledWith("half");
+  });
+
+  it("the first tap on an idle box arms it and the second focuses the input", async () => {
+    const { user } = setup();
+    await user.click(addButton()!);
+    await user.click(addButton()!);
+    const [first, second] = screen.getAllByRole("combobox");
+    // The newest box is armed; the other still shows its name.
+    expect(first).toHaveAttribute("placeholder", "Point of interest 1");
+    expect(second).toHaveAttribute("placeholder", "Drop a pin");
+
+    await user.click(screen.getByTestId("poi-tap-1"));
+    expect(first).toHaveAttribute("placeholder", "Drop a pin");
+    expect(second).toHaveAttribute("placeholder", "Point of interest 2");
+    expect(first).not.toHaveFocus();
+
+    await user.click(screen.getByTestId("poi-tap-1"));
+    expect(first).toHaveFocus();
+  });
+
+  it("focusing the input by keyboard arms the box", async () => {
+    const { user } = setup();
+    await user.click(addButton()!);
+    await user.click(addButton()!);
+    const [first] = screen.getAllByRole("combobox");
+    await user.click(first);
+    expect(first.closest("[data-poi-box]")).toHaveAttribute("data-armed");
   });
 
   it("opens the second box on the next click and the pill disappears", async () => {
@@ -94,12 +125,65 @@ describe("TripPlanner", () => {
     await user.click(addButton()!);
     await user.click(addButton()!);
     const boxes = screen.getAllByRole("combobox");
-    expect(boxes.map((b) => b.getAttribute("placeholder"))).toEqual([
-      "Point of interest 1",
-      "Point of interest 2",
-    ]);
-    expect(boxes[1]).toHaveFocus();
+    expect(boxes.map((b) => b.getAttribute("aria-label") ?? b.id)).toHaveLength(2);
     expect(addButton()).toBeNull();
+  });
+
+  it("opens a dropdown from the mode segment: other modes, minutes, and applies a choice", async () => {
+    const { user, triangulate } = setup();
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    const toggle = screen.getByRole("button", { name: /^Travel for Point of interest 1/ });
+    // Follows the main Travel time (a 20 minute train) until set apart.
+    expect(toggle).toHaveAccessibleName("Travel for Point of interest 1: Train, 20 minutes");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("group", { name: "Minutes for Point of interest 1" })).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const modes = screen.getByRole("group", { name: "Travel mode for Point of interest 1" });
+    expect(Array.from(modes.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Walk",
+      "Drive",
+    ]);
+    expect(screen.getByRole("group", { name: "Minutes for Point of interest 1" })).toHaveTextContent("20 min");
+
+    await user.click(screen.getByRole("button", { name: "More minutes for Point of interest 1" }));
+    expect(screen.getByRole("group", { name: "Minutes for Point of interest 1" })).toHaveTextContent("25 min");
+
+    // A new mode takes its own starting minutes, and the dropdown stays open.
+    await user.click(screen.getByRole("button", { name: "Walk" }));
+    expect(toggle).toHaveAccessibleName("Travel for Point of interest 1: Walk, 10 minutes");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      Array.from(
+        screen
+          .getByRole("group", { name: "Travel mode for Point of interest 1" })
+          .querySelectorAll("button"),
+      ).map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Train", "Drive"]);
+
+    // The overlap is asked again with this point's own travel.
+    await waitFor(() => {
+      const last = triangulate.mock.calls.at(-1) as unknown as [{ mode: string; minutes: number }[]];
+      expect(last[0].map((a) => [a.mode, a.minutes])).toEqual([
+        ["transit", 20],
+        ["walk", 10],
+      ]);
+    });
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes the dropdown on a press outside it", async () => {
+    const { user } = setup();
+    await user.click(addButton()!);
+    const toggle = screen.getByRole("button", { name: /^Travel for Point of interest 1/ });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(document.body);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it("removes a point with its x, renumbers the other, brings the pill back and focuses it", async () => {
@@ -131,32 +215,26 @@ describe("TripPlanner", () => {
     );
     expect(onNeedSpace).toHaveBeenCalledWith("half");
     await user.click(screen.getByRole("button", { name: /1 Main St/ }));
-    expect(onSelectResult).toHaveBeenCalledWith({ lat: 40.71, lon: -73.99, label: "1 Main St" });
+    expect(onSelectResult).toHaveBeenCalledWith({
+      lat: 40.71,
+      lon: -73.99,
+      label: "1 Main St",
+      score: 81.4,
+    });
   });
 
-  it("shows a legend with the searched place and the overlap once a point has an address", async () => {
-    const { user } = setup();
-    await user.click(addButton()!);
-    expect(screen.queryByRole("list", { name: "Map legend" })).not.toBeInTheDocument();
-    await fillPoint(user, "Point of interest 1");
-    // The points of interest are marked by their pins; only the searched place's boundary and
-    // the overlap are drawn, so those are all the legend lists.
-    await waitFor(() =>
-      expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched placeOverlap"),
-    );
-    await user.click(addButton()!);
-    await fillPoint(user, "Point of interest 2");
-    await waitFor(() =>
-      expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched placeOverlap"),
-    );
-  });
-
-  it("leaves Overlap out of the legend when the areas do not overlap", async () => {
-    const { user } = setup(vi.fn(async () => response({ combined: iso("network", 0) })));
+  it("marks the result on show as pressed", async () => {
+    const user = userEvent.setup();
+    const client = {
+      triangulate: vi.fn(async () => response()),
+      reverseGeocode: vi.fn(async () => ({ label: null, latitude: 0, longitude: 0 })),
+      suggestAddresses: vi.fn(async () => [PARK]),
+    } as never;
+    render(<Harness client={client} onSelectResult={() => {}} selectedKey="40.71,-73.99" />);
     await user.click(addButton()!);
     await fillPoint(user, "Point of interest 1");
-    expect((await screen.findAllByText(NO_OVERLAP_MESSAGE)).length).toBeGreaterThan(0);
-    expect(screen.getByRole("list", { name: "Map legend" }).textContent).toBe("Searched place");
+    expect(await screen.findByRole("button", { name: /1 Main St/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /2 Side St/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("explains an empty overlap", async () => {

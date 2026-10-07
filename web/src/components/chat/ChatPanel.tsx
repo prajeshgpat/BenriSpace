@@ -303,9 +303,10 @@ export function ChatPanel({
 
   const empty = hydrated && !messages.some((m) => m.role !== "note");
   const hasPlace = Boolean(context?.address) || context?.latitude !== undefined;
+  const hasTrip = context?.trip !== undefined;
   const starters = useMemo(
-    () => starterQuestions(context?.factors, hasPlace),
-    [context?.factors, hasPlace],
+    () => starterQuestions(context?.factors, hasPlace, hasTrip),
+    [context?.factors, hasPlace, hasTrip],
   );
   const nearLimit = input.length >= CHAT_INPUT_LIMIT - 100;
 
