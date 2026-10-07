@@ -38,8 +38,10 @@ const EMPTY = { type: "FeatureCollection", features: [] } as const;
 
 function areaData(overlay: TripOverlay | null) {
   if (!overlay) return EMPTY;
+  // Only the searched place's travel-time boundary is drawn, plus the overlap: the points of
+  // interest are shown by their pins alone.
   const features: object[] = overlay.anchors.flatMap((a) =>
-    a.geometry
+    a.index === 0 && a.geometry
       ? [{ type: "Feature", properties: { idx: a.index }, geometry: a.geometry }]
       : [],
   );
@@ -63,7 +65,7 @@ function addLayers(map: MaplibreMap, theme: ResolvedTheme) {
   // The faint per-place fills sit under the labels; the outlines and the overlap go on
   // top of everything, as the single-place reach outline does, because the score cells
   // are added later and would otherwise cover them.
-  style.anchors.slice(0, MAX_ANCHORS).forEach((a, i) => {
+  style.anchors.slice(0, 1).forEach((a, i) => {
     map.addLayer(
       {
         id: anchorLayer(i, "fill"),
@@ -82,7 +84,7 @@ function addLayers(map: MaplibreMap, theme: ResolvedTheme) {
     filter: only(OVERLAP_IDX),
     paint: { "fill-color": style.overlap.fill, "fill-opacity": style.overlap.fillOpacity },
   });
-  style.anchors.slice(0, MAX_ANCHORS).forEach((a, i) => {
+  style.anchors.slice(0, 1).forEach((a, i) => {
     map.addLayer({
       id: anchorLayer(i, "casing"),
       type: "line",

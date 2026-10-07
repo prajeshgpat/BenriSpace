@@ -81,28 +81,43 @@ beforeEach(() => {
 });
 
 describe("useTriangulationLayers", () => {
-  it("adds per-place and overlap layers with their dash patterns and data", () => {
+  it("draws only the searched place's boundary and the overlap, not the points of interest's", () => {
     const fake = fakeMap();
     const ref = { current: fake.map as unknown as MaplibreMap };
     renderHook(() => useTriangulationLayers({ mapRef: ref, ready: true, theme: "light", overlay: overlay() }));
 
-    expect([...fake.layers.keys()]).toEqual(
+    const ids = [...fake.layers.keys()];
+    expect(ids).toEqual(
       expect.arrayContaining([
         "tri-anchor-0-fill",
-        "tri-anchor-1-line",
-        "tri-anchor-2-casing",
+        "tri-anchor-0-line",
         "tri-overlap-fill",
         "tri-overlap-line",
       ]),
     );
+    // No layers for the points of interest.
+    expect(ids.filter((id) => /tri-anchor-[12]-/.test(id))).toEqual([]);
     expect(fake.layers.get("tri-anchor-0-line")!.paint).toMatchObject({ "line-color": "#c026d3", "line-width": 3 });
     expect(fake.layers.get("tri-anchor-0-line")!.paint).not.toHaveProperty("line-dasharray");
-    expect(fake.layers.get("tri-anchor-1-line")!.paint).toMatchObject({ "line-color": "#ea580c", "line-dasharray": [3, 1.5] });
-    expect(fake.layers.get("tri-anchor-2-line")!.paint).toMatchObject({ "line-dasharray": [1, 1.5] });
     expect(fake.layers.get("tri-overlap-fill")!.paint).toMatchObject({ "fill-opacity": 0.25 });
     expect(fake.layers.get("tri-overlap-line")!.paint).toMatchObject({ "line-color": "#111827", "line-width": 4.5 });
-    const data = fake.sources.get("tri-areas")!.setData.mock.calls[0][0] as { features: unknown[] };
-    expect(data.features).toHaveLength(3);
+    // The data has the searched place's area and the overlap, nothing else.
+    const data = fake.sources.get("tri-areas")!.setData.mock.calls[0][0] as {
+      features: { properties: { idx: number } }[];
+    };
+    expect(data.features.map((f) => f.properties.idx).sort()).toEqual([-1, 0]);
+  });
+
+  it("draws just the searched place's boundary when there is no overlap", () => {
+    const fake = fakeMap();
+    const ref = { current: fake.map as unknown as MaplibreMap };
+    renderHook(() =>
+      useTriangulationLayers({ mapRef: ref, ready: true, theme: "light", overlay: { ...overlay(), combined: null } }),
+    );
+    const data = fake.sources.get("tri-areas")!.setData.mock.calls[0][0] as {
+      features: { properties: { idx: number } }[];
+    };
+    expect(data.features.map((f) => f.properties.idx)).toEqual([0]);
   });
 
   it("uses the dark palette and rebuilds on style.load", () => {

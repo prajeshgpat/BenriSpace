@@ -210,19 +210,16 @@ export function TripPlanner({
 
       {rows.some((row) => row.lat !== undefined) ? (
         <ul className={styles.legend2} aria-label="Map legend">
-          {[
-            0,
-            ...rows.flatMap((row, i) => (row.lat !== undefined ? [i + 1] : [])),
-          ].map((index) => (
-            <li key={index} className={styles.legendItem} data-index={index}>
-              <Swatch index={index} />
-              {anchorName(index)}
-            </li>
-          ))}
-          <li className={styles.legendItem} data-overlap="true">
-            <span className={styles.overlapSwatch} aria-hidden="true" />
-            Overlap
+          <li className={styles.legendItem} data-index={0}>
+            <Swatch index={0} />
+            {anchorName(0)}
           </li>
+          {status === "ready" ? (
+            <li className={styles.legendItem} data-overlap="true">
+              <span className={styles.overlapSwatch} aria-hidden="true" />
+              Overlap
+            </li>
+          ) : null}
         </ul>
       ) : null}
 
