@@ -158,3 +158,71 @@ def test_apply_precomputed_replaces_estimates(monkeypatch):
     ev2 = optimize.evaluate(cands, anchors)
     optimize.apply_precomputed(object(), cands, anchors, ev2, [0])
     assert ev2.approx[0][0] is True  # mode mismatch: keep the estimate
+
+
+def _factor_candidates(iy, ix0):
+    # Cell i: grocery falls with i, gym rises with i; the all-factor composite favours high i.
+    rows = []
+    for i in range(14):
+        row = {
+            "geo_entity_id": f"00000000-0000-0000-0000-{i:012d}",
+            "composite_score": 50 + i,
+            "formatted_address": f"cell {i}",
+            "latitude": cellgrid.cell_center(iy, ix0 + i)[0],
+            "longitude": cellgrid.cell_center(iy, ix0 + i)[1],
+        }
+        row["grocery_score"] = 90.0 - 5 * i
+        row["gym_score"] = 10.0 + 5 * i
+        rows.append(row)
+    return rows
+
+
+@pytest.fixture
+def factor_client(client, monkeypatch):
+    iy, _ = cellgrid.cell_index(40.7, -74.0)
+    ix0 = cellgrid.cell_index(40.7, -74.0)[1] - 6
+    rows = _factor_candidates(iy, ix0)
+    monkeypatch.setattr(main, "get_scored_candidates_in_box", lambda c, box, v: [dict(r) for r in rows])
+    return client
+
+
+ANCHOR = [{"label": "a", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"}]
+
+
+def test_triangulate_factors_change_ranking_and_score(factor_client):
+    default = factor_client.post("/v1/triangulate", json={"anchors": ANCHOR}).json()["results"]
+    picked = factor_client.post(
+        "/v1/triangulate", json={"anchors": ANCHOR, "factors": "grocery"}
+    ).json()["results"]
+    assert default[0]["compositeScore"] >= default[-1]["compositeScore"]
+    assert default[0]["address"] == "cell 8"  # highest composite_score inside the area
+    assert picked[0]["address"] != default[0]["address"]
+    scores = [r["compositeScore"] for r in picked]
+    assert scores == sorted(scores, reverse=True)
+    assert picked[0]["compositeScore"] == round(90.0 - 5 * int(picked[0]["address"].split()[1]), 1)
+
+
+def test_triangulate_weights_blend_selected_factors(factor_client):
+    r = factor_client.post(
+        "/v1/triangulate",
+        json={"anchors": ANCHOR, "factors": "grocery,gym", "weights": "grocery:1,gym:1"},
+    ).json()["results"]
+    assert all(x["compositeScore"] == 50.0 for x in r)  # (90-5i + 10+5i) / 2
+
+
+def test_triangulate_drops_candidates_without_selected_sub_scores(factor_client):
+    r = factor_client.post("/v1/triangulate", json={"anchors": ANCHOR, "factors": "transit"})
+    assert r.status_code == 200 and r.json()["results"] == []
+
+
+def test_triangulate_invalid_factor_is_400(factor_client):
+    r = factor_client.post("/v1/triangulate", json={"anchors": ANCHOR, "factors": "nope"})
+    assert r.status_code == 400 and r.json()["code"] == "invalid_request"
+
+
+def test_candidates_sql_selects_every_factor_column():
+    from api.factors import FACTOR_COLUMNS
+    from api.triangulate_sql import build_candidates_sql
+
+    sql, _ = build_candidates_sql(None, "v")
+    assert all(f"s.{col}" in sql for col in FACTOR_COLUMNS.values())

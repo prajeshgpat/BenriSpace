@@ -196,6 +196,19 @@ export function subScoresComposite(
   return total > 0 ? weighted / total : null;
 }
 
+/**
+ * An area's overall score for the user's selection, rounded to one decimal: what the score card
+ * and the overlap list both show. Null when none of the selected factors has a score.
+ */
+export function selectionScore(
+  subScores: Parameters<typeof subScoresComposite>[0],
+  selected: readonly FactorKey[],
+  overrides: Parameters<typeof subScoresComposite>[2],
+): number | null {
+  const composite = subScoresComposite(subScores, selected, overrides);
+  return composite === null ? null : round1(composite);
+}
+
 /** One composite per cell; `NaN` where the cell has no selected score. */
 export function compositeAll(
   matrix: Pick<ScoreMatrix, "count" | "scores" | "factors">,

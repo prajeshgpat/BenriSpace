@@ -334,6 +334,13 @@ def mcp_no_stream():
 def triangulate(body: TriangulateRequest):
     from api import isochrone
 
+    spec = None
+    if body.factors is not None or body.weights is not None:
+        try:
+            spec = parse_score_spec(body.factors, body.weights)
+        except InvalidMapRequest as exc:
+            return _error(400, "invalid_request", str(exc))
+
     points = []
     for anchor in body.anchors:
         latlon = _resolve_anchor_latlon(anchor)
@@ -360,7 +367,7 @@ def triangulate(body: TriangulateRequest):
 
     for c in candidates:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-    ranked = rank_in_cells(candidates, combined, body.limit)
+    ranked = rank_in_cells(candidates, combined, body.limit, spec)
 
     results = [
         RankedAddress(

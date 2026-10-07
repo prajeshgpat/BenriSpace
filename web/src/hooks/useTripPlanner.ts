@@ -4,14 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatLatLon } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
+import { FACTOR_KEY_LIST } from "@/lib/api/types";
 import type {
   AreaGeometry,
+  FactorKey,
   Isochrone,
+  PriorityQuery,
   ReachMode,
   Suggestion,
   TriangulateAnchor,
 } from "@/lib/api/types";
 import type { UrlPoint } from "@/lib/map/url";
+import { selectionScore } from "@/lib/scores/matrix";
 
 /** At most two points of interest, besides the searched place. */
 export const MAX_POIS = 2;
@@ -60,7 +64,10 @@ export function effectiveTravel(row: TripRow, travel: TripTravel): TripTravel {
 export interface TripResult {
   lat: number;
   lon: number;
-  /** The API's composite score, not the user's factor-normalised one. */
+  /**
+   * The user's factor-normalised score for this area: what the "Area in the overlap" card
+   * shows. Falls back to the API's composite when the area's sub-scores can't be fetched.
+   */
   score: number;
   label: string;
 }
@@ -92,7 +99,23 @@ export interface TripOverlay {
   pins: { index: number; label: string; lat: number; lon: number }[];
 }
 
-type ClientSubset = Pick<ApiClient, "triangulate" | "reverseGeocode" | "suggestAddresses">;
+type ClientSubset = Pick<ApiClient, "triangulate" | "reverseGeocode" | "suggestAddresses"> &
+  Partial<Pick<ApiClient, "getAreaByCoordinates">>;
+
+/** The user's selected factors and importance, which the overlap is ranked and scored by. */
+export interface TripPriorities {
+  factors: readonly FactorKey[];
+  weights?: Partial<Record<FactorKey, number>>;
+}
+
+/** What `POST /triangulate` is sent: no `factors` when all are selected, like the map calls. */
+function priorityRequest(priorities: TripPriorities | undefined): PriorityQuery {
+  if (!priorities || priorities.factors.length === 0) return {};
+  return {
+    factors: priorities.factors.length === FACTOR_KEY_LIST.length ? undefined : priorities.factors,
+    weights: priorities.weights,
+  };
+}
 
 const EARTH_RADIUS_MI = 3958.8;
 
@@ -191,11 +214,14 @@ export interface TripPlannerState {
  * The state behind the "+ Point of interest" planner: up to two points of interest,
  * a debounced call to `POST /triangulate` for the searched place plus those points
  * (all with the shared Travel time), and the spread-out list of best areas in the overlap.
+ * With `priorities`, the overlap is ranked by the selected factors and each listed area's
+ * score is the one the score card shows for it (its sub-scores over those factors).
  */
 export function useTripPlanner(
   client: ClientSubset,
   place: TripPlace | null,
   travel: TripTravel | null,
+  priorities?: TripPriorities,
 ): TripPlannerState {
   const [rows, setRows] = useState<TripRow[]>([]);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
@@ -211,6 +237,28 @@ export function useTripPlanner(
     clientRef.current = client;
     rowsRef.current = rows;
   });
+
+  // What the score card shows for each area, by the same call and arithmetic; undefined
+  // where the area can't be looked up, so the API's score stands in.
+  const selectionScores = (
+    areas: readonly { lat: number; lon: number }[],
+    selected: TripPriorities | undefined,
+    signal: AbortSignal,
+  ): Promise<(number | undefined)[]> => {
+    const lookup = clientRef.current.getAreaByCoordinates;
+    if (!selected || selected.factors.length === 0 || !lookup) {
+      return Promise.resolve(areas.map(() => undefined));
+    }
+    return Promise.all(
+      areas.map((area) =>
+        lookup
+          .call(clientRef.current, { lat: area.lat, lon: area.lon }, { signal })
+          .then((found) => selectionScore(found.score.subScores, selected.factors, selected.weights))
+          .then((score) => score ?? undefined)
+          .catch(() => undefined),
+      ),
+    );
+  };
 
   const nextId = () => `trip-${(counter.current += 1)}`;
 
@@ -415,23 +463,36 @@ export function useTripPlanner(
     [placed, mode, minutes],
   );
   const hasPoi = placed.some((p) => p.index > 0);
+  const query = useMemo(() => priorityRequest(priorities), [priorities]);
+  const queryKey = JSON.stringify([
+    query.factors ?? null,
+    Object.entries(query.weights ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)),
+  ]);
   const anchorKey =
-    place && hasPoi && anchors.length >= 2 ? `${JSON.stringify(anchors)}#${nonce}` : null;
+    place && hasPoi && anchors.length >= 2
+      ? `${JSON.stringify(anchors)}|${queryKey}#${nonce}`
+      : null;
 
   useEffect(() => {
     if (anchorKey === null) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       clientRef.current
-        .triangulate(anchors, { signal: controller.signal })
-        .then((response) => {
+        .triangulate(anchors, { ...query, signal: controller.signal })
+        .then(async (response) => {
           if (controller.signal.aborted) return;
-          const spread = pickSpreadResults(response.results).map<TripResult>((r) => ({
-            lat: r.lat,
-            lon: r.lon,
-            score: r.score,
-            label: COORDINATE_TEXT.test(r.address) || r.address === "" ? formatLatLon(r) : r.address,
-          }));
+          const picked = pickSpreadResults(response.results);
+          const scores = await selectionScores(picked, priorities, controller.signal);
+          if (controller.signal.aborted) return;
+          const spread = picked
+            .map<TripResult>((r, i) => ({
+              lat: r.lat,
+              lon: r.lon,
+              score: scores[i] ?? r.score,
+              label:
+                COORDINATE_TEXT.test(r.address) || r.address === "" ? formatLatLon(r) : r.address,
+            }))
+            .sort((a, b) => b.score - a.score);
           const empty =
             response.combined === null ||
             response.combined.cellCount === 0 ||

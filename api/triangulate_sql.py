@@ -10,6 +10,7 @@ haversine membership test, so results are identical.
 import math
 from collections.abc import Sequence
 
+from api.factors import FACTOR_COLUMNS
 from api.triangulate import AnchorCircle
 from common.geo import EARTH_RADIUS_M
 
@@ -64,6 +65,7 @@ def box_is_empty(box: LatLonBox) -> bool:
 _SQL = """
     select distinct on (s.geo_entity_id)
         s.geo_entity_id, s.composite_score, s.weights_version, s.computed_at,
+        {factor_columns},
         ge.formatted_address, ge.latitude, ge.longitude
     from scores s
     join geo_entities ge on ge.id = s.geo_entity_id
@@ -72,13 +74,16 @@ _SQL = """
 """
 
 
+_FACTOR_SELECT = ", ".join(f"s.{column}" for column in FACTOR_COLUMNS.values())
+
+
 def build_candidates_sql(
     box: LatLonBox | None, weights_version: str | None = None
 ) -> tuple[str, list]:
     if box is None:
-        return _SQL.format(where=""), [weights_version]
+        return _SQL.format(where="", factor_columns=_FACTOR_SELECT), [weights_version]
     where = "where ge.latitude between %s and %s and ge.longitude between %s and %s"
-    return _SQL.format(where=where), [*box, weights_version]
+    return _SQL.format(where=where, factor_columns=_FACTOR_SELECT), [*box, weights_version]
 
 
 def get_scored_candidates_in_box(

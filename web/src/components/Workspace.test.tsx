@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 import { ApiError } from "@/lib/api/errors";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
-import { emptySubScores, jsonResponse, makeAreaBody, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
+import { DEFAULT_SELECTION } from "@/lib/map/selection";
+import { emptySubScores, jsonResponse, makeAreaBody, makeAreaScore, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
 import { Workspace } from "./Workspace";
@@ -1306,6 +1307,33 @@ describe("Workspace: points of interest", () => {
     }));
     const withPoint = () =>
       setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate });
+
+    it("sends the selected factors and scores the overlap areas as the score card does", async () => {
+      const user = userEvent.setup();
+      const base = makeAreaScore();
+      // Every factor scores 40 at Main St and 90 at Side St, so the selected-factor score
+      // reverses the API's all-factor order (81.4 and 70).
+      const flat = (value: number) =>
+        Object.fromEntries(Object.keys(emptySubScores).map((k) => [k, value])) as typeof emptySubScores;
+      const getAreaByCoordinates = vi.fn<ApiClient["getAreaByCoordinates"]>(async ({ lat }) => ({
+        ...base,
+        score: { ...base.score, compositeScore: 12, subScores: flat(lat > 40.75 ? 90 : 40) },
+      }));
+      const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
+      setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, {
+        triangulate: tri,
+        getAreaByCoordinates,
+      });
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      expect(tri.mock.calls[0][1]).toMatchObject({ factors: DEFAULT_SELECTION.factors });
+      expect(map().markers.map((m) => [m.id, m.rank, m.tooltip])).toEqual([
+        ["overlap:40.8,-73.9", 1, "2 Side St \u00b7 90"],
+        ["overlap:40.71,-73.99", 2, "1 Main St \u00b7 40"],
+      ]);
+      await user.click(screen.getByRole("button", { name: /1 Main St/ }));
+      const card = await screen.findByRole("region", { name: "Area in the overlap" });
+      expect(await within(card).findByTestId("composite-score")).toHaveTextContent("40");
+    });
 
     it("hides the score card and suggestions, keeping the overlap results", async () => {
       withPoint();
