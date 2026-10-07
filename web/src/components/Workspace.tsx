@@ -11,6 +11,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type Ref,
+  type RefObject,
 } from "react";
 
 import { useIsMobile } from "@/hooks/useMediaQuery";
@@ -33,7 +34,13 @@ import {
 } from "@/lib/address";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
-import type { ChatResult, MapTopResult, ReachMode, Suggestion } from "@/lib/api/types";
+import type {
+  ChatResult,
+  ChatTrip,
+  MapTopResult,
+  ReachMode,
+  Suggestion,
+} from "@/lib/api/types";
 import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
 import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
 import { provisionalArea } from "@/lib/static/provisional";
@@ -65,8 +72,8 @@ import { bandLabel, roundScore } from "@/lib/score/presentation";
 import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
-import { TripPlanner } from "./TripPlanner";
-import { useTripPlanner } from "@/hooks/useTripPlanner";
+import { resultKey, TripPlannerPills, TripResults } from "./TripPlanner";
+import { effectiveTravel, anchorName, useTripPlanner } from "@/hooks/useTripPlanner";
 import { BottomSheet } from "./BottomSheet";
 import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
@@ -83,6 +90,7 @@ import { FactorControls } from "./map/FactorControls";
 import type { AreaGeometry } from "@/lib/api/types";
 import type { FlyRequest, Viewport } from "./map/MapCanvas";
 import { MapLegend } from "./map/MapLegend";
+import { TripLegend } from "./map/TripLegend";
 import { MapNotices } from "./map/MapNotices";
 import styles from "./Workspace.module.css";
 
@@ -140,6 +148,18 @@ function announcement(state: LookupState): string {
   }
 }
 
+/** The overall score normalised to the selected factors and weights, as the map colours are. */
+function normaliseLookup(
+  lookup: LookupState,
+  factors: Parameters<typeof subScoresComposite>[1],
+  weights: Parameters<typeof subScoresComposite>[2],
+): LookupState {
+  if (lookup.status !== "success") return lookup;
+  const composite = subScoresComposite(lookup.score.subScores, factors, weights);
+  if (composite === null) return lookup;
+  return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
+}
+
 function roundCoordinate(value: number): number {
   const factor = 10 ** COORDINATE_DECIMALS;
   return Math.round(value * factor) / factor;
@@ -153,12 +173,18 @@ function MapPlaceholder() {
   );
 }
 
-/** Visible height of the sheet at each snap, for keeping map controls clear of it. */
-const SHEET_OFFSET: Record<SheetSnap, string> = {
-  peek: "calc(6rem + env(safe-area-inset-bottom, 0px))",
-  half: "calc(50% - 0.5rem)",
-  full: "calc(50% - 0.5rem)",
-};
+/**
+ * Visible height of the sheet at each snap, for keeping map controls clear of it. The peek
+ * and middle heights follow the content (measured by the sheet) once they are known.
+ */
+function sheetOffset(snap: SheetSnap, measured: { peek: number; half: number } | null): string {
+  if (snap === "peek") {
+    return measured
+      ? `calc(${measured.peek}px + env(safe-area-inset-bottom, 0px))`
+      : "calc(6rem + env(safe-area-inset-bottom, 0px))";
+  }
+  return snap === "half" && measured ? `calc(${measured.half}px - 0.5rem)` : "calc(50% - 0.5rem)";
+}
 
 interface LayoutProps {
   panel: ReactNode;
@@ -166,6 +192,10 @@ interface LayoutProps {
   panelRef?: Ref<HTMLElement>;
   snap?: SheetSnap;
   onSnapChange?: (snap: SheetSnap) => void;
+  /** The element the collapsed sheet ends under (the search box and the point pills). */
+  peekRef?: RefObject<HTMLElement | null>;
+  /** The element the middle snap ends under (the score card, or the overlap results). */
+  halfRef?: RefObject<HTMLElement | null>;
 }
 
 function Layout({
@@ -174,9 +204,19 @@ function Layout({
   panelRef,
   snap,
   onSnapChange,
+  peekRef,
+  halfRef,
 }: LayoutProps) {
   const mobile = useIsMobile();
   const [localSnap, setLocalSnap] = useState<SheetSnap>("peek");
+  const [measured, setMeasured] = useState<{ peek: number; half: number } | null>(null);
+  // On a phone the app is one fixed screen: the page never scrolls under the sheet.
+  useEffect(() => {
+    if (!mobile) return;
+    const root = document.documentElement;
+    root.classList.add("workspace-lock");
+    return () => root.classList.remove("workspace-lock");
+  }, [mobile]);
   const sheetSnap = snap ?? localSnap;
   const content = (
     <>
@@ -189,7 +229,7 @@ function Layout({
   return (
     <div
       className={styles.workspace}
-      style={{ "--sheet-offset": SHEET_OFFSET[sheetSnap] } as CSSProperties}
+      style={{ "--sheet-offset": sheetOffset(sheetSnap, measured) } as CSSProperties}
     >
       {mobile ? (
         <BottomSheet
@@ -197,6 +237,9 @@ function Layout({
           snap={sheetSnap}
           onSnapChange={onSnapChange ?? setLocalSnap}
           label="Search and map controls"
+          peekRef={peekRef}
+          halfRef={halfRef}
+          onMeasure={setMeasured}
         >
           {content}
         </BottomSheet>
@@ -313,17 +356,28 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     // A conversation in progress keeps the sheet where it is.
     if (!chatOpen) setSnap(placeKey ? "half" : "peek");
   }
+  // An area picked from the overlap results (see pickOverlap).
+  const [overlapPick, setOverlapPick] = useState<{
+    lat: number;
+    lon: number;
+    label: string;
+  } | null>(null);
   const [previewPlaceKey, setPreviewPlaceKey] = useState(placeKey);
   if (previewPlaceKey !== placeKey) {
     setPreviewPlaceKey(placeKey);
     if (preview) setPreview(null);
+    if (overlapPick) setOverlapPick(null);
   }
+  const needSpace = useCallback((kind: "full" | "half") => setSnap(kind), []);
   // Let a click on the map show the map, not the sheet covering it.
   const revealMap = () =>
     setSnap((current) => (current === "full" ? "half" : current));
 
   const panelRef = useRef<HTMLElement>(null);
+  // The search box, notes and point pills: the collapsed sheet ends under them.
   const searchRef = useRef<HTMLDivElement>(null);
+  // The score card, or once there is an overlap its results: the middle snap ends under it.
+  const halfRef = useRef<HTMLElement | null>(null);
   const flownKey = useRef<string | null>(start.key);
 
   // The vector-tile grid is opt-in (NEXT_PUBLIC_PMTILES_URL); a tile error
@@ -350,12 +404,34 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const { state: lookup, retry } = useScoreLookup(target, client, priorities);
   // The overall score is normalised to the selected factors and weights, with
   // the same arithmetic as the map colours and the best-areas list.
-  const state: LookupState = useMemo(() => {
-    if (lookup.status !== "success") return lookup;
-    const composite = subScoresComposite(lookup.score.subScores, selection.factors, weights);
-    if (composite === null) return lookup;
-    return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
-  }, [lookup, selection.factors, weights]);
+  const state: LookupState = useMemo(
+    () => normaliseLookup(lookup, selection.factors, weights),
+    [lookup, selection.factors, weights],
+  );
+
+  // An area picked from the overlap results: scored on its own, without becoming the
+  // searched place.
+  const overlapTarget: ScoreTarget | null = useMemo(
+    () =>
+      overlapPick
+        ? {
+            kind: "coordinates",
+            lat: overlapPick.lat,
+            lon: overlapPick.lon,
+            label: overlapPick.label,
+          }
+        : null,
+    [overlapPick],
+  );
+  const { state: pickLookup, retry: retryPick } = useScoreLookup(
+    overlapTarget,
+    client,
+    priorities,
+  );
+  const pickState: LookupState = useMemo(
+    () => normaliseLookup(pickLookup, selection.factors, weights),
+    [pickLookup, selection.factors, weights],
+  );
 
   // "+ Point of interest": up to two extra places whose travel-time areas must overlap.
   const tripPlace = useMemo(
@@ -372,31 +448,18 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // The Travel time row in Factors: the searched place and the points of interest share it.
   const [travel, setTravel] = useState<{ mode: ReachMode; minutes: number } | null>(null);
   const planner = useTripPlanner(client, tripPlace, travel);
-  // A press on the map while a point-of-interest box is selected (cursor blinking) fills that
-  // box with the tapped place instead of scoring it. The press is noted at pointerdown, before
-  // the box loses focus; the click that follows consults it.
-  const armedPoi = useRef<string | null>(null);
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const active = document.activeElement;
-      const id = active instanceof HTMLElement ? (active.dataset.poiId ?? null) : null;
-      armedPoi.current = id && target?.closest(".maplibregl-map") ? id : null;
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
+  // A box that is armed ("Drop a pin") is waiting for a place: the next tap on the map (a
+  // cell or a marker) fills it instead of scoring the tapped place.
+  const armedPoi = planner.armedId;
   const poiRows = planner.rows;
   const setPoiPlace = planner.setPlaceFromMap;
   const fillPoiFromMap = useCallback(
     (point: { lat: number; lon: number }): boolean => {
-      const id = armedPoi.current;
-      armedPoi.current = null;
-      if (!id || !poiRows.some((row) => row.id === id)) return false;
-      setPoiPlace(id, point);
+      if (!armedPoi || !poiRows.some((row) => row.id === armedPoi)) return false;
+      setPoiPlace(armedPoi, point);
       return true;
     },
-    [setPoiPlace, poiRows],
+    [setPoiPlace, poiRows, armedPoi],
   );
   // When an overlap (or the news that there is none) arrives, bring the places and their
   // travel areas into view.
@@ -623,7 +686,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     );
   }
 
-  // "Get score": the typed points of interest are looked up first, then the searched place is
+  // "Score": the typed points of interest are looked up first, then the searched place is
   // scored and the overlap is worked out for all of them.
   const handleSearch = async (next: string) => {
     await planner.resolvePending();
@@ -676,7 +739,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     navigate(next);
   }
 
-  // Show a suggested spot on the map without leaving the selected location.
+  // Score an area from the overlap results in the panel, centre the map on it and keep
+  // the searched place as it is.
+  function pickOverlap({ lat, lon, label }: { lat: number; lon: number; label: string }) {
+    setOverlapPick({ lat, lon, label });
+    setPreview(null);
+    setSnap("half");
+    setFlyRequest({ lat, lon, nonce: Date.now() });
+  }
+
   function showPreview(next: Preview) {
     setPreview(next);
     // The sheet would cover the map the preview is meant to show.
@@ -769,6 +840,18 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     navigate(next);
   }
 
+  // Once the places' travel areas overlap, the question is about the overlap, not
+  // about the one searched place: its score card, summary and suggestions step aside and
+  // the best areas in the overlap are the results.
+  const entered = planner.hasPlaces;
+  // An overlap exists and is drawn.
+  const overlapShown = entered && planner.status === "ready";
+  // The triangulation's answer (an overlap, or none) is on the map.
+  const tripDrawn = entered && (planner.status === "ready" || planner.status === "empty");
+  // Removing every point (or losing the overlap) drops the picked area with it.
+  if (!overlapShown && overlapPick) setOverlapPick(null);
+  const pickOpen = overlapShown && overlapPick !== null;
+
   const pickedHere = picked?.key === placeKey ? picked : null;
   const activeTop =
     pickedHere?.kind === "top"
@@ -777,12 +860,24 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // The lookup may upgrade the grid square to a secondary-road polygon, so the
   // rectangle is held back until it settles; it only shows as the fallback
   // when no polygon came back (or the lookup failed).
+  // With a place entered the grid-cell rectangle is dropped, so it cannot show through
+  // where the area polygon is hidden.
   const highlightGeohash =
-    pickedHere && state.status !== "loading" ? pickedHere.geohash : null;
+    pickedHere && state.status !== "loading" && !entered ? pickedHere.geohash : null;
 
+  const overlapResults = overlapShown ? (planner.data?.results ?? null) : null;
   const markers = useMemo(
     () =>
-      (topResults ?? []).map((result, index) => ({
+      overlapResults
+        ? overlapResults.map((result, index) => ({
+            id: `overlap:${resultKey(result)}`,
+            rank: index + 1,
+            lat: result.lat,
+            lon: result.lon,
+            tooltip: `${result.label} \u00b7 ${Math.round(result.score)}`,
+            label: `${result.label}, score ${Math.round(result.score)}, rank ${index + 1}. Show details`,
+          }))
+        : (topResults ?? []).map((result, index) => ({
         id: result.geohash,
         rank: index + 1,
         lat: result.latitude,
@@ -790,8 +885,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         tooltip: `${areaTitle(result)} \u00b7 ${Math.round(result.score)}`,
         label: `${areaTitle(result)}, score ${Math.round(result.score)}, rank ${index + 1}. Show details`,
       })),
-    [topResults],
+    [topResults, overlapResults],
   );
+  const activeMarkerId =
+    overlapShown && overlapPick
+      ? `overlap:${resultKey(overlapPick)}`
+      : (activeTop?.geohash ?? null);
 
   const mapStatus = describeMapStatus({
     noFactors,
@@ -807,6 +906,39 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
   });
 
+  const trip = useMemo<ChatTrip | undefined>(() => {
+    if (!entered || !travel) return undefined;
+    const places: ChatTrip["places"] = [];
+    if (tripPlace) {
+      places.push({
+        label: tripPlace.label,
+        latitude: tripPlace.lat,
+        longitude: tripPlace.lon,
+        mode: travel.mode,
+        minutes: travel.minutes,
+      });
+    }
+    planner.rows.forEach((row, index) => {
+      if (row.lat === undefined || row.lon === undefined) return;
+      const { mode, minutes } = effectiveTravel(row, travel);
+      places.push({
+        label: row.label || anchorName(index + 1),
+        latitude: row.lat,
+        longitude: row.lon,
+        mode,
+        minutes,
+      });
+    });
+    return {
+      places: places.slice(0, 3),
+      areas: (planner.status === "ready" ? (planner.data?.results ?? []) : [])
+        .slice(0, 5)
+        .map((r) => ({ label: r.label, latitude: r.lat, longitude: r.lon, score: Math.round(r.score) })),
+      // "No overlap" only once the planner has said so; while it is working nothing is claimed.
+      overlap: planner.status !== "empty",
+    };
+  }, [entered, travel, tripPlace, planner.rows, planner.status, planner.data]);
+
   const chatProps = {
     client,
     context: {
@@ -818,6 +950,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       ...(point ? { latitude: point.lat, longitude: point.lon } : {}),
       ...(priorities.factors ? { factors: priorities.factors } : {}),
       ...(priorities.weights ? { weights: priorities.weights } : {}),
+      ...(trip ? { trip } : {}),
     },
     place: { key: placeKey, label: target ? chatAddress : null },
     onShowOnMap: showChatResult,
@@ -857,15 +990,56 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             ) : null}
           </div>
         </div>
-        <TripPlanner
+        <TripPlannerPills
           planner={planner}
           client={client}
-          onSelectResult={({ lat, lon, label }) =>
-            navigate({ kind: "coordinates", lat, lon, label })
-          }
-          onNeedSpace={(kind) => setSnap(kind)}
+          onNeedSpace={needSpace}
         />
       </div>
+
+      {/* Below the collapsed sheet: working-out, errors and the best areas in the overlap. A
+          result is previewed on the map like a similar area; it only becomes the searched
+          place when promoted from the preview. */}
+      {pickOpen && overlapPick ? (
+        <section
+          ref={halfRef}
+          className={styles.result}
+          data-state={pickState.status}
+          aria-label="Area in the overlap"
+        >
+          <button type="button" className={styles.close} onClick={() => setOverlapPick(null)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+            <span className="sr-only">Close area in the overlap</span>
+          </button>
+          <div className={styles.headerSlot}>
+            {pickState.status === "loading" ? <ResultSkeleton /> : null}
+            {pickState.status === "error" ? (
+              <ErrorNotice
+                address={overlapPick.label}
+                error={pickState.error}
+                onRetry={retryPick}
+              />
+            ) : null}
+            {pickState.status === "success" ? (
+              <ScoreHeader
+                address={overlapPick.label}
+                score={pickState.score}
+                area={pickState.area}
+                hideCopyLink
+              />
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+      <TripResults
+        planner={planner}
+        sectionRef={overlapShown && !pickOpen ? halfRef : undefined}
+        selectedKey={pickOpen && overlapPick ? resultKey(overlapPick) : null}
+        onSelectResult={pickOverlap}
+        onNeedSpace={needSpace}
+      />
 
       <p className="sr-only" role="status">
         {locating ? "Finding your location\u2026" : ""}
@@ -875,10 +1049,15 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         {announcement(state)}
       </p>
 
+      <p className="sr-only" role="status">
+        {pickOpen ? announcement(pickState) : ""}
+      </p>
+
       {chatOpen ? <ChatPanel {...chatProps} /> : null}
 
-      {target ? (
+      {target && !overlapShown ? (
         <section
+          ref={halfRef}
           className={styles.result}
           data-state={state.status}
           aria-label="Selected location"
@@ -942,9 +1121,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           selection={selection}
           onChange={setSelection}
           scores={
-            state.status === "success"
-              ? state.score.subScores
-              : (provisional?.subScores ?? null)
+            pickOpen && pickState.status === "success"
+              ? pickState.score.subScores
+              : state.status === "success"
+                ? state.score.subScores
+                : (provisional?.subScores ?? null)
           }
         >
           {/* Always mounted, so a switched-on travel area survives a change of place. */}
@@ -957,11 +1138,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             travelMode={state.status === "success" ? state.score.travelMode : null}
             client={client}
             onReach={setReachGeometry}
-            suspended={planner.active}
+            suspended={tripDrawn}
             onTravelChange={setTravel}
           />
         </FactorControls>
-        {state.status === "success" ? (
+        {state.status === "success" && !overlapShown ? (
           <>
             <ScoreSummary
               score={state.score}
@@ -984,17 +1165,19 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             />
           </>
         ) : null}
-        <BestAreas
-          status={top.status}
-          results={topResults}
-          error={top.error}
-          selectedFactors={selection.factors}
-          activeGeohash={activeTop?.geohash ?? null}
-          onSelect={onSelectTop}
-          onRetry={top.retry}
-          compare={topCompare}
-          feedbackClient={client}
-        />
+        {overlapShown ? null : (
+          <BestAreas
+            status={top.status}
+            results={topResults}
+            error={top.error}
+            selectedFactors={selection.factors}
+            activeGeohash={activeTop?.geohash ?? null}
+            onSelect={onSelectTop}
+            onRetry={top.retry}
+            compare={topCompare}
+            feedbackClient={client}
+          />
+        )}
       </div>
       <p className="sr-only" role="status">
         {mapStatus}
@@ -1024,17 +1207,21 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           initialView={start.view}
           cells={features}
           markers={markers}
-          activeMarkerId={activeTop?.geohash ?? null}
+          activeMarkerId={activeMarkerId}
           highlightGeohash={highlightGeohash}
           tileCells={tilesOn ? tileCells : null}
           onTilesFailed={() => setTilesFailed(true)}
           areaGeometry={
-            state.status === "success" ? (state.area?.geometry ?? null) : null
+            pickOpen && pickState.status === "success"
+              ? (pickState.area?.geometry ?? null)
+              : state.status === "success" && !overlapShown
+                ? (state.area?.geometry ?? null)
+                : null
           }
           theme={theme}
           previewAreaGeometry={preview ? previewGeometry : null}
           reachGeometry={reachGeometry}
-          triangulation={planner.active ? planner.overlay : null}
+          triangulation={entered ? planner.overlay : null}
           previewPin={preview ? { lat: preview.lat, lon: preview.lon } : null}
           pin={target ? point : null}
           flyRequest={flyRequest}
@@ -1050,7 +1237,14 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
             revealMap();
             selectCell(cell);
           }}
-          onMarkerClick={(geohash) => {
+          onMarkerClick={(id) => {
+            const overlap = overlapResults?.find((r) => `overlap:${resultKey(r)}` === id);
+            if (overlap) {
+              if (fillPoiFromMap({ lat: overlap.lat, lon: overlap.lon })) return;
+              pickOverlap(overlap);
+              return;
+            }
+            const geohash = id;
             const result = topResults?.find((r) => r.geohash === geohash);
             if (result && fillPoiFromMap({ lat: result.latitude, lon: result.longitude })) return;
             revealMap();
@@ -1079,6 +1273,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       )}
       <div className={styles.overlay}>
         <MapLegend range={range} />
+        {entered ? <TripLegend overlay={planner.overlay} status={planner.status} /> : null}
         <MapNotices
           loading={cells.status === "loading" && !noFactors}
           noFactors={noFactors}
@@ -1101,6 +1296,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   return (
     <Layout
       panelRef={panelRef}
+      peekRef={searchRef}
+      halfRef={halfRef}
       panel={panel}
       map={map}
       snap={snap}

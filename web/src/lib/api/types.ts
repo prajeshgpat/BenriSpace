@@ -261,6 +261,16 @@ export interface ChatTurn {
   content: string;
 }
 
+/** The "+ Point of interest" planner: where the travel areas of the places overlap. */
+export interface ChatTrip {
+  /** The searched place first, then the points of interest, with their effective travel. */
+  places: { label: string; latitude: number; longitude: number; mode: ReachMode; minutes: number }[];
+  /** The best areas in the overlap (at most five). */
+  areas: { label: string; latitude: number; longitude: number; score: number }[];
+  /** False when the travel areas do not overlap. */
+  overlap: boolean;
+}
+
 /** What the user is looking at; the assistant's tools default to it. */
 export interface ChatContext {
   address?: string;
@@ -268,6 +278,7 @@ export interface ChatContext {
   longitude?: number;
   factors?: readonly FactorKey[];
   weights?: Readonly<Partial<Record<FactorKey, number>>>;
+  trip?: ChatTrip;
 }
 
 /** A place the assistant found, built by the API from tool output. */

@@ -36,21 +36,24 @@ type Geometry = NonNullable<TripOverlay["combined"]>;
 
 const EMPTY = { type: "FeatureCollection", features: [] } as const;
 
-function areaData(overlay: TripOverlay | null) {
+export function areaData(overlay: TripOverlay | null) {
   if (!overlay) return EMPTY;
-  // Only the searched place's travel-time boundary is drawn, plus the overlap: the points of
-  // interest are shown by their pins alone.
-  const features: object[] = overlay.anchors.flatMap((a) =>
-    a.index === 0 && a.geometry
-      ? [{ type: "Feature", properties: { idx: a.index }, geometry: a.geometry }]
-      : [],
-  );
+  // With an overlap, only the overlap is drawn (the points of interest show by their pins).
+  // With none, the searched place's own travel boundary stays, so the "don't overlap" answer
+  // has something to show.
+  const features: object[] = [];
   if (overlay.combined) {
     features.push({
       type: "Feature",
       properties: { idx: OVERLAP_IDX },
       geometry: overlay.combined as Geometry,
     });
+  } else {
+    for (const a of overlay.anchors) {
+      if (a.index === 0 && a.geometry) {
+        features.push({ type: "Feature", properties: { idx: a.index }, geometry: a.geometry });
+      }
+    }
   }
   return { type: "FeatureCollection", features };
 }

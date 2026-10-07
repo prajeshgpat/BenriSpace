@@ -311,7 +311,7 @@ describe("Workspace: use my current location", () => {
     await screen.findByText(/blocked for this site/);
 
     await user.type(screen.getByRole("combobox", { name: "Address" }), "350 5th Ave");
-    await user.click(screen.getByRole("button", { name: "Get score" }));
+    await user.click(screen.getByRole("button", { name: "Score" }));
     expect(pushState).toHaveBeenCalledWith(null, "", "/app?address=350+5th+Ave");
     expect(within(document.body).getByTestId("map")).toBeInTheDocument();
   });

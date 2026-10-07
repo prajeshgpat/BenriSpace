@@ -44,7 +44,9 @@ test("points of interest: add two, see the overlap list, remove them", async ({ 
   const add = page.getByRole("button", { name: "Point of interest", exact: true });
   await add.click();
   const first = page.getByRole("combobox", { name: "Point of interest 1 address" });
-  await expect(first).toBeFocused();
+  // Armed for a pin on the map, and the keyboard stays closed until the box is tapped again.
+  await expect(first).toHaveAttribute("placeholder", "Drop a pin");
+  await expect(first).not.toBeFocused();
   await first.fill("grand central");
   await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
 
@@ -55,7 +57,10 @@ test("points of interest: add two, see the overlap list, remove them", async ({ 
 
   // Two points of interest is the most: the pill goes away after the second box opens.
   await add.click();
-  await expect(page.getByRole("combobox", { name: "Point of interest 2 address" })).toBeFocused();
+  await expect(page.getByRole("combobox", { name: "Point of interest 2 address" })).toHaveAttribute(
+    "placeholder",
+    "Drop a pin",
+  );
   await expect(add).toHaveCount(0);
 
   await page.getByRole("button", { name: "Remove point of interest 2" }).click();

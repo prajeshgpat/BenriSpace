@@ -2,14 +2,18 @@
   --sheet-peek: calc(6rem + env(safe-area-inset-bottom, 0px));
 
   position: absolute;
-  right: 0;
+  /* A strip of map shows at each side. */
+  right: 0.5rem;
   bottom: 0;
-  left: 0;
+  left: 0.5rem;
   z-index: 4;
   display: flex;
   flex-direction: column;
-  /* Leaves a strip of map above the sheet when fully open. */
-  height: calc(100% - 1rem);
+  /* Leaves a strip of map above the sheet when fully open, and keeps its top (and handle)
+     clear of the menu button and the browser's bar. */
+  height: calc(
+    100% - max(var(--menu-clearance, 0px), env(safe-area-inset-top, 0px) + 0.5rem)
+  );
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--page);
   box-shadow: 0 -2px 16px rgba(11, 11, 11, 0.18);
@@ -26,15 +30,10 @@
 }
 
 .sheet[data-snap="half"] {
-  transform: translateY(max(0px, min(50%, calc(100% - var(--sheet-peek)))));
-}
-
-/* Below 40rem there is no header and the floating menu button sits top-right,
-   so the fully open sheet stops under it and its handle stays reachable. */
-@media not all and (min-width: 40rem) {
-  .sheet {
-    height: calc(100% - var(--menu-clearance));
-  }
+  /* --sheet-half (px visible) is measured from the content; without it, half. */
+  transform: translateY(
+    max(0px, min(calc(100% - var(--sheet-half, 50%)), calc(100% - var(--sheet-peek))))
+  );
 }
 
 .sheet[data-snap="full"] {

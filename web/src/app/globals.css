@@ -130,6 +130,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* The app on a phone is one fixed screen: the page itself never scrolls, so a focused
+   field or a touch on the sheet cannot push the sheet's top under the browser's bar.
+   Set on <html> by the workspace while it shows the bottom sheet. */
+html.workspace-lock,
+html.workspace-lock body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 h1,
 h2,
 h3,

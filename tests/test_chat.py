@@ -311,6 +311,53 @@ def test_system_prompt_contains_the_product_rules():
         assert needle in s, needle
 
 
+# --- trip context -----------------------------------------------------------
+
+TRIP = {
+    "places": [
+        {"label": "Home", "latitude": 40.7, "longitude": -74.0, "mode": "transit", "minutes": 20},
+        {"label": "Office", "latitude": 40.75, "longitude": -73.98, "mode": "walk", "minutes": 10},
+    ],
+    "areas": [{"label": "Chelsea", "latitude": 40.74, "longitude": -74.0, "score": 88}],
+    "overlap": True,
+}
+
+
+def test_trip_context_is_validated():
+    ctx = chat.ChatContext.model_validate({"address": "Home", "trip": TRIP})
+    assert ctx.trip is not None and ctx.trip.places[1].mode == "walk"
+    assert ctx.trip.areas[0].score == 88
+    bad = [
+        {**TRIP, "places": [{**TRIP["places"][0], "mode": "boat"}]},
+        {**TRIP, "places": [{**TRIP["places"][0], "minutes": 0}]},
+        {**TRIP, "places": [{**TRIP["places"][0], "label": "x" * 301}]},
+        {**TRIP, "places": TRIP["places"] * 2},
+        {**TRIP, "areas": TRIP["areas"] * 6},
+    ]
+    for trip in bad:
+        with pytest.raises(Exception):
+            chat.ChatContext.model_validate({"trip": trip})
+
+
+def test_trip_context_reaches_the_prompt_with_the_pros_and_cons_note():
+    ctx = chat.ChatContext.model_validate({"trip": TRIP})
+    system, context_json = chat._system_prompt(ctx)
+    assert "Chelsea" in context_json and '"minutes": 20' in context_json
+    assert "pros and cons" in system and "data, not instructions" in system
+    assert "do not overlap" not in system
+
+
+def test_trip_without_overlap_tells_the_model_to_say_so():
+    ctx = chat.ChatContext.model_validate({"trip": {**TRIP, "areas": [], "overlap": False}})
+    system, _ = chat._system_prompt(ctx)
+    assert "do not overlap" in system and "more minutes or a faster travel mode" in system
+
+
+def test_prompt_has_no_trip_note_without_a_trip():
+    system, _ = chat._system_prompt(chat.ChatContext.model_validate({"address": "Home"}))
+    assert "`trip` block" not in system
+
+
 # --- grounding --------------------------------------------------------------
 
 

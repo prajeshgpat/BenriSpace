@@ -40,7 +40,7 @@ describe("AddressSearch compact", () => {
 
   it("has no submit button, keeps autocomplete and submits on Enter", async () => {
     const ctx = setup();
-    expect(screen.queryByRole("button", { name: "Get score" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Score" })).toBeNull();
     expect(ctx.input).toHaveAttribute("placeholder", "Add an address");
     await ctx.user.type(ctx.input, "350 5th");
     await screen.findByRole("listbox");

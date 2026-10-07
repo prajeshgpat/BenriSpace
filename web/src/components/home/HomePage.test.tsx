@@ -32,7 +32,7 @@ describe("HomePage", () => {
     expect(input).toHaveAttribute("name", "address");
     expect(form).toContainElement(input);
     expect(
-      within(form).getByRole("button", { name: "Score it" }),
+      within(form).getByRole("button", { name: "Score" }),
     ).toHaveAttribute("type", "submit");
   });
 

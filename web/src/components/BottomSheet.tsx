@@ -9,6 +9,7 @@ import {
   type PointerEvent,
   type ReactNode,
   type Ref,
+  type RefObject,
 } from "react";
 
 import {
@@ -33,6 +34,29 @@ interface BottomSheetProps {
   label: string;
   children: ReactNode;
   ref?: Ref<HTMLElement>;
+  /**
+   * The element whose bottom edge ends the collapsed sheet (the handle and the controls
+   * above it stay visible). Without it, or before it is laid out, the peek is a fixed 6rem.
+   */
+  peekRef?: RefObject<HTMLElement | null>;
+  /**
+   * The element whose bottom edge ends the middle snap, so everything down to it is in
+   * view (clamped between half and 85% of the sheet). Without it the middle snap is half.
+   */
+  halfRef?: RefObject<HTMLElement | null>;
+  /** The visible height (px, excluding the bottom safe area) at peek and half, once measured. */
+  onMeasure?: (visible: { peek: number; half: number }) => void;
+}
+
+/** A click this soon (ms) after a drag ended is the drag's own, not a tap. */
+const CLICK_AFTER_DRAG_MS = 500;
+
+/** Room under the peek element, and under the half element. */
+const PEEK_PADDING = 8;
+const HALF_PADDING = 12;
+
+interface TouchGesture extends Drag {
+  startX: number;
 }
 
 interface Drag {
@@ -55,17 +79,26 @@ export function BottomSheet({
   label,
   children,
   ref,
+  peekRef,
+  halfRef,
+  onMeasure,
 }: BottomSheetProps) {
   const bodyId = useId();
   const sheetRef = useRef<HTMLElement | null>(null);
-  const peekRef = useRef<HTMLDivElement>(null);
+  const probeRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
-  const latest = useRef({ snap, onSnapChange });
+  const latest = useRef({ snap, onSnapChange, peekRef, halfRef, onMeasure });
   useEffect(() => {
-    latest.current = { snap, onSnapChange };
+    latest.current = { snap, onSnapChange, peekRef, halfRef, onMeasure };
   });
   const suppressClick = useRef(false);
+  // When a finger last lifted after dragging the body; the click that follows is not a tap.
+  const bodyDragEnded = useRef(Number.NEGATIVE_INFINITY);
+  // Visible px at the middle snap, once its element has been measured.
+  const halfVisible = useRef<number | undefined>(undefined);
+  const observer = useRef<ResizeObserver | null>(null);
+  const lastMeasure = useRef({ peek: NaN, half: NaN });
   // Pixels the sheet is pulled down from fully open, while a finger is on it.
   const [dragOffset, setDragOffset] = useState<number | null>(null);
 
@@ -75,15 +108,84 @@ export function BottomSheet({
     else if (ref) ref.current = node;
   }
 
+  function currentOffsets(sheet: HTMLElement): SnapOffsets {
+    return snapOffsets(
+      sheet.offsetHeight,
+      probeRef.current?.offsetHeight ?? 0,
+      halfVisible.current,
+    );
+  }
+
+  // The peek and middle snaps follow the content: the peek ends under the search box and
+  // the point-of-interest pills, the middle snap under the score card (or the overlap
+  // results). Re-measured after every render and whenever any of those boxes resizes.
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    const body = bodyRef.current;
+    if (!sheet || !body) return;
+
+    function measure() {
+      const sheet = sheetRef.current;
+      const body = bodyRef.current;
+      if (!sheet || !body) return;
+      const top = sheet.getBoundingClientRect().top;
+      const bottomOf = (element: HTMLElement | null | undefined) =>
+        element ? element.getBoundingClientRect().bottom - top + body.scrollTop : 0;
+
+      const peekBottom = bottomOf(latest.current.peekRef?.current);
+      // jsdom, or an element that is not laid out yet: keep the CSS default.
+      const peek = peekBottom > 0 ? peekBottom + PEEK_PADDING : NaN;
+      if (Number.isNaN(peek)) sheet.style.removeProperty("--sheet-peek");
+      else {
+        sheet.style.setProperty(
+          "--sheet-peek",
+          `calc(${peek}px + env(safe-area-inset-bottom, 0px))`,
+        );
+      }
+
+      const halfBottom = bottomOf(latest.current.halfRef?.current);
+      halfVisible.current = halfBottom > 0 ? halfBottom + HALF_PADDING : undefined;
+      const height = sheet.offsetHeight;
+      const offsets = snapOffsets(
+        height,
+        Number.isNaN(peek) ? 0 : peek,
+        halfVisible.current,
+      );
+      const half = height - offsets.half;
+      if (height > 0) {
+        sheet.style.setProperty("--sheet-half", `${half}px`);
+      } else sheet.style.removeProperty("--sheet-half");
+
+      const visiblePeek = Number.isNaN(peek) ? NaN : height - offsets.peek;
+      if (
+        latest.current.onMeasure &&
+        height > 0 &&
+        (lastMeasure.current.peek !== visiblePeek || lastMeasure.current.half !== half)
+      ) {
+        lastMeasure.current = { peek: visiblePeek, half };
+        latest.current.onMeasure({ peek: visiblePeek, half });
+      }
+    }
+
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    // The measured elements come and go with the content, so watch whichever exist now.
+    observer.current ??= new ResizeObserver(measure);
+    observer.current.disconnect();
+    observer.current.observe(sheet);
+    observer.current.observe(body);
+    for (const element of [peekRef?.current, halfRef?.current]) {
+      if (element) observer.current.observe(element);
+    }
+  });
+  useEffect(() => () => observer.current?.disconnect(), []);
+
   function handlePointerDown(event: PointerEvent<HTMLButtonElement>) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const sheet = sheetRef.current;
     if (!sheet) return;
     suppressClick.current = false;
-    const offsets = snapOffsets(
-      sheet.offsetHeight,
-      peekRef.current?.offsetHeight ?? 0,
-    );
+    const offsets = currentOffsets(sheet);
     drag.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
@@ -129,28 +231,35 @@ export function BottomSheet({
     );
   }
 
-  // A downward swipe that starts in the body of the fully open sheet while it
-  // is scrolled to the top pulls the sheet down. Anything else scrolls as usual.
-  // Native listeners: React's touchmove is passive and cannot stop the scroll.
+  // A vertical drag that starts anywhere in the body moves the sheet, so it can be pulled
+  // from the content and not only from the handle. At peek and half the body does not
+  // scroll, so any vertical drag moves the sheet (up opens it, down closes it). On the fully
+  // open sheet a downward drag from the top of the scrolled content pulls it down; every
+  // other drag there scrolls. A drag that turns out to be horizontal is left to whatever
+  // is under the finger (a scroller, a text field). Native listeners: React's touchmove is
+  // passive and cannot stop the scroll.
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    let gesture: Drag | null = null;
+    let gesture: TouchGesture | null = null;
 
     function onTouchStart(event: TouchEvent) {
       gesture = null;
+      bodyDragEnded.current = Number.NEGATIVE_INFINITY;
       const sheet = sheetRef.current;
       const touch = event.touches[0];
       if (!sheet || !touch || event.touches.length !== 1) return;
-      if (latest.current.snap !== "full" || body!.scrollTop > 0) return;
-      const offsets = snapOffsets(
-        sheet.offsetHeight,
-        peekRef.current?.offsetHeight ?? 0,
-      );
+      const origin = event.target instanceof Element ? event.target : null;
+      // Suggestions scroll on their own.
+      if (origin?.closest("[role=listbox]:not([hidden])")) return;
+      const current = latest.current.snap;
+      if (current === "full" && body!.scrollTop > 0) return;
+      const offsets = currentOffsets(sheet);
       gesture = {
         pointerId: 0,
+        startX: touch.clientX ?? 0,
         startY: touch.clientY,
-        startOffset: offsets.full,
+        startOffset: offsets[current],
         offsets,
         samples: [{ time: event.timeStamp, y: touch.clientY }],
         moved: false,
@@ -160,25 +269,31 @@ export function BottomSheet({
     function onTouchMove(event: TouchEvent) {
       const touch = event.touches[0];
       if (!gesture || !touch) return;
-      const delta = touch.clientY - gesture.startY;
+      const dy = touch.clientY - gesture.startY;
       if (!gesture.moved) {
-        if (delta < 0 || body!.scrollTop > 0) {
-          gesture = null; // scrolling up, or already scrolled: plain scroll
+        const dx = (touch.clientX ?? 0) - gesture.startX;
+        if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) >= TAP_SLOP) {
+          gesture = null; // horizontal: not ours
           return;
         }
-        if (delta < TAP_SLOP) return;
+        if (latest.current.snap === "full" && (dy < 0 || body!.scrollTop > 0)) {
+          gesture = null; // scrolling the content
+          return;
+        }
+        if (Math.abs(dy) < TAP_SLOP) return;
         gesture.moved = true;
       }
       event.preventDefault();
       gesture.samples.push({ time: event.timeStamp, y: touch.clientY });
       if (gesture.samples.length > 12) gesture.samples.shift();
-      setDragOffset(clampOffset(gesture.startOffset + delta, gesture.offsets));
+      setDragOffset(clampOffset(gesture.startOffset + dy, gesture.offsets));
     }
 
     function onTouchEnd(event: TouchEvent, commit: boolean) {
       const current = gesture;
       gesture = null;
       if (!current?.moved) return;
+      bodyDragEnded.current = performance.now();
       setDragOffset(null);
       if (!commit) return;
       const end = event.changedTouches[0]?.clientY ?? current.startY;
@@ -196,17 +311,28 @@ export function BottomSheet({
       );
     }
 
+    // The click a browser may still send after a drag must not press whatever was under it.
+    function onClickCapture(event: MouseEvent) {
+      if (performance.now() - bodyDragEnded.current < CLICK_AFTER_DRAG_MS) {
+        bodyDragEnded.current = Number.NEGATIVE_INFINITY;
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }
+
     const end = (event: TouchEvent) => onTouchEnd(event, true);
     const cancel = (event: TouchEvent) => onTouchEnd(event, false);
     body.addEventListener("touchstart", onTouchStart, { passive: true });
     body.addEventListener("touchmove", onTouchMove, { passive: false });
     body.addEventListener("touchend", end);
     body.addEventListener("touchcancel", cancel);
+    body.addEventListener("click", onClickCapture, true);
     return () => {
       body.removeEventListener("touchstart", onTouchStart);
       body.removeEventListener("touchmove", onTouchMove);
       body.removeEventListener("touchend", end);
       body.removeEventListener("touchcancel", cancel);
+      body.removeEventListener("click", onClickCapture, true);
     };
   }, []);
 
@@ -237,7 +363,7 @@ export function BottomSheet({
           : undefined
       }
     >
-      <div ref={peekRef} className={styles.peekProbe} aria-hidden="true" />
+      <div ref={probeRef} className={styles.peekProbe} aria-hidden="true" />
       <button
         type="button"
         className={styles.handle}
@@ -261,6 +387,16 @@ export function BottomSheet({
         // tabbing into it opens the sheet rather than focusing something hidden.
         onFocusCapture={() => {
           if (snap === "peek") onSnapChange("half");
+        }}
+        // The keyboard closing can leave the page scrolled, with the sheet's top under the
+        // browser's bar; put it back.
+        onBlurCapture={(event) => {
+          if (
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement
+          ) {
+            if (window.scrollY !== 0) window.scrollTo(0, 0);
+          }
         }}
       >
         {children}

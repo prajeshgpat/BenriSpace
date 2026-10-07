@@ -46,7 +46,7 @@ interface AddressSearchProps {
   /** Accessible name of the field; defaults to "Address". */
   label?: string;
   placeholder?: string;
-  /** Text of the submit button; defaults to "Get score". */
+  /** Text of the submit button; defaults to "Score". */
   submitLabel?: string;
   /**
    * A smaller single-row field with no submit button (Enter still submits)
@@ -58,6 +58,11 @@ interface AddressSearchProps {
    * supplies the right-hand button through `endAdornment`. Implies `compact`.
    */
   pill?: boolean;
+  /**
+   * With `pill`: no border or fill of its own, because the parent draws the pill around it
+   * (a point of interest's mode segment sits beside the text).
+   */
+  bare?: boolean;
   /** Called after the clear button empties the field (compact only). */
   onClear?: () => void;
   /** Receives the input element, e.g. to move focus to it. */
@@ -74,9 +79,10 @@ export function AddressSearch({
   onTextChange,
   label = "Address",
   placeholder = "Enter an address",
-  submitLabel = "Get score",
+  submitLabel = "Score",
   compact: compactProp = false,
   pill = false,
+  bare = false,
   onClear,
   inputRef: externalInputRef,
 }: AddressSearchProps) {
@@ -183,7 +189,7 @@ export function AddressSearch({
     <form
       className={
         pill
-          ? `${styles.form} ${styles.compact} ${styles.pill}`
+          ? `${styles.form} ${styles.compact} ${styles.pill}${bare ? ` ${styles.bare}` : ""}`
           : compact
             ? `${styles.form} ${styles.compact}`
             : styles.form

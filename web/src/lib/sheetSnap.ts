@@ -24,15 +24,33 @@ export const TAP_SLOP = 6;
 /** The least of the sheet (px) that stays on screen: its drag handle. */
 export const MIN_VISIBLE = 40;
 
+/** The middle snap never shows less than this share of the sheet... */
+export const HALF_MIN_SHARE = 0.5;
+/** ...nor more than this one, so some map always stays in view. */
+export const HALF_MAX_SHARE = 0.85;
+
 /**
  * Offsets for a sheet of `height` px of which `peekVisible` px show when
- * collapsed and half of it shows at the middle snap. At least the handle
- * (MIN_VISIBLE px, or the whole sheet if shorter) always stays on screen.
+ * collapsed. At least the handle (MIN_VISIBLE px, or the whole sheet if
+ * shorter) always stays on screen. The middle snap shows `halfVisible` px (what the
+ * content needs to be seen in full) kept between 50% and 85% of the sheet; without a
+ * measurement it shows half.
  */
-export function snapOffsets(height: number, peekVisible: number): SnapOffsets {
+export function snapOffsets(
+  height: number,
+  peekVisible: number,
+  halfVisible?: number,
+): SnapOffsets {
   const visible = Math.min(height, Math.max(peekVisible, MIN_VISIBLE));
   const peek = Math.max(0, height - visible);
-  return { full: 0, half: Math.min(height / 2, peek), peek };
+  const wanted =
+    halfVisible === undefined || !Number.isFinite(halfVisible)
+      ? height * HALF_MIN_SHARE
+      : Math.min(
+          Math.max(halfVisible, height * HALF_MIN_SHARE),
+          height * HALF_MAX_SHARE,
+        );
+  return { full: 0, half: Math.min(height - wanted, peek), peek };
 }
 
 /** Keeps a dragged offset within the sheet's travel, with no overshoot. */

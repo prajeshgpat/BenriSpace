@@ -10,13 +10,13 @@
 
 .row {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 0.5rem;
 }
 
 .field {
   position: relative;
-  flex: none;
+  flex: 1;
   min-width: 0;
 }
 
@@ -83,6 +83,7 @@
 }
 
 .button {
+  flex: none;
   height: 3rem;
   padding: 0 1.25rem;
   border: 0;
@@ -159,16 +160,6 @@
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 30rem) {
-  .row {
-    flex-direction: row;
-  }
-
-  .field {
-    flex: 1;
-  }
-}
-
 /* Compact: one small row, no submit button, a clear button inside the field. */
 .compact .row {
   flex-direction: row;
@@ -199,6 +190,26 @@
   padding: 0 0.75rem;
   border-radius: 999px;
   font-size: 0.8125rem;
+}
+
+/* iOS Safari zooms the page on focusing any input under 16px: keep the box small
+   with height and padding instead. */
+@media (pointer: coarse) {
+  .pill .input {
+    font-size: 1rem;
+  }
+}
+
+/* The parent draws the pill (border, fill, radius); the field is just text. */
+.bare .input {
+  border-color: transparent;
+  background: transparent;
+  border-radius: 0;
+}
+
+.bare .input[aria-invalid="true"] {
+  border-color: transparent;
+  color: var(--danger);
 }
 
 .pill .input[data-adorned] {
