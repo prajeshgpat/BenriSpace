@@ -147,7 +147,7 @@ export interface ApiClient {
   /** Where the travel areas of 2 or more places overlap, and the best addresses in it. */
   triangulate(
     anchors: readonly TriangulateAnchor[],
-    options?: RequestOptions,
+    options?: RequestOptions & PriorityQuery,
   ): Promise<Triangulation>;
   /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
   getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
@@ -1054,7 +1054,8 @@ export function createApiClient({
       return parseReach(await getJson(`/isochrone?${params}`, options));
     },
 
-    async triangulate(anchors, options) {
+    async triangulate(anchors, { factors, weights, ...options } = {}) {
+      const priorities = priorityParams({ factors, weights }, new URLSearchParams());
       const body = {
         anchors: anchors.map((a) => ({
           label: a.label,
@@ -1065,6 +1066,9 @@ export function createApiClient({
         })),
         combineMode: "intersect",
         limit: 50,
+        // The same CSV formats as the map endpoints' query strings.
+        ...(priorities.has("factors") ? { factors: priorities.get("factors") } : {}),
+        ...(priorities.has("weights") ? { weights: priorities.get("weights") } : {}),
       };
       return parseTriangulate(
         await requestJson("/triangulate", { method: "POST", body }, options),

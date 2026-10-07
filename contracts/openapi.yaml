@@ -1202,6 +1202,14 @@ components:
         limit:
           type: integer
           default: 50
+        factors:
+          type: string
+          nullable: true
+          description: Optional comma-separated factor keys (as on the map endpoints). When given, results are scored and ranked by these factors only.
+        weights:
+          type: string
+          nullable: true
+          description: Optional `factor:number` pairs (as on the map endpoints) weighting the selected factors.
 
     RankedAddress:
       type: object

@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AreaGeometry, Triangulation } from "@/lib/api/types";
+import type { ApiClient } from "@/lib/api/client";
+import type { AreaGeometry, AreaScore, FactorKey, SubScores, Triangulation } from "@/lib/api/types";
+import { FACTOR_KEY_LIST } from "@/lib/api/types";
+import { makeAreaScore } from "@/test/fixtures";
 
 import {
   NOT_FOUND_MESSAGE,
@@ -10,6 +13,7 @@ import {
   pickSpreadResults,
   useTripPlanner,
   type TripPlace,
+  type TripPriorities,
   type TripTravel,
 } from "./useTripPlanner";
 
@@ -442,5 +446,103 @@ describe("pickSpreadResults", () => {
     expect(picked).toHaveLength(5);
     expect(picked[0].score).toBe(9);
     expect(distanceMi(picked[0], picked[1])).toBeGreaterThanOrEqual(0.25);
+  });
+});
+
+
+describe("useTripPlanner selected-factor scores", () => {
+  const noScores = Object.fromEntries(FACTOR_KEY_LIST.map((k) => [k, null])) as unknown as SubScores;
+  // Main St is great at groceries and poor at transit; Side St is the reverse.
+  const bySpot: Record<string, Partial<SubScores>> = {
+    "40.71": { grocery: 90, transit: 10 },
+    "40.8": { grocery: 20, transit: 80 },
+  };
+  const area = (lat: number): AreaScore => {
+    const base = makeAreaScore();
+    return {
+      ...base,
+      score: { ...base.score, subScores: { ...noScores, ...bySpot[String(lat)] } },
+    };
+  };
+
+  function setupPriorities(initial: TripPriorities | undefined) {
+    const triangulate = vi.fn<ApiClient["triangulate"]>(async () => body());
+    const getAreaByCoordinates = vi.fn(async ({ lat }: { lat: number; lon: number }) => area(lat));
+    const client = {
+      triangulate,
+      getAreaByCoordinates,
+      reverseGeocode: vi.fn(async () => ({ label: null, latitude: 0, longitude: 0 })),
+      suggestAddresses: vi.fn(async () => []),
+    } as never;
+    const hook = renderHook(({ pr }) => useTripPlanner(client, PLACE, TRAVEL, pr), {
+      initialProps: { pr: initial },
+    });
+    act(() => hook.result.current.add());
+    act(() => hook.result.current.selectSuggestion(hook.result.current.rows[0].id, pick));
+    return { hook, triangulate, getAreaByCoordinates };
+  }
+
+  it("sends the selected factors and importance, and none when all are selected", async () => {
+    const { hook, triangulate } = setupPriorities({
+      factors: ["grocery", "transit"],
+      weights: { grocery: 3 },
+    });
+    await flush();
+    expect(triangulate).toHaveBeenCalledTimes(1);
+    expect(triangulate.mock.calls[0][1]).toMatchObject({
+      factors: ["grocery", "transit"],
+      weights: { grocery: 3 },
+    });
+    hook.rerender({ pr: { factors: [...FACTOR_KEY_LIST] } });
+    await flush();
+    expect(triangulate).toHaveBeenCalledTimes(2);
+    expect(triangulate.mock.calls[1][1]?.factors).toBeUndefined();
+  });
+
+  it("scores each area as the score card does, then orders by that score", async () => {
+    const { hook, getAreaByCoordinates } = setupPriorities({
+      factors: ["grocery", "transit"] as FactorKey[],
+      weights: { grocery: 1, transit: 1 },
+    });
+    await flush();
+    expect(getAreaByCoordinates).toHaveBeenCalledTimes(2);
+    // Equal weights: Main St (90+10)/2 = 50, Side St (20+80)/2 = 50; use transit-only below.
+    expect(hook.result.current.data!.results.map((r) => r.score)).toEqual([50, 50]);
+    hook.rerender({ pr: { factors: ["transit"] } });
+    await flush();
+    const results = hook.result.current.data!.results;
+    expect(results.map((r) => [r.lat, r.score])).toEqual([
+      [40.8, 80],
+      [40.71, 10],
+    ]);
+  });
+
+  it("keeps loading until the area scores arrive, and re-requests when the selection changes", async () => {
+    const { hook, triangulate } = setupPriorities({ factors: ["grocery"] });
+    await flush();
+    expect(hook.result.current.status).toBe("ready");
+    expect(hook.result.current.data!.results[0]).toMatchObject({ lat: 40.71, score: 90 });
+    hook.rerender({ pr: { factors: ["transit"] } });
+    expect(hook.result.current.status).toBe("loading");
+    await flush();
+    expect(triangulate).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.data!.results[0]).toMatchObject({ lat: 40.8, score: 80 });
+  });
+
+  it("falls back to the API score for an area that can't be looked up", async () => {
+    const triangulate = vi.fn(async (): Promise<Triangulation> => body());
+    const client = {
+      triangulate,
+      getAreaByCoordinates: vi.fn(async () => {
+        throw new Error("down");
+      }),
+      reverseGeocode: vi.fn(async () => ({ label: null, latitude: 0, longitude: 0 })),
+      suggestAddresses: vi.fn(async () => []),
+    } as never;
+    const hook = renderHook(() => useTripPlanner(client, PLACE, TRAVEL, { factors: ["grocery"] }));
+    act(() => hook.result.current.add());
+    act(() => hook.result.current.selectSuggestion(hook.result.current.rows[0].id, pick));
+    await flush();
+    expect(hook.result.current.data!.results.map((r) => r.score)).toEqual([80, 70]);
   });
 });

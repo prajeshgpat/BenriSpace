@@ -44,7 +44,7 @@ import type {
 import { API_BASE_URL, CHAT_STREAM_URL } from "@/lib/config";
 import { useAreaScores, useTilesUrl } from "@/hooks/useStaticData";
 import { provisionalArea } from "@/lib/static/provisional";
-import { round1, subScoresComposite } from "@/lib/scores/matrix";
+import { selectionScore } from "@/lib/scores/matrix";
 import {
   OUTSIDE_COVERAGE_MESSAGE,
   YOUR_LOCATION_LABEL,
@@ -151,13 +151,13 @@ function announcement(state: LookupState): string {
 /** The overall score normalised to the selected factors and weights, as the map colours are. */
 function normaliseLookup(
   lookup: LookupState,
-  factors: Parameters<typeof subScoresComposite>[1],
-  weights: Parameters<typeof subScoresComposite>[2],
+  factors: Parameters<typeof selectionScore>[1],
+  weights: Parameters<typeof selectionScore>[2],
 ): LookupState {
   if (lookup.status !== "success") return lookup;
-  const composite = subScoresComposite(lookup.score.subScores, factors, weights);
+  const composite = selectionScore(lookup.score.subScores, factors, weights);
   if (composite === null) return lookup;
-  return { ...lookup, score: { ...lookup.score, compositeScore: round1(composite) } };
+  return { ...lookup, score: { ...lookup.score, compositeScore: composite } };
 }
 
 function roundCoordinate(value: number): number {
@@ -447,7 +447,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   );
   // The Travel time row in Factors: the searched place and the points of interest share it.
   const [travel, setTravel] = useState<{ mode: ReachMode; minutes: number } | null>(null);
-  const planner = useTripPlanner(client, tripPlace, travel);
+  const tripPriorities = useMemo(
+    () => ({ factors: selection.factors, weights }),
+    [selection.factors, weights],
+  );
+  const planner = useTripPlanner(client, tripPlace, travel, tripPriorities);
   // A box that is armed ("Drop a pin") is waiting for a place: the next tap on the map (a
   // cell or a marker) fills it instead of scoring the tapped place.
   const armedPoi = planner.armedId;

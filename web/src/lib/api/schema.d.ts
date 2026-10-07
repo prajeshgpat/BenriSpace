@@ -475,6 +475,10 @@ export interface components {
             combineMode: "intersect" | "union";
             /** @default 50 */
             limit: number;
+            /** @description Optional comma-separated factor keys (as on the map endpoints). When given, results are scored and ranked by these factors only. */
+            factors?: string | null;
+            /** @description Optional `factor:number` pairs (as on the map endpoints) weighting the selected factors. */
+            weights?: string | null;
         };
         RankedAddress: {
             /** Format: uuid */

@@ -114,6 +114,10 @@ class TriangulateRequest(CamelModel):
     anchors: list[AnchorPoint] = Field(min_length=1, max_length=4)
     combine_mode: Literal["intersect", "union"] = "intersect"
     limit: int = 50
+    # Same CSV formats as the map endpoints; when given, results are scored and ranked by
+    # these factors instead of the all-factor composite.
+    factors: str | None = None
+    weights: str | None = None
 
 
 class RankedAddress(CamelModel):

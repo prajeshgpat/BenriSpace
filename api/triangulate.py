@@ -152,9 +152,21 @@ def cells_box(cells: set) -> tuple[float, float, float, float] | None:
     )
 
 
-def rank_in_cells(candidates: list[dict], cells: set, limit: int) -> list[dict]:
+def rank_in_cells(candidates: list[dict], cells: set, limit: int, spec=None) -> list[dict]:
+    """Top `limit` candidates inside `cells` by composite_score. With a ScoreSpec, each
+    candidate's composite_score is first recomputed over the selected factors (rounded like
+    the map) and candidates with no selected sub-score are dropped."""
     from common.cellgrid import cell_index
 
     inside = [c for c in candidates if cell_index(c["latitude"], c["longitude"]) in cells]
+    if spec is not None:
+        from api.mapdata import SCORE_DECIMALS, composite_from_row
+
+        rescored = []
+        for c in inside:
+            value = composite_from_row(c, spec)
+            if value is not None:
+                rescored.append({**c, "composite_score": round(value, SCORE_DECIMALS)})
+        inside = rescored
     inside.sort(key=lambda c: c["composite_score"], reverse=True)
     return inside[:limit]
