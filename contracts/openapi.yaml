@@ -1461,6 +1461,29 @@ components:
         tool: {type: string}
         summary: {type: string}
 
+    ChatPlanPoint:
+      type: object
+      required: [label, latitude, longitude]
+      properties:
+        label: {type: string}
+        latitude: {type: number}
+        longitude: {type: number}
+
+    ChatPlan:
+      type: object
+      description: >
+        Map setup built from the optimize_location result (never written by the
+        model): the main address and up to two points of interest.
+      required: [points]
+      properties:
+        place:
+          description: The main address (e.g. work). Absent keeps the user's current place.
+          allOf: [{$ref: "#/components/schemas/ChatPlanPoint"}]
+        points:
+          type: array
+          maxItems: 2
+          items: {$ref: "#/components/schemas/ChatPlanPoint"}
+
     ChatResponse:
       type: object
       required: [reply, results, sources]
@@ -1470,6 +1493,8 @@ components:
           type: array
           maxItems: 3
           items: {$ref: "#/components/schemas/ChatResult"}
+        plan:
+          $ref: "#/components/schemas/ChatPlan"
         sources:
           type: array
           items: {$ref: "#/components/schemas/ChatSource"}

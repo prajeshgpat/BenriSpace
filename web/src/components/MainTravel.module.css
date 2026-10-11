@@ -1,0 +1,96 @@
+/* The travel toggle on the left edge of the main search box, and the panel it opens. */
+.root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+/* Same look as a point of interest's mode segment, with a divider before the text. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  height: 2.25rem;
+  padding: 0 0.375rem 0 0.5rem;
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--text);
+}
+
+.toggle:focus-visible,
+.mode:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Room on the right for the minutes badge that hangs off the icon. */
+.icon {
+  display: inline-flex;
+  margin-right: 0.375rem;
+}
+
+.chevron {
+  flex: none;
+  transition: transform 150ms ease;
+}
+
+.root[data-open] .chevron {
+  transform: rotate(90deg);
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: -0.25rem;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: center;
+  padding: 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.modes {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mode:hover {
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.mode[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

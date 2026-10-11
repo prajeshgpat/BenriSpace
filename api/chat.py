@@ -273,6 +273,9 @@ TOOLS: list[dict] = [
 # --------------------------------------------------------------------- wire models
 
 
+MAX_PLAN_POINTS = 2
+
+
 class ChatMessage(CamelModel):
     role: Literal["user", "assistant"]
     content: str = Field(max_length=20000)
@@ -347,9 +350,23 @@ class ChatSource(CamelModel):
     summary: str
 
 
+class ChatPlanPoint(CamelModel):
+    label: str
+    latitude: float
+    longitude: float
+
+
+class ChatPlan(CamelModel):
+    """How the map should be set up for the answer. Built from tool output, never by the model."""
+
+    place: ChatPlanPoint | None = None  # the main address; None keeps the user's current place
+    points: list[ChatPlanPoint] = Field(default_factory=list, max_length=MAX_PLAN_POINTS)
+
+
 class ChatResponse(CamelModel):
     reply: str
     results: list[ChatResult] = Field(default_factory=list)
+    plan: ChatPlan | None = None
     sources: list[ChatSource] = Field(default_factory=list)
     limited: bool | None = None
 
@@ -760,6 +777,22 @@ def tool_find_places(args: dict, context: ChatContext | None) -> dict:
     }
 
 
+PLAN_KEY = "_plan"
+
+
+def _plan_from_anchors(anchors: list[dict]) -> dict | None:
+    """First address anchor -> place; first two brand/category stops -> points."""
+
+    def pt(label: str, a: dict) -> dict:
+        return {"label": label, "latitude": a["latitude"], "longitude": a["longitude"]}
+
+    address = next((a for a in anchors if a["kind"] == "address"), None)
+    points = [pt(a["name"], a) for a in anchors if a["kind"] != "address"][:MAX_PLAN_POINTS]
+    if not points:
+        return None
+    return {"place": pt(address["query"], address) if address else None, "points": points}
+
+
 def tool_optimize_location(args: dict, context: ChatContext | None) -> dict:
     raw = args.get("anchors")
     if not isinstance(raw, list) or not raw:
@@ -807,6 +840,9 @@ def tool_optimize_location(args: dict, context: ChatContext | None) -> dict:
         ],
         "assumptions": data["assumptions"],
         "unresolved": data["unresolved"],
+        # Map setup from the best result's resolved anchors. run_chat strips this before the
+        # payload reaches the model, so the model-facing stops stay lean.
+        PLAN_KEY: _plan_from_anchors(data["results"][0]["anchors"]) if data["results"] else None,
     }
 
 
@@ -1243,6 +1279,7 @@ def run_chat(
     sources: list[ChatSource] = []
     notes: list[str] = []
     latest_results: list[ChatResult] = []
+    latest_plan: ChatPlan | None = None
     limited = False
     final_text = ""
 
@@ -1291,6 +1328,10 @@ def run_chat(
                 },
             )
             payload, is_error = run_tool(block.name, block.input, context)
+            if not is_error and block.name == "optimize_location" and isinstance(payload, dict):
+                plan_data = payload.get(PLAN_KEY)
+                payload = {k: v for k, v in payload.items() if k != PLAN_KEY}
+                latest_plan = ChatPlan.model_validate(plan_data) if plan_data else None
             payloads.append(payload)
             sources.append(
                 ChatSource(
@@ -1329,7 +1370,8 @@ def run_chat(
         limited = True
         reply = fallback_reply(latest_results, deduped, notes)
     return ChatResponse(
-        reply=reply, results=latest_results, sources=deduped, limited=True if limited else None
+        reply=reply, results=latest_results, plan=latest_plan, sources=deduped,
+        limited=True if limited else None,
     )
 
 

@@ -34,6 +34,28 @@ function setup(chat: ApiClient["chat"] = vi.fn(async () => REPLY), props = {}) {
 beforeEach(() => window.sessionStorage.clear());
 
 describe("ChatPanel", () => {
+  it("hands a reply's plan to onPlan once, and not when there is none", async () => {
+    const user = userEvent.setup();
+    const plan = {
+      place: { label: "Work", latitude: 41, longitude: -73 },
+      points: [{ label: "Planet Fitness", latitude: 41.1, longitude: -73.1 }],
+    };
+    const onPlan = vi.fn();
+    const chat = vi.fn().mockResolvedValueOnce({ ...REPLY, plan }).mockResolvedValueOnce(REPLY);
+    setup(chat, { onPlan });
+    const box = screen.getByRole("textbox", { name: "Your question" });
+
+    await user.type(box, "near work and a gym{Enter}");
+    await screen.findByText("Shippan Point looks best.");
+    expect(onPlan).toHaveBeenCalledTimes(1);
+    expect(onPlan).toHaveBeenCalledWith(plan);
+
+    await user.type(box, "and another{Enter}");
+    await waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getAllByText("Shippan Point looks best.")).toHaveLength(2));
+    expect(onPlan).toHaveBeenCalledTimes(1);
+  });
+
   it("offers the three starter questions, which send immediately", async () => {
     const user = userEvent.setup();
     const { chat } = setup();

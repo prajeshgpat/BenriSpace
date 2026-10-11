@@ -12,7 +12,7 @@ import {
 
 import type { ApiClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
-import type { ChatContext, ChatResult } from "@/lib/api/types";
+import type { ChatContext, ChatPlan, ChatResult } from "@/lib/api/types";
 
 import { FeedbackThumbs } from "../Feedback";
 import { starterQuestions } from "./starterQuestions";
@@ -40,6 +40,8 @@ export interface ChatPanelProps {
   onScoreArea: (result: ChatResult) => void;
   /** Collapse the chat back to its button (the × in the header). */
   onClose?: () => void;
+  /** Called once per reply that carries a plan (the main address and points of interest). */
+  onPlan?: (plan: ChatPlan) => void;
   /** The selected place, for the "Now looking at" notes in the log. */
   place?: { key: string | null; label: string | null };
 }
@@ -135,6 +137,7 @@ export function ChatPanel({
   onShowOnMap,
   onScoreArea,
   onClose,
+  onPlan,
   place,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
@@ -147,6 +150,8 @@ export function ChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const onPlanRef = useRef(onPlan);
+  onPlanRef.current = onPlan;
   const inputId = useId();
   const counterId = useId();
   const seenPlace = useRef<{ key: string | null; noteId: string | null }>({
@@ -241,6 +246,7 @@ export function ChatPanel({
           { signal: controller.signal, onStatus: setStatus },
         );
         if (controller.signal.aborted) return;
+        if (reply.plan) onPlanRef.current?.(reply.plan);
         setMessages((current) => [
           ...current,
           {

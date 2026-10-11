@@ -71,6 +71,21 @@ export function TravelModeIcon({ mode }: { mode: ReachMode }) {
   return ICONS[mode];
 }
 
+/**
+ * The mode's icon with its minutes in a small circle on the bottom right, so a closed toggle
+ * still says how far the place reaches (decorative, like the icon).
+ */
+export function TravelBadge({ mode, minutes }: { mode: ReachMode; minutes: number }) {
+  return (
+    <span className={styles.badged} aria-hidden="true">
+      {ICONS[mode]}
+      <span className={styles.badge} data-testid="travel-badge">
+        {minutes}
+      </span>
+    </span>
+  );
+}
+
 interface MinutesStepperProps {
   mode: ReachMode;
   minutes: number;

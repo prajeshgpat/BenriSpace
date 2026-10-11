@@ -4,7 +4,7 @@
 
 *Benri* (便利) means "convenient". BenriSpace scores any address in the New York metro area (NYC, Long Island, Westchester, the Hudson Valley, northern New Jersey and Fairfield County, CT) on how convenient daily life is there, and shows where the convenient places are on a map. The idea: your 10-minute radius dictates your life, so see what is around any address.
 
-**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask Benri" chat is in progress. See [docs/ROADMAP.md](docs/ROADMAP.md).
+**Status (October 2026).** Production serves the `v2-handtuned` model (cutover 2026-10-03, 64,320 score rows). The `v2.1-handtuned` model (13 factor pills) is built; its full ingestion is in progress and the cutover awaits owner approval. An "Ask Benri" chat is in progress; a request like "find me a place near work close to Planet Fitness and Whole Foods" sets up the searched place, points of interest and overlap on the map. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features (shipped today)
 
@@ -15,10 +15,11 @@
 - **Improve this area:** which nearby additions would lift weak factors, with named places.
 - **Similar areas** found by comparing per-metro z-scored factor profiles in SQL.
 - **Multi-stop planning** (`/v1/optimize`): near work, Trader Joe's and Planet Fitness at once, ranked by weekly travel time (openrouteservice refinement).
+- **Travel-time overlap.** Add points of interest (work, a gym, family) to the searched place. Each gets a travel-time area, and the best areas are ranked where they overlap. Each travel toggle (the one in the search box for the searched place, and one per point of interest) shows its mode icon with the minutes in a small circle; its chevron opens the modes and a minutes stepper. The Factors "Travel time" row shows the same mode and minutes plus the switch for drawing the area. Once per new set of places the app picks one mode and the fewest minutes for the areas to overlap (walk when close, train in dense places, else drive), widening up to two steps if the overlap is still empty and you have not changed anything. The map centres on a pin, or fits all pins, when you click a pin, score an address, enter a point of interest or pick an overlap, best or similar area. With an overlap area picked, a stray map tap clears the pick instead of moving the searched place.
 - **Address search** with autocomplete (LocationIQ, Photon fallback), "use my current location", readable addresses for clicked points, shareable URLs, light and dark themes, and a phone bottom-sheet layout. Distances are in feet and miles.
 - **Public API**, no key needed today: [docs/api.md](docs/api.md).
 
-Pages: Home (`/`, the explainer), the app (`/app`, search and score panel beside the map), API docs, Settings, and Pricing and Login placeholders.
+Pages: Home (`/`, the explainer), the app (`/app`, search and score panel beside the map), API docs, Settings, and Pricing (Free $0, Pro $9/mo or $90/yr as a placeholder, Business contact us) and Login pages. Both are UI only: auth and payments are not wired yet.
 
 Known limits: area scores average the underlying ~0.6 x 0.4 mile grid cells, so small neighbouring areas can look alike; scores are relative within each metro area; school ratings are district-level; airport and travel times are estimates until routing is precomputed.
 

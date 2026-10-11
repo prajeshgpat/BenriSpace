@@ -621,9 +621,21 @@ export interface components {
             tool: string;
             summary: string;
         };
+        ChatPlanPoint: {
+            label: string;
+            latitude: number;
+            longitude: number;
+        };
+        /** @description Map setup built from the optimize_location result (never written by the model): the main address and up to two points of interest. */
+        ChatPlan: {
+            /** @description The main address (e.g. work). Absent keeps the user's current place. */
+            place?: components["schemas"]["ChatPlanPoint"];
+            points: components["schemas"]["ChatPlanPoint"][];
+        };
         ChatResponse: {
             reply: string;
             results: components["schemas"]["ChatResult"][];
+            plan?: components["schemas"]["ChatPlan"];
             sources: components["schemas"]["ChatSource"][];
             /** @description True when the reply is a deterministic fallback or chat is paused. */
             limited?: boolean;

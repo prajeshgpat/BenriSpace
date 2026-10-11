@@ -119,8 +119,10 @@
   outline-offset: -2px;
 }
 
+/* Room on the right for the minutes badge that hangs off the icon. */
 .modeIcon {
   display: inline-flex;
+  margin-right: 0.375rem;
 }
 
 .chevron {

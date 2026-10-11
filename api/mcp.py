@@ -19,8 +19,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from api.chat import PLAN_KEY, ToolError, run_tool, tool_geocode
 from api.chat import TOOLS as CHAT_TOOLS
-from api.chat import ToolError, run_tool, tool_geocode
 
 SERVER_NAME = "benrispace"
 SERVER_TITLE = "BenriSpace"
@@ -223,6 +223,9 @@ def call_tool(name: str, args: Any) -> dict:
                 payload, is_error = {"error": "That lookup failed. Try again."}, True
     else:
         payload, is_error = run_tool(name, args if args is not None else {}, None)
+        # The chat's map plan is for the app, not for connector clients.
+        if isinstance(payload, dict):
+            payload.pop(PLAN_KEY, None)
     text = json.dumps(payload, separators=(",", ":"), default=str)
     result: dict = {"content": [{"type": "text", "text": text}], "isError": is_error}
     if isinstance(payload, dict) and not is_error:

@@ -13,7 +13,7 @@ import type { ReachMode } from "@/lib/api/types";
 import { TRAVEL_OPTIONS, travelOption } from "@/lib/travel";
 
 import { AddressSearch } from "./AddressSearch";
-import { MinutesStepper, TravelModeIcon } from "./TravelModePicker";
+import { MinutesStepper, TravelBadge, TravelModeIcon } from "./TravelModePicker";
 import styles from "./TripPlanner.module.css";
 
 export const NO_OVERLAP_MESSAGE =
@@ -119,8 +119,8 @@ function PointBox({
             aria-label={`Travel for ${name}: ${current.label}, ${minutes} minutes`}
             onClick={onToggle}
           >
-            <span className={styles.modeIcon} aria-hidden="true">
-              <TravelModeIcon mode={mode} />
+            <span className={styles.modeIcon}>
+              <TravelBadge mode={mode} minutes={minutes} />
             </span>
             <svg
               className={styles.chevron}

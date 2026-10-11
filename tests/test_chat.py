@@ -699,3 +699,89 @@ def test_search_areas_near_brands_with_no_branch_is_flagged(monkeypatch):
     out, _ = chat.run_tool("search_areas", {"near_brands": ["Planet Fitness"]}, None)
     assert out["results"][0]["nearBrands"][0] == {
         "brand": "Planet Fitness", "found": False, "note": "No Planet Fitness within 5 miles"}  # fmt: skip
+
+
+# --- plan -------------------------------------------------------------------
+
+
+def _anchor(query, kind, name, lat, lon):
+    return {"query": query, "kind": kind, "name": name, "latitude": lat, "longitude": lon,
+            "minutes": 5, "distanceLabel": "0.4 mi", "mode": "drive", "approx": False}  # fmt: skip
+
+
+def test_plan_tool_payload_uses_best_results_anchors(monkeypatch):
+    from api.optimize import OptimizeResponse
+
+    def result(anchors):
+        return {"latitude": 1.0, "longitude": 2.0, "weeklyMinutes": 90, "score": 70, "anchors": anchors}
+
+    best = [
+        _anchor("work", "address", "1 Main St", 41.0, -73.0),
+        _anchor("Planet Fitness", "brand", "Planet Fitness Stamford", 41.1, -73.1),
+        _anchor("Whole Foods", "brand", "Whole Foods Darien", 41.2, -73.2),
+        _anchor("cafe", "category", "Cafe X", 41.3, -73.3),
+    ]
+    other = [_anchor("Planet Fitness", "brand", "Planet Fitness Norwalk", 9.0, 9.0)]
+    monkeypatch.setattr(
+        chat, "optimize",
+        lambda conn, req: OptimizeResponse.model_validate(
+            {"results": [result(best), result(other)], "assumptions": [], "unresolved": []}
+        ),
+    )  # fmt: skip
+    monkeypatch.setattr(chat, "get_connection", lambda: contextlib.nullcontext(object()))
+    out = chat.tool_optimize_location({"anchors": [{"kind": "address", "query": "work"}]}, None)
+    assert out["_plan"] == {
+        "place": {"label": "work", "latitude": 41.0, "longitude": -73.0},
+        "points": [
+            {"label": "Planet Fitness Stamford", "latitude": 41.1, "longitude": -73.1},
+            {"label": "Whole Foods Darien", "latitude": 41.2, "longitude": -73.2},
+        ],
+    }
+    # The model-facing stops stay lean.
+    assert set(out["results"][0]["stops"][0]) == {"for", "name", "minutes", "distance", "mode", "estimated"}
+
+
+def test_plan_is_built_from_optimize_and_hidden_from_the_model(db, monkeypatch):
+    plan = {
+        "place": {"label": "work", "latitude": 41.0, "longitude": -73.0},
+        "points": [{"label": "Planet Fitness Stamford", "latitude": 41.1, "longitude": -73.1}],
+    }
+    monkeypatch.setitem(chat.TOOL_IMPL, "optimize_location", lambda a, c: {**OPT_PAYLOAD, "_plan": plan})
+    client = FakeAnthropic(
+        [
+            resp([tool("optimize_location", {"anchors": [{"kind": "address", "query": "work"}]})], "tool_use"),
+            resp([text("Darien, Connecticut looks best.")]),
+        ]
+    )
+    out = chat.run_chat(body("near work and Planet Fitness"), lambda timeout: client)
+    assert out.plan is not None and out.plan.place.label == "work"
+    assert out.plan.points[0].label == "Planet Fitness Stamford"
+    assert "_plan" not in client.calls[1]["messages"][-1]["content"][0]["content"]
+    wire = out.model_dump(by_alias=True, exclude_none=True)["plan"]
+    assert wire["points"][0] == {"label": "Planet Fitness Stamford", "latitude": 41.1, "longitude": -73.1}
+
+
+def test_plan_without_a_place_and_without_optimize(db, optimize_tool, monkeypatch):
+    # No address anchor: place stays None. optimize payload without _plan: no plan.
+    monkeypatch.setitem(
+        chat.TOOL_IMPL, "optimize_location",
+        lambda a, c: {**OPT_PAYLOAD, "_plan": {"place": None, "points": [
+            {"label": "Gym", "latitude": 1.0, "longitude": 2.0}]}},
+    )  # fmt: skip
+    anchors = [{"kind": "category", "query": "gym"}]
+    client = FakeAnthropic(
+        [resp([tool("optimize_location", {"anchors": anchors})], "tool_use"), resp([text("Darien, Connecticut.")])]
+    )
+    out = chat.run_chat(body("a gym"), lambda timeout: client)
+    assert out.plan is not None and out.plan.place is None
+    assert out.model_dump(by_alias=True, exclude_none=True)["plan"] == {
+        "points": [{"label": "Gym", "latitude": 1.0, "longitude": 2.0}]
+    }
+    plain = FakeAnthropic([resp([text("Hello there.")])])
+    assert chat.run_chat(body("hi"), lambda timeout: plain).plan is None
+
+
+def test_plan_model_caps_points_at_two():
+    pts = [{"label": str(i), "latitude": 1.0, "longitude": 2.0} for i in range(3)]
+    with pytest.raises(ValidationError):
+        chat.ChatPlan.model_validate({"points": pts})

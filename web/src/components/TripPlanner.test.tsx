@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -137,6 +137,7 @@ describe("TripPlanner", () => {
     // Follows the main Travel time (a 20 minute train) until set apart.
     expect(toggle).toHaveAccessibleName("Travel for Point of interest 1: Train, 20 minutes");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(toggle).getByTestId("travel-badge")).toHaveTextContent("20");
     expect(screen.queryByRole("group", { name: "Minutes for Point of interest 1" })).toBeNull();
 
     await user.click(toggle);
