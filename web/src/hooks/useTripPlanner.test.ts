@@ -431,6 +431,38 @@ describe("useTripPlanner URL", () => {
     ]);
   });
 
+  it("uses given labels and only looks up addresses for the unlabelled", async () => {
+    const { hook, reverseGeocode } = setup();
+    act(() =>
+      hook.result.current.hydrate([
+        { lat: 40.7, lon: -74, label: "  Joe's Pizza " },
+        { lat: 40.8, lon: -73.9 },
+      ]),
+    );
+    expect(hook.result.current.rows[0].label).toBe("Joe's Pizza");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(reverseGeocode).toHaveBeenCalledTimes(1);
+    expect(reverseGeocode).toHaveBeenCalledWith({ lat: 40.8, lon: -73.9 });
+    expect(hook.result.current.rows[0].label).toBe("Joe's Pizza");
+    expect(hook.result.current.rows[1].label).toBe("12 Main St");
+  });
+
+  it("skips reverse geocoding entirely when every point has a label", async () => {
+    const { hook, reverseGeocode } = setup();
+    act(() =>
+      hook.result.current.hydrate([
+        { lat: 40.7, lon: -74, label: "A" },
+        { lat: 40.8, lon: -73.9, label: "B" },
+      ]),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(reverseGeocode).not.toHaveBeenCalled();
+  });
+
   it("hydrates a single point", () => {
     const { hook } = setup();
     act(() => hook.result.current.hydrate([{ lat: 40.7, lon: -74 }]));

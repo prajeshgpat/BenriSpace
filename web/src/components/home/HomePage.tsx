@@ -83,7 +83,7 @@ const DIAGRAMS = [
   {
     key: "triangulate",
     title: "Triangulate between places",
-    text: "Mark two or three places that matter, such as work, family and the gym. Each gets a travel-time area, and the best-scoring neighborhoods sit where they overlap. Times use real road and rail travel, not straight lines.",
+    text: "Mark two or three places that matter, such as work, family and the gym. Each gets a travel-time area, and the best-scoring neighborhoods sit where they overlap. The app picks a travel mode and the fewest minutes that make the areas overlap, and you can change both. Times use real road and rail travel, not straight lines.",
     label:
       "Three travel-time areas for Work, Family and Gym overlap in the middle, where the best-scoring neighborhoods are marked.",
     diagram: (label: string) => <TriangulationDiagram label={label} />,

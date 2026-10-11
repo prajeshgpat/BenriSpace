@@ -65,9 +65,11 @@ multi-destination solver, not a lookup tool.
 - API: score, area, suggest, reverse, places, improve, similar, map cells and top,
   triangulate (placeholder), optimize, explanations.
 - Web app: Home, App (split-screen map and panel, mobile bottom sheet), API docs,
-  Settings, Pricing and Login placeholders, light and dark themes with a
+  Settings, Pricing and Login pages (UI only; auth and payments wiring still to do), light and dark themes with a
   recolored dark map, factor icons and pills, presets, importance sliders,
-  readable addresses, shareable URLs, hover tooltips on ranked markers.
+  readable addresses, shareable URLs, hover tooltips on ranked markers, travel mode and
+  minutes in the search box, auto-tuned travel for overlapping areas, map centring on pins,
+  and Ask Benri setting up the searched place and points of interest.
 
 **Phase 3 pieces already shipped.**
 

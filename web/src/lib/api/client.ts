@@ -12,6 +12,8 @@ import type {
   AreaExplanation,
   AreaScore,
   ChatContext,
+  ChatPlan,
+  ChatPlanPoint,
   ChatReply,
   ChatResult,
   ChatTurn,
@@ -586,6 +588,27 @@ export function parseSimilar(body: unknown): Similar {
   };
 }
 
+function parsePlanPoint(item: unknown): ChatPlanPoint | null {
+  return isObject(item) &&
+    isNonEmptyString(item.label) &&
+    isFiniteNumber(item.latitude) &&
+    isFiniteNumber(item.longitude)
+    ? { label: item.label, latitude: item.latitude, longitude: item.longitude }
+    : null;
+}
+
+/** Drops bad points; a plan with no points of interest is no plan. */
+function parseChatPlan(raw: unknown): ChatPlan | undefined {
+  if (!isObject(raw) || !Array.isArray(raw.points)) return undefined;
+  const points = raw.points
+    .map(parsePlanPoint)
+    .filter((p): p is ChatPlanPoint => p !== null)
+    .slice(0, 2);
+  if (points.length === 0) return undefined;
+  const place = parsePlanPoint(raw.place);
+  return { ...(place ? { place } : {}), points };
+}
+
 export function parseChatReply(body: unknown): ChatReply {
   if (!isObject(body) || !isNonEmptyString(body.reply)) {
     throw invalidResponse("chat");
@@ -619,9 +642,11 @@ export function parseChatReply(body: unknown): ChatReply {
           : [],
       )
     : [];
+  const plan = parseChatPlan(body.plan);
   return {
     reply: body.reply,
     results: results.slice(0, 3),
+    ...(plan ? { plan } : {}),
     sources,
     limited: body.limited === true,
   };

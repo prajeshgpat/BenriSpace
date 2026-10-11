@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api/errors";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
 import { DEFAULT_SELECTION } from "@/lib/map/selection";
+import { tuneTravel, widerTravel } from "@/lib/travel";
 import { emptySubScores, jsonResponse, makeAreaBody, makeAreaScore, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
@@ -1404,8 +1405,12 @@ describe("Workspace: points of interest", () => {
         );
         expect(map().previewPin).toBeNull();
         expect(map().activeMarkerId).toBe("overlap:40.71,-73.99");
-        expect(map().flyRequest).toMatchObject({ lat: 40.71, lon: -73.99 });
-        expect(map().flyRequest?.zoom).toBeUndefined();
+        // Fitted with the searched place and the points of interest, not centred on its own.
+        const [west, south, east, north] = map().flyRequest?.bounds ?? [0, 0, 0, 0];
+        expect(west).toBeLessThanOrEqual(-73.99);
+        expect(east).toBeGreaterThanOrEqual(-73.99);
+        expect(south).toBeLessThanOrEqual(40.71);
+        expect(north).toBeGreaterThanOrEqual(40.71);
       }
 
       it("opens a score card above the results when a row is clicked", async () => {
@@ -1454,6 +1459,123 @@ describe("Workspace: points of interest", () => {
       });
     });
 
+    describe("main travel in the search box", () => {
+      const sentAnchors = (mock: typeof triangulate, call = -1) =>
+        (mock.mock.calls.at(call)?.[0] ?? []) as readonly { mode: string; minutes: number }[];
+      // Where the mocked score API places "350 5th Ave".
+      const here = { lat: liveScoreBody.latitude, lon: liveScoreBody.longitude };
+      const poi = { lat: 40.75, lon: -73.97 };
+
+      it("changes the searched place's mode and minutes in the triangulate anchors", async () => {
+        const user = userEvent.setup();
+        const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
+        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+
+        await user.click(screen.getByRole("button", { name: /^Travel time:/ }));
+        await user.click(screen.getByRole("button", { name: "Drive" }));
+        await user.click(screen.getByRole("button", { name: "More minutes" }));
+
+        await waitFor(() => {
+          const [main] = sentAnchors(tri);
+          expect([main.mode, main.minutes]).toEqual(["drive", 20]);
+        });
+        expect(screen.getByText("Drive, 20 min")).toBeInTheDocument();
+        // The user's choice stands: the tuner does not run again for the same places.
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        expect(sentAnchors(tri)[0]).toMatchObject({ mode: "drive", minutes: 20 });
+      });
+
+      it("tunes one mode and minutes onto every anchor, once per set of places", async () => {
+        const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
+        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+
+        // Two points under a mile apart: a short walk for either, whatever the place's density.
+        const expected = tuneTravel([here, poi], null);
+        expect(expected).not.toBeNull();
+        const anchors = sentAnchors(tri);
+        expect(anchors).toHaveLength(2);
+        for (const a of anchors) {
+          expect([a.mode, a.minutes]).toEqual([expected!.mode, expected!.minutes]);
+        }
+        // Every request carried the tuned travel, none the untuned default first.
+        for (let i = 0; i < tri.mock.calls.length; i += 1) {
+          expect(sentAnchors(tri, i)[1]).toMatchObject(expected!);
+        }
+      });
+
+      it("widens up to two steps when the overlap is empty and nothing was changed", async () => {
+        const empty = vi.fn<ApiClient["triangulate"]>(async () => ({
+          results: [],
+          isochrones: [iso, iso],
+          combined: { ...iso, cellCount: 0 },
+        }));
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: empty });
+        const tuned = tuneTravel([here, poi], null)!;
+        const first = widerTravel(tuned)!;
+        const second = widerTravel(first)!;
+        await waitFor(
+          () => {
+            const last = sentAnchors(empty)[0];
+            expect([last.mode, last.minutes]).toEqual([second.mode, second.minutes]);
+          },
+          { timeout: 5000 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const steps = new Set(
+          empty.mock.calls.map((c) => `${c[0][0].mode}:${c[0][0].minutes}`),
+        );
+        expect(steps.size).toBeLessThanOrEqual(3);
+        expect(sentAnchors(empty)[0]).toMatchObject(second);
+      }, 15000);
+    });
+
+    it("fits the searched place and a newly entered point of interest on the map", async () => {
+      const user = userEvent.setup();
+      const reverseGeocode = vi.fn<ApiClient["reverseGeocode"]>(async ({ lat, lon }) => ({
+        label: "Tapped Plaza, NY",
+        latitude: lat,
+        longitude: lon,
+      }));
+      setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi, { reverseGeocode });
+      await screen.findByText(/strongest factor/);
+      const before = map().flyRequest;
+      await user.click(screen.getByRole("button", { name: "Point of interest" }));
+      act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.6, lon: -74.1 }));
+      await waitFor(() => expect(map().flyRequest).not.toBe(before));
+      const bounds = map().flyRequest?.bounds;
+      expect(bounds).toBeDefined();
+      const [west, south, east, north] = bounds!;
+      const searched = map().pin!;
+      for (const p of [searched, { lat: 40.6, lon: -74.1 }]) {
+        expect(west).toBeLessThanOrEqual(p.lon);
+        expect(east).toBeGreaterThanOrEqual(p.lon);
+        expect(south).toBeLessThanOrEqual(p.lat);
+        expect(north).toBeGreaterThanOrEqual(p.lat);
+      }
+    });
+
+    it("a map click with an overlap area picked clears the pick and does not move the searched place", async () => {
+      const user = userEvent.setup();
+      setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate });
+      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await user.click(screen.getByRole("button", { name: /1 Main St/ }));
+      await screen.findByRole("region", { name: "Area in the overlap" });
+      pushState.mockClear();
+      replaceState.mockClear();
+
+      act(() => map().onCellClick({ geohash: "dr5ru8", score: 77, lat: 40.76, lon: -73.98 }));
+
+      expect(screen.queryByRole("region", { name: "Area in the overlap" })).toBeNull();
+      expect(map().activeMarkerId).toBeNull();
+      expect(pushState).not.toHaveBeenCalled();
+      expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("350 5th Ave, New York, NY");
+      // With nothing picked, the next click scores the cell as usual.
+      act(() => map().onCellClick({ geohash: "dr5ru8", score: 77, lat: 40.76, lon: -73.98 }));
+      await waitFor(() => expect(pushState).toHaveBeenCalled());
+    });
+
     it("brings the score card back once the last point is removed", async () => {
       const user = userEvent.setup();
       withPoint();
@@ -1472,7 +1594,10 @@ describe("Workspace: points of interest", () => {
       setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: empty });
       expect((await screen.findAllByText(/travel areas don't overlap/)).length).toBeGreaterThan(0);
       expect(screen.getByRole("region", { name: "Selected location" })).toBeInTheDocument();
-      expect(map().triangulation?.anchors.find((a) => a.index === 0)?.geometry).not.toBeNull();
+      // The widening retries settle first; the searched place's area is drawn once they do.
+      await waitFor(() =>
+        expect(map().triangulation?.anchors.find((a) => a.index === 0)?.geometry).not.toBeNull(),
+      );
     });
   });
 

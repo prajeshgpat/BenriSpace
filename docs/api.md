@@ -560,6 +560,7 @@ Response:
 | --- | --- | --- |
 | `reply` | string | Plain text, at most about 120 words. Numbers and capitalised names are checked against the tool results; if the check fails the reply is replaced by a short deterministic summary and `limited` is `true` |
 | `results` | array, at most 3 | Built from the last ranking tool (`optimize_location`, `search_areas` or `similar`), never by the model: `label` (neighborhood or area label), `latitude`, `longitude`, `score?`, `weeklyMinutes?`, `why` |
+| `plan` | object | Present only when `optimize_location` ran and found results. Built from the best result's resolved anchors, never by the model: `place?` (`{label, latitude, longitude}`, the first address anchor, e.g. work; absent keeps the user's current place) and `points` (up to 2 `{label, latitude, longitude}`, the first brand or category stops, e.g. Planet Fitness, Whole Foods). The web app makes `place` the searched place and `points` its points of interest, then draws the travel-area overlap |
 | `sources` | array | `{tool, summary}` for each tool the assistant used |
 | `limited` | boolean | Present and `true` when the reply is a fallback or chat is paused |
 
@@ -608,7 +609,7 @@ data: {"reply":"...","results":[],"sources":[]}
 | Event | Data | When |
 | --- | --- | --- |
 | `status` | `{text, tool?}` | Zero or more times while the assistant thinks or runs a tool |
-| `reply` | The `POST /chat` response body | Exactly once on success. The text is sent whole, after the grounding check |
+| `reply` | The `POST /chat` response body, including `plan` when present | Exactly once on success. The text is sent whole, after the grounding check |
 | `error` | `{status, code, message}` | Instead of `reply`, with the codes in the table above (`429`, `503`) |
 
 Lines starting with `:` are keep-alive comments. Behind API Gateway the frames arrive together when the answer is done; they stream live only through a Lambda function URL (see [ARCHITECTURE.md](ARCHITECTURE.md), "Chat streaming"). The web app uses it only when `NEXT_PUBLIC_CHAT_STREAM_URL` is set.

@@ -291,6 +291,20 @@ export interface ChatResult {
   why: string;
 }
 
+export interface ChatPlanPoint {
+  label: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** Map setup for a reply, built by the API from the optimize result (never by the model). */
+export interface ChatPlan {
+  /** The main address (e.g. work); absent keeps the user's current place. */
+  place?: ChatPlanPoint;
+  /** At most two points of interest. */
+  points: ChatPlanPoint[];
+}
+
 export interface ChatSource {
   tool: string;
   summary: string;
@@ -299,6 +313,7 @@ export interface ChatSource {
 export interface ChatReply {
   reply: string;
   results: ChatResult[];
+  plan?: ChatPlan;
   sources: ChatSource[];
   /** True when the reply is a fallback summary or chat is paused. */
   limited: boolean;

@@ -181,6 +181,74 @@ describe("Workspace: Ask Benri", () => {
     expect(trip.overlap).toBe(true);
   });
 
+  describe("a reply with a plan", () => {
+    const PLAN_REPLY: ChatReply = {
+      ...REPLY,
+      plan: {
+        place: { label: "Work, Stamford", latitude: 41.05, longitude: -73.54 },
+        points: [
+          { label: "Planet Fitness", latitude: 41.06, longitude: -73.53 },
+          { label: "Whole Foods", latitude: 41.04, longitude: -73.55 },
+        ],
+      },
+    };
+    const triangulate = vi.fn(async () => ({
+      results: [],
+      isochrones: [],
+      combined: null,
+    })) as unknown as ApiClient["triangulate"];
+
+    it("puts the points in the planner with their labels and moves the searched place", async () => {
+      const user = userEvent.setup();
+      const reverseGeocode = vi.fn(async ({ lat, lon }: { lat: number; lon: number }) => ({
+        label: null,
+        latitude: lat,
+        longitude: lon,
+      }));
+      const { chat } = setup(undefined, {
+        chat: vi.fn(async () => PLAN_REPLY),
+        triangulate,
+        reverseGeocode,
+      });
+      void chat;
+      await screen.findByTestId("composite-score");
+      await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+      await user.type(screen.getByRole("textbox", { name: "Your question" }), "near work{Enter}");
+
+      expect(await screen.findByRole("combobox", { name: "Point of interest 1 address" })).toHaveValue(
+        "Planet Fitness",
+      );
+      expect(screen.getByRole("combobox", { name: "Point of interest 2 address" })).toHaveValue(
+        "Whole Foods",
+      );
+      // Labels were given, so no address lookup for the points.
+      expect(reverseGeocode).not.toHaveBeenCalledWith({ lat: 41.06, lon: -73.53 });
+      expect(reverseGeocode).not.toHaveBeenCalledWith({ lat: 41.04, lon: -73.55 });
+      expect(navigation.search).toContain("lat=41.05");
+      expect(navigation.search).toContain("lon=-73.54");
+      expect(screen.getByRole("combobox", { name: "Address" })).toHaveValue("Work, Stamford");
+      expect(screen.getByRole("region", { name: "Ask Benri" })).toBeInTheDocument();
+    });
+
+    it("keeps the searched place when the plan's place is where it already is", async () => {
+      const user = userEvent.setup();
+      setup(undefined, {
+        chat: vi.fn(async () => ({
+          ...PLAN_REPLY,
+          plan: { ...PLAN_REPLY.plan!, place: { label: "Same", latitude: 40.7485, longitude: -73.9857 } },
+        })),
+        triangulate,
+      });
+      await screen.findByTestId("composite-score");
+      await user.click(screen.getByRole("button", { name: "Ask Benri" }));
+      await user.type(screen.getByRole("textbox", { name: "Your question" }), "near here{Enter}");
+
+      await screen.findByRole("combobox", { name: "Point of interest 1 address" });
+      expect(window.history.pushState).not.toHaveBeenCalled();
+      expect(navigation.search).toContain("lat=40.7484");
+    });
+  });
+
   it("does not send a trip without points of interest", async () => {
     const user = userEvent.setup();
     const { chat } = setup();

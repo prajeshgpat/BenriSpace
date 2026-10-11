@@ -228,3 +228,17 @@
   max-width: min(22rem, calc(100vw - 2rem));
   font-size: 0.875rem;
 }
+
+/* The left edge holds a control of its own (the travel toggle); the text starts after it. */
+.input[data-start] {
+  padding-left: 3.75rem;
+}
+
+.startAdornment {
+  position: absolute;
+  inset-block: 0;
+  left: 0.25rem;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+}

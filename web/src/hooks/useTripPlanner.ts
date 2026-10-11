@@ -16,6 +16,9 @@ import type {
 } from "@/lib/api/types";
 import type { UrlPoint } from "@/lib/map/url";
 import { selectionScore } from "@/lib/scores/matrix";
+import { distanceMi } from "@/lib/travel";
+
+export { distanceMi };
 
 /** At most two points of interest, besides the searched place. */
 export const MAX_POIS = 2;
@@ -117,21 +120,6 @@ function priorityRequest(priorities: TripPriorities | undefined): PriorityQuery 
   };
 }
 
-const EARTH_RADIUS_MI = 3958.8;
-
-export function distanceMi(
-  a: { lat: number; lon: number },
-  b: { lat: number; lon: number },
-): number {
-  const rad = Math.PI / 180;
-  const dLat = (b.lat - a.lat) * rad;
-  const dLon = (b.lon - a.lon) * rad;
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
-  return 2 * EARTH_RADIUS_MI * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
 /** Best first, at most `MAX_TRIP_RESULTS`, none within 0.25 mi of a better one. */
 export function pickSpreadResults<T extends { lat: number; lon: number; score: number }>(
   results: readonly T[],
@@ -205,8 +193,8 @@ export interface TripPlannerState {
   resolvePending: () => Promise<void>;
   /** A tap on the map while this box was selected: use that place, labelled by its address. */
   setPlaceFromMap: (id: string, point: { lat: number; lon: number }) => void;
-  /** Rebuild the planner from URL points; labels are looked up afterwards. */
-  hydrate: (points: readonly UrlPoint[]) => void;
+  /** Rebuild the planner from points (a shared URL, a chat answer); missing labels are looked up. */
+  hydrate: (points: readonly (UrlPoint & { label?: string })[]) => void;
   retry: () => void;
 }
 
@@ -388,16 +376,18 @@ export function useTripPlanner(
   }, [resolveText]);
 
   const hydrate = useCallback(
-    (points: readonly UrlPoint[]) => {
+    (points: readonly (UrlPoint & { label?: string })[]) => {
       const restored: TripRow[] = points.slice(0, MAX_POIS).map((p) => ({
         id: nextId(),
-        label: formatLatLon(p),
+        label: p.label?.trim() || formatLatLon(p),
         lat: p.lat,
         lon: p.lon,
         error: null,
       }));
+      setArmedId(null);
       setRows(restored);
       for (const row of restored) {
+        if (row.label !== formatLatLon(row as { lat: number; lon: number })) continue;
         clientRef.current
           .reverseGeocode({ lat: row.lat as number, lon: row.lon as number })
           .then(({ label }) => {

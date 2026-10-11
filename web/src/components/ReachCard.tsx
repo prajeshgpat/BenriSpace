@@ -4,26 +4,21 @@ import { useEffect, useId, useState } from "react";
 
 import type { ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, ReachMode } from "@/lib/api/types";
-import { defaultTravel } from "@/lib/travel";
+import { travelOption } from "@/lib/travel";
 
 import styles from "./ReachCard.module.css";
-import { TravelModePicker } from "./TravelModePicker";
 
 export interface ReachCardProps {
   /** The scored place; null while none is shown (the control stays, disabled). */
   coordinates: { lat: number; lon: number } | null;
-  /** How people here usually travel (from density); walk in the city, else drive. */
-  travelMode?: "walk" | "drive" | null;
+  /** The searched place's travel mode and minutes, set in the search box. */
+  mode: ReachMode;
+  minutes: number;
   client: Pick<ApiClient, "getReach">;
   /** The polygon to draw on the map, or null to clear it. */
   onReach: (geometry: AreaGeometry | null) => void;
   /** True while travel areas are showing for points of interest instead: switch off, no fetch. */
   suspended?: boolean;
-  /**
-   * The row's mode and minutes, on mount and whenever either changes: the points of interest
-   * and the searched place share them.
-   */
-  onTravelChange?: (travel: { mode: ReachMode; minutes: number }) => void;
 }
 
 type State =
@@ -33,29 +28,12 @@ type State =
   | { status: "error" };
 
 /**
- * "How far can I get in N minutes", as one line in the factor controls: an on/off switch,
- * the travel mode and the minutes. It stays mounted while places change, so a switched-on
- * area follows each new place with the same mode and minutes. Until the user picks a mode,
- * the mode follows the place (a 20 min train in dense places, a 15 min drive elsewhere).
+ * "How far can I get in N minutes", as one line in the factor controls: an on/off switch for
+ * the searched place's travel area. The mode and minutes are set in the search box. It stays
+ * mounted while places change, so a switched-on area follows each new place.
  */
-export function ReachCard({ coordinates, travelMode, client, onReach, suspended, onTravelChange }: ReachCardProps) {
+export function ReachCard({ coordinates, mode, minutes, client, onReach, suspended }: ReachCardProps) {
   const labelId = useId();
-  const placeDefault = defaultTravel(travelMode);
-  const placeKey = travelMode === "walk" ? "walk" : "drive";
-  const [chosen, setChosen] = useState(false);
-  const [mode, setMode] = useState<ReachMode>(placeDefault.mode);
-  const [minutes, setMinutes] = useState(placeDefault.minutes);
-  const [seenPlaceKey, setSeenPlaceKey] = useState(placeKey);
-  if (travelMode && seenPlaceKey !== placeKey) {
-    setSeenPlaceKey(placeKey);
-    if (!chosen) {
-      setMode(placeDefault.mode);
-      setMinutes(placeDefault.minutes);
-    }
-  }
-  useEffect(() => {
-    onTravelChange?.({ mode, minutes });
-  }, [mode, minutes, onTravelChange]);
   const [on, setOn] = useState(true);
   const [state, setState] = useState<State>({ status: "off" });
   const lat = coordinates?.lat;
@@ -99,16 +77,9 @@ export function ReachCard({ coordinates, travelMode, client, onReach, suspended,
         Travel time
       </p>
       <div className={styles.line}>
-        <TravelModePicker
-          name="Travel time"
-          mode={mode}
-          minutes={minutes}
-          onChange={(m, min) => {
-            setChosen(true);
-            setMode(m);
-            setMinutes(min);
-          }}
-        />
+        <span className={styles.summary}>
+          {travelOption(mode).label}, {minutes} min
+        </span>
         <button
           type="button"
           role="switch"

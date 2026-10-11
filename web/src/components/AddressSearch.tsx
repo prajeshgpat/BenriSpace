@@ -41,6 +41,8 @@ interface AddressSearchProps {
   suggestClient?: Pick<ApiClient, "suggestAddresses">;
   /** Shown inside the box on its right edge, e.g. a locate button. */
   endAdornment?: ReactNode;
+  /** Shown inside the box on its left edge, e.g. the travel mode and minutes. */
+  startAdornment?: ReactNode;
   /** Every keystroke, so a parent can use text that was never submitted. */
   onTextChange?: (text: string) => void;
   /** Accessible name of the field; defaults to "Address". */
@@ -76,6 +78,7 @@ export function AddressSearch({
   onSelectSuggestion,
   suggestClient,
   endAdornment,
+  startAdornment,
   onTextChange,
   label = "Address",
   placeholder = "Enter an address",
@@ -248,9 +251,11 @@ export function AddressSearch({
                     : "1"
                   : undefined
             }
+            data-start={startAdornment ? "1" : undefined}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? errorId : undefined}
           />
+          {startAdornment ? <div className={styles.startAdornment}>{startAdornment}</div> : null}
           {endAdornment || (value && !pill) ? (
             <div className={styles.adornment}>
               {value && !pill ? (

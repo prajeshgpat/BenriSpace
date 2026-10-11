@@ -14,6 +14,7 @@ import {
   SUGGEST_TIMEOUT_MS,
   createApiClient,
   normalizeSubScores,
+  parseChatReply,
   parseMapTop,
   parseScore,
 } from "./client";
@@ -899,5 +900,34 @@ describe("score precision", () => {
     expect(parseScore({ ...liveScoreBody, precision: "point" }).precision).toBe("point");
     expect(parseScore(liveScoreBody).precision).toBe("grid");
     expect(parseScore({ ...liveScoreBody, precision: "bogus" }).precision).toBe("grid");
+  });
+});
+
+describe("parseChatReply plan", () => {
+  const pt = (label: string, latitude = 41, longitude = -73) => ({ label, latitude, longitude });
+
+  it("reads the place and points", () => {
+    const plan = parseChatReply({
+      reply: "ok",
+      plan: { place: pt("Work"), points: [pt("Planet Fitness"), pt("Whole Foods")] },
+    }).plan;
+    expect(plan).toEqual({ place: pt("Work"), points: [pt("Planet Fitness"), pt("Whole Foods")] });
+  });
+
+  it("drops invalid points, caps at two, and omits a bad place", () => {
+    const plan = parseChatReply({
+      reply: "ok",
+      plan: {
+        place: { label: "Work", latitude: Number.NaN, longitude: -73 },
+        points: [pt("A"), { label: "", latitude: 1, longitude: 2 }, pt("B"), pt("C"), "x"],
+      },
+    }).plan;
+    expect(plan).toEqual({ points: [pt("A"), pt("B")] });
+  });
+
+  it("has no plan when absent, malformed or without usable points", () => {
+    expect(parseChatReply({ reply: "ok" }).plan).toBeUndefined();
+    expect(parseChatReply({ reply: "ok", plan: "x" }).plan).toBeUndefined();
+    expect(parseChatReply({ reply: "ok", plan: { place: pt("W"), points: [] } }).plan).toBeUndefined();
   });
 });

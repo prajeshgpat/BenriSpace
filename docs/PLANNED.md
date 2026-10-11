@@ -137,7 +137,8 @@ Last updated 2026-10-05.
 - [~] **Compare places**: pins, rings, points behind the best, biggest differences.
 - [~] **Chat v2.** Inline "Ask Benri"; SSE status stream (`/v1/chat/stream`,
   `infra/chat_stream.tf` not applied). Reply arrives whole after grounding by design.
-  Still to do: "ask about this area", natural-language search as a first-class flow.
+  `optimize_location` also returns a `plan` (searched place + up to 2 points of interest) that
+  the app applies to the map. Still to do: "ask about this area", natural-language search as a first-class flow.
 - [~] **Monitoring.** `infra/alarms.tf` (SNS email + 4 CloudWatch alarms) applied; the
   email subscription needs confirming.
 - [ ] **Before going public.** Rotate the Supabase password / service key, review the
@@ -145,6 +146,8 @@ Last updated 2026-10-05.
 
 ## Wave 7 — Phase 4: accounts, tiers and billing (not started)
 
+- [ ] Wire the `/login` and `/pricing` pages (UI only today: Free $0, Pro $9/mo or $90/yr placeholder,
+  Business contact us) to auth and Stripe.
 - [ ] Google sign-in (Supabase Auth); `accounts`, `api_keys`, `usage_counters` with RLS.
 - [ ] Free / Pro / Business tiers enforced in middleware (`429` + upgrade prompt).
 - [ ] Stripe Checkout for Pro; Business via API keys.
