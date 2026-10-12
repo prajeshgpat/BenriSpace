@@ -2,11 +2,12 @@
 
 How a location's 0-100 score is computed. Two parts:
 
-- **Part A: what is shipped.** The models built: `v2-handtuned` and `v2.1-handtuned`
-  (served). `v1-handtuned` was retired and its rows deleted.
+- **Part A: what is shipped.** `v2.2-density` (served since 2026-10-06) and
+  `v2.1-handtuned` (kept as the rollback). `v1-handtuned` and `v2-handtuned` were retired
+  and their rows deleted.
 - **Part B: the v3 framework (planned).** `v3-timeaccess`, framework v1.4 with the
-  owner's decisions. Nothing in Part B is serving yet, except the default weights
-  and factor set, which v2.1 already uses. Section numbers inside Part B refer to
+  owner's decisions. Part B is not serving as a whole; v2.1 and v2.2 already use its
+  default weights and factor set, and v2.2 its routed times and mode by density. Section numbers inside Part B refer to
   Part B.
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md),
@@ -14,7 +15,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md),
 
 ---
 
-# Part A: shipped model (v1, v2, v2.1)
+# Part A: shipped models (v1 to v2.2)
 
 ## A1. Status
 
@@ -24,8 +25,8 @@ Stored scores are whole points: sub-scores are `smallint` (0-100) and the compos
 | --- | --- | --- | --- |
 | v1 | `v1-handtuned` | 11 | retired; rows deleted from the database |
 | v2 | `v2-handtuned` | 14: 12 toggleable plus 2 underlying signals | retired; rows deleted from the database |
-| v2.1 | `v2.1-handtuned` | 13, all user-facing pills | **live in production**; per-metro relative scales |
-| v2.2 | `v2.2-density` | 13, same pills and default weights | built; scored per area from routed travel times on one absolute scale (A10); cutover pending |
+| v2.1 | `v2.1-handtuned` | 13, all user-facing pills | rollback; still written weekly by `scoring.run`; per-metro relative scales |
+| v2.2 | `v2.2-density` | 13, same pills and default weights | **live in production since 2026-10-06**; scored per area from routed travel times on one absolute scale (A10) |
 
 Rollback is a Terraform variable (`scoring_weights_version`). The API reports the
 version that produced a response in `weightsVersion`. A new version gets new rows
@@ -142,21 +143,21 @@ aliases.
 
 ## A7. Cohorts, areas and known weaknesses
 
-- Normalization is per `metro_area` cohort of geohash6 cells (about 0.6 x 0.4 mi).
-  Scores for a road-bounded area (`GET /v1/area`) are not normalized separately:
-  they are the area-weighted average of the overlapping cells' latest scores, so
-  small areas inherit similar scores (`precision=point`, A8, scores sample points
-  inside the polygon instead).
+- v2.1 normalizes per `metro_area` cohort of geohash6 cells (about 0.6 x 0.4 mi), and a
+  road-bounded area's v2.1 score averages its cells, or scores sample points inside it with
+  `precision=point` (A8). v2.2 scores
+  each area once (A10) and every cell inside takes its area's scores, so all points in an
+  area share one score.
 - Scores (v2.1 and earlier) are relative within a metro area; v2.2 is absolute (A10). Either way no place scores 100 on everything
   (factors pull in opposite directions: dense places have the best transit and
   cafes and also the most traffic and siren noise).
-- **Known weakness (fixed in v3).** Min-max normalization is skewed by outlier
+- **Known weakness of v2.1 (fixed by v2.2's absolute scales).** Min-max normalization is skewed by outlier
   distances: a few very far nearest-feature distances stretch the range, which
   compresses everyone else and lets remote cells with little around them score
-  high on restaurant and bar. Part B replaces it with absolute time curves.
-- Other limits: school ratings are district-level, airport time is straight-line
-  until routing exists, and quality of gyms, restaurants and groceries is not
-  measured.
+  high on restaurant and bar. v2.2 uses absolute scales; Part B adds per-factor time curves.
+- Other limits: school ratings are district-level, travel times are free-flow with no live
+  traffic, train times are weekday AM peak, and quality of gyms, restaurants and groceries
+  is not measured.
 
 ## A8. On-demand point scoring (`precision=point`, experimental)
 
@@ -203,9 +204,10 @@ collector-or-larger roads within 1.2 mi so chained hops can stay on main roads.
 The Wave 4 precompute (`ingestion/routing/`, migration 0022, see ARCHITECTURE section 6) stores
 network minutes to the nearest, 2nd and 3rd nearest place of every category per cell (walk for
 cells at or above 10,000 people / sq mi, drive below), drive minutes to airports and rail
-stations, and rail ride times between stations. **No score reads them yet**: v2 / v2.1 still use
+stations, and rail ride times between stations. v2.2 (A10) reads the same networks through
+`ingestion.routing.reach` and the airport minutes from `cell_hubs`; v2.1 still uses
 straight-line distances, and the v3 time curves (Part B 1.2) will take these minutes as input.
-Optimizer and triangulate already use them. Assumptions to carry into v3: walk 3 mph;
+Isochrones, triangulate and the optimizer use them at request time. Assumptions to carry into v3: walk 3 mph;
 drive free-flow x 0.8; amenity search caps walk 30 min / drive 45 min (beyond = "not reachable",
 which a time curve should score as zero); train times are weekday AM peak and include the wait.
 
@@ -246,7 +248,7 @@ Calibration against reference places: `scripts/calibrate_density.py`.
 # Part B: v3 framework (planned, `v3-timeaccess`)
 
 > **Status: target design, framework v1.4 (2026-10-04).** The model served today is
-> `v2-handtuned`; v2.1 is built. Part A section A6 and the mapping table in
+> `v2.2-density` (A10); `v2.1-handtuned` is the rollback. Part A section A6 and the mapping table in
 > section 11 below show which pieces already exist. Items marked **OPEN** still need
 > an owner decision. Changes and owner decisions are listed in section 12.
 
@@ -655,28 +657,18 @@ New factors to add (not already scored above), each with its own weight:
 
 ## 11. Mapping To The Current Implementation
 
-| Framework (v3) | `v2-handtuned` (live) | `v2.1-handtuned` (built) |
+| Framework (v3) | `v2.1-handtuned` (rollback) | `v2.2-density` (live) |
 | --- | --- | --- |
-| Absolute time curves, mode by density | min-max normalized distance + count blend | same |
+| Absolute time curves, mode by density | min-max normalized distance + count blend, per metro | routed minutes and densities on one absolute scale, walk or drive by density; linear curves, not yet the per-factor curves of section 4 |
 | Overall normalized to selected filters, out of 100 | same | same |
-| Gas & Convenience one positive factor | two separate negative factors | one positive factor |
-| Gas / convenience adjacency inside Noise | not in Noise | in Noise (300 ft to 800 ft fade) |
-| Recreation and Shopping as visible pills | hidden underlying signals | visible pills |
-| Transit proximity + service | proximity and stop count | same |
-| Dining proximity + density in area | proximity + count within 500 m | same |
-| School 20 / 80 | 20 / 80 | same |
-| Weights (section 2) | older hand-tuned weights (A3) | the section 2 weights |
+| Gas & Convenience one positive factor | one positive factor | same (70 % proximity, 30 % density) |
+| Gas / convenience adjacency inside Noise | in Noise (300 ft to 800 ft fade) | same (the v2.1 signal, scaled region-wide) |
+| Recreation and Shopping as visible pills | visible pills | same |
+| Transit proximity + service | proximity and stop count | minutes to a train station; bus stops at most half; no service frequency yet |
+| Dining proximity + density in area | proximity + nearby count | density over the area and its walkable neighbours |
+| School 20 / 80 | 20 / 80 | 20 / 80 with routed proximity |
+| Weights (section 2) | the section 2 weights | same |
 | Quality parts | none (placeholders in v3 too) | none |
-
-------------------------------------------- | ----------------------------------------------------- |
-| Absolute time curves, mode by density       | min-max normalized distance + count blend             |
-| Overall normalized to selected filters, /100 | same normalization, /100 (already)                   |
-| Gas & Convenience one positive factor       | two separate negative factors                         |
-| Gas / convenience adjacency inside Noise    | not in Noise                                          |
-| Transit proximity + service                 | proximity and stop count                              |
-| Dining proximity + density in area          | proximity + count within 500 m                        |
-| School 20 / 80                              | 20 / 80 (same)                                        |
-| Quality parts                               | none (placeholders in v3 too)                         |
 
 ---
 

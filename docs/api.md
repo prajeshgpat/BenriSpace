@@ -12,23 +12,28 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
 | `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
-| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) as a GeoJSON polygon | built, needs migration 0022 and the routing precompute |
-| `POST /triangulate` | Best locations that satisfy several commute anchors, with the isochrone polygons | live; real isochrones once migration 0022 data exists, straight-line circles otherwise |
-| `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | built, not yet deployed |
-| `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | built, needs migration 0010 for the daily limit |
-| `POST /chat/stream` | The same chat as server-sent events (progress, then the reply) | built, not deployed |
+| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) as a GeoJSON polygon | live |
+| `POST /triangulate` | Best locations that satisfy several commute anchors, with the isochrone polygons | live (routed; straight-line circles only where routing data is missing) |
+| `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | live |
+| `POST /chat` | Ask Benri: a tool-using chat assistant grounded in our own data (15 messages a day per visitor) | live |
+| `POST /chat/stream` | The same chat as server-sent events (progress, then the reply) | live through API Gateway (buffered); live streaming needs the function URL, not deployed |
 | `GET /suggest` | Address autocomplete | live |
 | `GET /reverse` | Readable address for a map point | live |
 | `GET /improve` | Deterministic suggestions for raising the weakest factors | live |
-| `GET /similar` | Well-separated areas with a similar factor profile | built |
+| `GET /similar` | Well-separated areas with a similar factor profile | live |
 | `GET /map/cells` | Composite score per map cell for a chosen set of factors | live |
 | `GET /map/top` | Best, well-separated areas for a chosen set of factors | live |
+| `GET /map/scores` | Every cell's 13 sub-scores in one compact binary file | live |
+| `GET /places` | Named places near a point | live |
+| `GET /sources` | Data sources and when each was last refreshed | live |
+| `POST /feedback` | Send feedback on a score | live |
+| `POST /mcp` | MCP connector for Claude (below) | live |
 
-**Which examples are real.** The `/score`, `/area`, `/score/{id}/explanation`, `/reverse` and `/map/top` examples are real production responses captured after the v2 cutover (2026-10-03), with numbers rounded for readability (and the `/area` polygon shortened). The `/triangulate`, `/suggest` and `/map/cells` examples were captured earlier and still have the right shape; their numbers predate the v2 data and are for shape only.
+**Which examples are real.** The `/score`, `/area`, `/score/{id}/explanation`, `/reverse` and `/map/top` examples are real production responses captured after the v2 cutover (2026-10-03), with numbers rounded for readability (and the `/area` polygon shortened). They still have the right shape, but their `weightsVersion` and numbers predate v2.2; production now answers with `weightsVersion: "v2.2-density"`. The `/triangulate`, `/suggest` and `/map/cells` examples are for shape only.
 
-**v2 status.** The v2 cutover is complete. Production serves `weightsVersion: "v2-handtuned"` (64,320 score rows, fourteen stored scores), including restaurant, bar, premium retail, the facility-based noise corridor and click-to-polygon `/area`. `subScores.school` is `null` wherever no district rating exists (shown as "No data" on the website); any other factor can also be `null` if its data is missing for a cell.
+**Scoring version.** Production serves `v2.2-density` (since 2026-10-06): thirteen factors, each road-bounded area scored once from routed travel times on one absolute scale, and every grid cell inside an area takes its area's scores. `v2.1-handtuned` rows are kept as the rollback. `subScores.school` is `null` wherever no district rating exists (shown as "No data" on the website); any other factor can also be `null` if its data is missing.
 
-**v2.1 key names.** The API now answers with the thirteen v2.1 factors (`shopping`, `gasConvenience`, `traffic`, `recreation` replace `premiumRetail`, `gasStation`/`convenienceStore`, `road`, `trailPopularity`). The examples below show the production `v2-handtuned` rows read through those keys: `gasConvenience` is `null` on v2 rows (they scored gas stations and convenience stores as two negative factors), `shopping` comes from the old premium-retail score, `recreation` from the old trail score and `traffic` from the old road score. Rows scored as `v2.1-handtuned` fill all thirteen. The old keys are still accepted wherever you send `factors` or `weights` (see "The thirteen factors").
+**Factor key names.** The API answers with the thirteen factors (`shopping`, `gasConvenience`, `traffic`, `recreation` replaced the v2 keys `premiumRetail`, `gasStation`/`convenienceStore`, `road`, `trailPopularity`). The old keys are still accepted wherever you send `factors` or `weights` (see "The thirteen factors").
 
 ## Use BenriSpace in Claude (MCP connector)
 
@@ -77,8 +82,8 @@ server-sent events). API Gateway throttling applies as for the rest of the API.
 - Scores run from **0 to 100, and higher is always better**. Factors where less is better (traffic, the noise corridor, airport drive time) are already inverted, so a high `traffic` score means "light traffic nearby" and a high `emergencyCorridor` score means "far from the noise corridor".
 - Scores are **absolute across the region** from v2.2 (`v2.2-density`): each factor scores how much is reachable on foot, or by a short drive in car-dependent areas, on one scale for all of NY, NJ and CT, so a suburb is judged against the same yardstick as Manhattan. In v2.1 and earlier they were relative within a metro area (min-max per cohort, so 100 meant "best in its metro area"). See [SCORING.md](SCORING.md) A10.
 - **No location scores 100 on everything.** Factors pull in opposite directions: the spots with the best transit, cafes and groceries are dense, and dense places have more traffic and siren noise. In the example below, 350 5th Avenue scores 100 on transit but a low score on distance from the noise corridor. A composite near 80 is exceptional.
-- Scores describe an **area**, not a single building. The underlying grid cells are about 0.6 by 0.4 miles, and the small road-bounded areas returned by `/area` are averages of the cells they overlap, so neighbouring small areas often share similar scores.
-- The **composite** (`compositeScore`) is a weighted average of the sub-scores, normalized by the weight of the factors that have a score (a `null` factor is left out, never counted as 0). The v2.1 default weights (version `v2.1-handtuned`, from docs/SCORING.md) are: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. Production still serves `v2-handtuned` until the cutover; its stored composites use the older weights (grocery 1.5, gym 1.0, cafe 1.0, restaurant 1.0, bar 0.5, premium retail 0.75, gas station 1.0, convenience store 0.75, transit 1.5, school 1.5, road 1.0, emergencyCorridor 0.75, airport 0.75, trail popularity 1.25). `/map/cells` and `/map/top` let you choose your own factors and weights, always starting from the v2.1 weights.
+- Scores describe an **area**, not a single building. Each road-bounded area (about 0.1 to 1 sq mi) is scored once, and every grid cell inside it (about 0.6 by 0.4 miles) takes the area's scores. `?precision=point` on `/score` scores the exact point instead.
+- The **composite** (`compositeScore`) is a weighted average of the sub-scores, normalized by the weight of the factors that have a score (a `null` factor is left out, never counted as 0). The default weights (shared by `v2.1-handtuned` and `v2.2-density`, from docs/SCORING.md) are: grocery 14, transit 14, emergencyCorridor 12, restaurant 10, school 10, gym 9, cafe 8, gasConvenience 6, bar 5, airport 5, recreation 5, shopping 4, traffic 4. `/map/cells` and `/map/top` let you choose your own factors and weights, starting from these defaults.
 - `weightsVersion` tells you which set of stored scores you are looking at.
 
 ### The thirteen factors
@@ -93,7 +98,7 @@ Every factor is a toggle on the website; none are hidden.
 | `restaurant` | Restaurants | Restaurants close by (`amenity=restaurant` only) |
 | `bar` | Bars | Bars, pubs and beer gardens close by |
 | `shopping` | Shopping | General retail close by and varied (department stores, malls, clothing, home goods, pharmacies), with a small bonus for Whole Foods, Starbucks and Target |
-| `gasConvenience` | Gas & Convenience | Gas stations and convenience stores close by (one positive factor; `null` on `v2-handtuned` rows) |
+| `gasConvenience` | Gas & Convenience | Gas stations and convenience stores close by (one positive factor) |
 | `transit` | Public transit | Close to frequent transit stops |
 | `school` | Schools | Schools close by and well rated |
 | `traffic` | Traffic | Light traffic and congestion nearby |
@@ -103,7 +108,9 @@ Every factor is a toggle on the website; none are hidden.
 
 **Legacy keys.** `premiumRetail` is accepted as `shopping`, `trailPopularity` as `recreation`, `road` as `traffic`, and `gasStation` and `convenienceStore` both as `gasConvenience`, in every `factors` and `weights` parameter (the duplicates collapse; sending two aliases of one factor in `weights` is an error). Responses only use the new keys. `/places` still accepts `gasStation`, `convenienceStore` and `premiumRetail` with their exact old meaning.
 
-**How the v2.1 factors are built.** `gasConvenience` blends the nearest gas station or convenience store (70%) with how many are within 500 m (30%). The noise corridor adds an adjacency penalty from gas stations and convenience stores to the corridor signal: full within 300 ft, fading linearly to none at 800 ft. `shopping` is 60% proximity (to the third-nearest shop) and 40% variety of retail types within a mile, plus the brand bonus. `recreation` is 75% parks (proximity to the nearest park and the size of the largest one within half a mile) and 25% running trails. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v2-handtuned` in production), so rows from another version are never mixed in. Brand matching for the shopping bonus uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback.
+**How the factors are built (v2.2, live).** Restaurants, cafes, bars and shopping score the density of places over the area and its walkable neighbours; groceries, gym and gas & convenience are 70% routed minutes to the nearest and 30% density; transit is the minutes to a train station (a bus stop counts for at most half); schools are 20% routed proximity and 80% district rating; airport is drive minutes to JFK, LGA or EWR; traffic, the noise corridor and recreation use the v2.1 signals below, scaled once for the whole region. Car-dependent areas also get credit for what is a short drive away. Full recipe: [SCORING.md](SCORING.md) A10.
+
+**How the v2.1 factors are built (the rollback).** `gasConvenience` blends the nearest gas station or convenience store (70%) with how many are within about 1,600 ft (30%). The noise corridor adds an adjacency penalty from gas stations and convenience stores to the corridor signal: full within 300 ft, fading linearly to none at 800 ft. `shopping` is 60% proximity (to the third-nearest shop) and 40% variety of retail types within a mile, plus the brand bonus. `recreation` is 75% parks (proximity to the nearest park and the size of the largest one within half a mile) and 25% running trails. `school` is 20% proximity and 80% district rating, and `null` where no rating exists (see [data-sources.md](data-sources.md)). The API serves only rows matching its configured weights version (`SCORING_WEIGHTS_VERSION`, `v2.2-density` in production), so rows from another version are never mixed in. Brand matching for the shopping bonus uses the OpenStreetMap `brand:wikidata` tag (Whole Foods Q1809448, Starbucks Q37158 and Starbucks Reserve Q71150001, Target Q1046951), with a name fallback.
 
 **Known limitation (v3 candidate).** Each factor is min-max normalized within its metro area, so a few extreme outlier distances stretch the scale and skew everyone else's scores. A visible symptom: remote cells with very little around them can still score high on `restaurant` and `bar`. A more robust normalization (percentile or log-scaled distances) is a scoring v3 candidate; see `docs/ROADMAP.md`.
 
@@ -960,7 +967,7 @@ Every cell's 13 sub-scores for the configured weights version in one compact bin
 | Part | Size | Content |
 | --- | --- | --- |
 | `headerLength` | 4 bytes | `uint32`, byte length of the header JSON |
-| header | `headerLength` bytes | UTF-8 JSON: `{"format":1,"version":"v2-handtuned","factors":[13 keys],"count":N,"geohashLength":6,"generatedAt":"<ISO 8601>"}` |
+| header | `headerLength` bytes | UTF-8 JSON: `{"format":1,"version":"v2.2-density","factors":[13 keys],"count":N,"geohashLength":6,"generatedAt":"<ISO 8601>"}` |
 | geohashes | `N * 6` bytes | fixed 6-character ASCII geohashes, sorted ascending, no separators |
 | scores | `N * 13` bytes | `uint8`, cell-major: cell `i`, factor `j` is at `i * 13 + j`; `0` to `100` rounded half up, `255` means no score |
 
@@ -1062,4 +1069,4 @@ with httpx.Client(base_url=API, timeout=20) as client:
         print(error["code"], error["message"])
 ```
 
-The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally before the v2 deploy. Production now serves `v2-handtuned`, so `/score` responses carry fourteen sub-scores.
+The `/score` calls in these snippets (and the geohash decoder above) were run against the production API when this guide was written; the `/suggest` and `/map/*` calls were run against the same code locally before the v2 deploy. Production now serves `v2.2-density`, so `/score` responses carry the thirteen sub-scores.

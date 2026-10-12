@@ -1,32 +1,13 @@
-"""**Phase 1 approximation** for Phase 2's real Valhalla isochrones
-(docs/ROADMAP.md Phase 2: stand up Valhalla, compute true drive/transit/walk
-isochrones per anchor, intersect/union them, rank precomputed scores that
-fall inside). Valhalla's hosting location is explicitly undecided as of
-this writing (docs/ROADMAP.md Phase 2 Requirements: "Where Valhalla runs --
-deferred by you to this phase"), so there's no isochrone service to call
-yet.
+"""POST /v1/triangulate: the best places inside the overlap (or union) of several anchors'
+travel-time areas.
 
-This module approximates each anchor's isochrone as a **circle**: radius =
-`maxTravelMinutes * assumed_avg_speed` for the anchor's travel mode,
-membership tested with straight-line (haversine) distance via
-common.geo.haversine_m -- not real road-network travel time. This is a
-coarse placeholder by design (a circle ignores water crossings, highway
-access, actual congestion, etc.) but keeps the endpoint's contract shape
-(TriangulateRequest -> ranked RankedAddress list) fully functional today.
-
-**Swap point for Phase 2**: replace `anchor_to_circle()` (issue a real
-Valhalla isochrone request, get back a polygon) and `point_in_circle()`
-(point-in-polygon test instead of a radius check) below. `rank_candidates()`'s
-signature (candidates + resolved "isochrone membership" objects +
-combine_mode + limit -> ranked list) stays the same, so api/main.py's route
-handler doesn't need to change shape, only what it imports.
-
-Assumed average speeds (documented, hand-tuned placeholders -- a Phase 2
-TODO to replace with real routing, not measured against actual NYC-metro
-traffic data):
-- drive: 40 km/h -- mixed local/arterial/highway blend
-- transit: 25 km/h -- bus/rail blend including wait/transfer overhead
-- walk: 4.8 km/h -- ~3 mph, standard walking-speed assumption
+Each anchor becomes a set of reachable grid cells from the precomputed road-network cell graph
+(`anchor_cells`, api/reach.py, migration 0022); `intersect` and `union` are exact set
+operations on those cells, and `rank_in_cells` ranks the stored scores inside. An anchor with
+no routing data falls back to a straight-line circle (`anchor_to_circle`: radius =
+minutes x the mode's assumed speed, haversine membership), expressed as the cells inside it so
+both kinds combine exactly. `rank_candidates` is the older circle-only ranking, now
+used only by tests.
 """
 
 from dataclasses import dataclass

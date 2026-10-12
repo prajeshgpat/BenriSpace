@@ -6,7 +6,7 @@ what is done and the decisions log; this file is the backlog to pull from. Each 
 `[~]` built or partly done (not fully in production), `[x]` done (move done items
 to ROADMAP.md).
 
-Last updated 2026-10-05.
+Last updated 2026-10-11.
 
 ---
 
@@ -88,22 +88,25 @@ Last updated 2026-10-05.
   area-to-area times, walking is within about +-30 % and driving within 0.85-1.05x in rural
   areas, 0.6-0.7x for 20-minute trips in dense suburbs (drive cells snap to collector roads,
   `travel.FastSnapper`). A finer or longer-range graph would tighten it.
-- [~] **Real `/triangulate`** (cell-set intersect / union) and **optimizer upgrades**
+- [x] **Real `/triangulate`** (cell-set intersect / union) and **optimizer upgrades**
   (Weiszfeld seed, lower-bound pruning, stored times).
 - [x] **Geofabrik extract** instead of Overpass (`ingestion/routing/pbf.py`: NY/NJ/CT walk
   13.4M and drive 7.3M nodes in 2.5 min).
 - [ ] **geohash5 coarse graph** for drive isochrones over ~90 minutes.
-- [ ] **Triangulate / optimizer UI** in the web app.
+- [x] **Triangulate UI** in the web app: points of interest with their own travel toggles,
+  the overlap drawn on the map, best areas ranked inside it, mode and minutes auto-tuned once
+  per set of places (2026-10-10).
+- [ ] **Optimizer UI.** `/v1/optimize` is reached through Ask Benri (`optimize_location`) only.
 
 ## Wave 5 — Scoring v3 (`v3-timeaccess`) and cutover
 
-- [~] **v2.2 routed density scoring** (`v2.2-density`, [SCORING.md](SCORING.md) A10). Places
+- [x] **v2.2 routed density scoring** (`v2.2-density`, [SCORING.md](SCORING.md) A10). Places
   per sq mi over each area and its walkable neighbours on one absolute scale; drive-mode
   areas credit a dense cluster a short drive away (max 80 %); grocery / gym / gas 70 %
   proximity; transit = train station proximity. Built and calibrated locally (Lloyd, NY bars
   100 -> 30). Cutover: migration 0023, ingestion run, reach from production places,
   `scoring.area_run --write`, publish, switch `scoring_weights_version` + the repository
-  variable. Not recomputed weekly yet (offline job).
+  variable. Live since 2026-10-06; not recomputed weekly yet (offline job, next item).
 - [ ] **Automate the v2.2 refresh** (`reach` -> `scoring.area_run --write` -> `publish_static.py
   --weights-version v2.2-density`). Today these three run by hand, about monthly, after the
   weekly ingestion; until then the scores keep the last run's data (nothing breaks).

@@ -1,4 +1,4 @@
-# CloudWatch alarms for the API (docs/PLANNED.md Wave 1 / Wave 6 monitoring). NOT APPLIED.
+# CloudWatch alarms for the API (docs/PLANNED.md Wave 6 monitoring). Applied.
 # Alarms notify the SNS topic below; the budget alert address (var.budget_alert_email) is
 # subscribed once, after which AWS emails a confirmation link that must be clicked.
 #

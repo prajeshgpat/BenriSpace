@@ -32,16 +32,18 @@ multi-destination solver, not a lookup tool.
   platforms, relocation companies, brokerages and multifamily marketers (closest
   comp: Walk Score's licensing). The consumer app is the front door and demo.
 
-## Status at a glance (2026-10-05)
+## Status at a glance (2026-10-11)
 
 | Area | State |
 | --- | --- |
-| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres (286 MB of 500 MB after compaction, 2026-10-05) |
-| Scoring served | `v2.1-handtuned`, 13 factor pills, 64,320 rows; v1 and v2 rows deleted 2026-10-05 |
-| Areas | Production: 35,943 density-capped road-hierarchy areas (0.1-1 sq mi) in `areas_slim`, simplified outlines; full detail in the PMTiles on R2 |
-| Features live | score, area click, address search, Best areas, improve, similar areas, places, AI explanations, optimizer, Ask Benri chat, data page, feedback, map, mobile sheet, Home page |
-| Shipped 2026-10-05 (PR #26) | on-demand point scoring, R2 static delivery (score file, per-area scores, PMTiles), browser-side best areas and similar areas, inline Ask Benri with brand lookups, density-capped polygons, storage compaction, routing precompute + isochrones (sample data only), compare differences, walk-first travel card, CloudWatch alarms. Not applied: chat streaming infra, edge cache |
-| Planned | Full routing run, scoring v3, density-tiered grid for a 5 hr radius, auth and tiers |
+| Production | benrispace.com (Next.js on Amplify) and api.benrispace.com (FastAPI on Lambda) over Supabase Postgres (292 MB of 500 MB) and Cloudflare R2 static files |
+| Scoring served | `v2.2-density` since 2026-10-06: 13 factors scored per road-bounded area from routed travel times, one absolute scale; `v2.1-handtuned` rows kept as the rollback |
+| Areas | 35,943 density-capped road-hierarchy areas (0.1-1 sq mi) in `areas_slim`, simplified outlines; full detail in the PMTiles on R2 |
+| Routing | Whole region precomputed from Geofabrik extracts: `cell_travel`, `cell_graph`, `cell_hubs`, `rail_matrix` |
+| Migrations | 0002-0023 all applied |
+| Features live | score, area click, address search, Best areas, improve, similar areas, places, compare, AI explanations, optimizer, travel-time overlap with points of interest (auto-tuned mode and minutes), Ask Benri chat with map plans, MCP connector, data page, feedback, mobile sheet, Home, Login and Pricing (UI only) |
+| Not applied | chat streaming infra, Cloudflare edge cache |
+| Planned | automate the monthly v2.2 refresh, scoring v3, density-tiered grid for a 5 hr radius, auth and tiers |
 
 ## Done
 
@@ -59,11 +61,14 @@ multi-destination solver, not a lookup tool.
   (NCES + EDFacts), roads and noise-corridor facilities, airports, trails,
   shopping and parks (v2.1), and neighborhood names.
 - Weekly orchestration in GitHub Actions (sequential jobs, scoring after).
-- Scoring engine v1, v2 (cutover 2026-10-03) and v2.1 (built).
-- Click-to-polygon areas, rebuilt at 0.8 sq mi (49,158 areas) with neighborhood
-  names.
+- Scoring engine v1, v2 (cutover 2026-10-03), v2.1 (cutover 2026-10-04) and v2.2 density (cutover 2026-10-06).
+- Click-to-polygon areas with neighborhood names: density-capped road-hierarchy areas
+  (35,943, 0.1-1 sq mi) in `areas_slim`.
+- Routing precompute for the whole region (Pandana over Geofabrik extracts, GTFS Connection
+  Scan for trains) and cell-graph isochrones.
 - API: score, area, suggest, reverse, places, improve, similar, map cells and top,
-  triangulate (placeholder), optimize, explanations.
+  isochrone, triangulate (routed travel-time overlap), optimize, explanations, chat, MCP,
+  feedback, sources.
 - Web app: Home, App (split-screen map and panel, mobile bottom sheet), API docs,
   Settings, Pricing and Login pages (UI only; auth and payments wiring still to do), light and dark themes with a
   recolored dark map, factor icons and pills, presets, importance sliders,
@@ -76,10 +81,12 @@ multi-destination solver, not a lookup tool.
 - AI-written, grounded score explanations (Haiku 4.5, prompt `expl-v2`, cache and
   a $5/month cap).
 - `/v1/improve` and the Improve card with named places (migration 0004).
-- `/v1/similar` (first with pgvector embeddings, migration 0007; SQL distance on `scratch`; see
-  ARCHITECTURE.md).
+- `/v1/similar` (first with pgvector embeddings, migration 0007; now SQL distance over per-metro
+  z-scores, and computed in the browser from the area file).
 - `/v1/optimize`, the multi-destination planner (work + Trader Joe's + Planet
-  Fitness), with openrouteservice refinement.
+  Fitness), with stored routed times and openrouteservice refinement.
+- Ask Benri chat (tool-using Haiku with grounding validation) that can set up the searched place,
+  points of interest and their overlap on the map, and the MCP connector for Claude.
 
 **Phase 4 contract piece.** The OpenAPI auth schemes (`bearerAuth`, `apiKeyAuth`),
 `401` and `429` responses and `X-RateLimit-*` headers were added to the contract
@@ -87,14 +94,8 @@ multi-destination solver, not a lookup tool.
 
 ## In progress
 
-- **`scratch` branch, owner testing.** Everything listed above as "On `scratch`".
-  Production rollout needs these migrations, in order, each owner-approved:
-  0014 `areas_slim` (then the slim area build and `AREAS_TABLE=areas_slim`),
-  0015 `places_cat_geom_gist`, 0020 imperial expand (deploy + one ingestion run
-  before continuing), 0016 drop embeddings, 0017 compact scores, 0018 trim
-  `geo_entities`, 0019 `score_files` (then `python -m api.scorefile`), 0022
-  routing (then `python -m ingestion.routing.run --all`), and last 0021 imperial
-  contract (irreversible). Details: ARCHITECTURE.md storage model and migrations table.
+- Nothing half-built on `dev-benrispace`; everything above is merged and deployed (PR #37,
+  2026-10-11).
 
 ## Next
 
@@ -102,8 +103,8 @@ multi-destination solver, not a lookup tool.
    tables are recomputed offline, not by the weekly job: run `reach --sync-places`,
    `scoring.area_run --write` and `publish_static.py --weights-version v2.2-density` about
    monthly (a CI workflow for it is the next piece of work). Delete the v2.1 rows after a week.
-2. **Full routing run.** Swap Overpass for a Geofabrik extract, run walk and drive
-   tiles for the whole metro, and add a geohash5 graph for drive trips over 90 min.
+2. **Longer drive trips.** Add a geohash5 graph for drive trips over 90 min (the full routing
+   run from Geofabrik extracts is done).
 3. **Scoring v3 (`v3-timeaccess`).** Per-factor time curves reading `cell_travel`,
    frontage-based noise, quality placeholders. See [SCORING.md](SCORING.md) Part B.
 4. **Density-tiered grid** (geohash6 where dense, geohash5 elsewhere) as the
@@ -171,6 +172,9 @@ The wave-by-wave backlog (with status markers) lives in [PLANNED.md](PLANNED.md)
 | 2026-10-05 | Similar areas: SQL distance over per-metro z-scored factor scores; pgvector embeddings and `similar_cells` dropped |
 | 2026-10-05 | Routing: Pandana precompute per tile plus a stored cell graph for isochrones (pure Python in Lambda); Valhalla no longer needed. Train times from GTFS with the Connection Scan Algorithm |
 | 2026-10-05 | Coverage target: ~5 hour radius on a density-tiered grid; static files move to Cloudflare R2 |
+| 2026-10-06 | v2.2 cutover: production serves `v2.2-density` (per-area routed density, one absolute scale); v2.2 and routed tables refreshed monthly by hand |
+| 2026-10-06 | `road_segments` no longer loaded weekly (97 MB, unread) |
+| 2026-10-10 | Travel mode and minutes live in the search box; overlap travel is auto-tuned once per set of places; chat can set up the map; Login and Pricing ship as UI only (Pro $9/mo or $90/yr placeholder) |
 
 Other standing decisions: precompute scores rather than
 compute live; GitHub Actions for orchestration (Airflow deferred); Business tier
@@ -190,7 +194,8 @@ sales-assisted first; rate limiting via a Postgres counter first.
 
 ## Open items and housekeeping
 
-- Migrations 0014-0022 are written but not applied (order under "In progress").
+- Delete the `v2.1-handtuned` rollback rows (about 25 MB) once v2.2 has run cleanly.
+- Wire the Login and Pricing pages to real auth and payments (Phase 4).
 - Not yet verified: Safari and Firefox, screen readers, real touch devices.
 - NCES public-domain status should be verified before launch
   ([data-sources.md](data-sources.md)).

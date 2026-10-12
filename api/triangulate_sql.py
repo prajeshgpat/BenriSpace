@@ -3,8 +3,8 @@
 common.db.iter_latest_scored_geo_entities loads every scored cell (~64k
 rows); the circles only ever need the cells near them. This module adds a
 lat/lon range prefilter derived from the anchor circles. It is a pure
-superset filter: api.triangulate.rank_candidates still applies the exact
-haversine membership test, so results are identical.
+superset filter: the ranking in api.triangulate still applies exact
+membership, so results are identical.
 """
 
 import math

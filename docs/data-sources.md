@@ -1,6 +1,7 @@
-# Data sources: schools
+# Data sources
 
-Decision record for the school score (20% proximity, 80% rating).
+Where each input comes from, its licence, and the decisions behind it. The school score
+(20% proximity, 80% rating) comes first because it had the most licensing questions.
 
 **We link to GreatSchools; we do not ingest it.** GreatSchools ratings are
 licensed data, their district-boundary map is not an API, and their terms
@@ -57,7 +58,7 @@ older than today (2018 data); NJ and CT use different state tests from NY, which
 
 ## Shopping and parks (v2.1, `osm_retail_parks`)
 
-OpenStreetMap via Overpass, one query per metro bbox (quadrant-split on timeout), `out center bb tags`. ODbL, attribute OpenStreetMap contributors. Not yet applied to production: needs migration `0009_v2_1.sql` and an ingestion run.
+OpenStreetMap via Overpass, one query per metro bbox (quadrant-split on timeout), `out center bb tags`. ODbL, attribute OpenStreetMap contributors. In production (migration `0009_v2_1.sql`), refreshed by the weekly ingestion.
 
 - **Shopping:** `shop=` department_store, mall, clothes, shoes, boutique, fashion_accessories, bag, jewelry, watches, doityourself, hardware, furniture, interior_decoration, houseware, bed, kitchen, garden_centre, electronics, computer, mobile_phone, chemist, beauty, cosmetics, perfumery, variety_store, general, gift, books, sports, toys, stationery, art, music, outdoor. Groceries and convenience stores are separate factors. Columns: `shopping_count_1mi`, `shopping_nearest_ft`, `shopping_variety_count_1mi` (distinct retail groups within 1 mi), `shopping_raw`.
 - **Parks:** `leisure=park|playground|nature_reserve|garden` and `landuse=recreation_ground`, excluding `access=private|no`. Area is estimated from the element's bounding box (x 0.65), so it is approximate. Columns: `park_count_1mi`, `park_nearest_ft`, `park_largest_sq_ft_half_mi`, `recreation_raw`.
@@ -100,4 +101,16 @@ walk (above the 10k line); Huntington 3,991 drive; rural Fairfield County CT 212
 
 OpenStreetMap via Overpass (ODbL): `highway` motorway..secondary plus links, and `railway=rail`,
 stored whole per way in `road_segments` (PostGIS LineString) with `is_emergency_route` set for
-secondary and above. Feeds later noise-by-frontage work; no API query reads it yet.
+secondary and above. Feeds later noise-by-frontage work; nothing reads it yet, so it is not loaded
+weekly and the production table is empty. Run `python -m ingestion.road_segments` by hand
+when the frontage-noise factor needs it.
+
+## Road networks and train times (routing, Wave 4)
+
+| Source | Notes |
+|---|---|
+| Geofabrik OpenStreetMap extracts for New York, New Jersey and Connecticut (`download.geofabrik.de/north-america/us/<state>-latest.osm.pbf`) | ODbL, attribute OpenStreetMap contributors. Saved in `build/osm/` (about 840 MB) and turned into walk, drive and arterial networks by `ingestion.routing.pbf`. Replaces Overpass for routing because public Overpass rate-limits bulk downloads. Refreshed by hand, about monthly. |
+| GTFS rail feeds (subway, LIRR, Metro-North, PATH, NJ Transit rail), the same feeds as `gtfs_transit` | Weekday morning-peak ride times between 933 stations (`rail_matrix`), by the Connection Scan Algorithm. |
+
+Routed minutes, place tallies and densities are internal scoring inputs and are never shown to
+users.

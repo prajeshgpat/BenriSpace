@@ -9,190 +9,203 @@ those are cached or capped.
 
 Related documents: [../README.md](../README.md) (overview and quick start),
 [SCORING.md](SCORING.md) (how scores are computed), [ROADMAP.md](ROADMAP.md)
-(phases, status and decisions), [api.md](api.md) (API guide),
-[data-sources.md](data-sources.md) (school data decisions).
+(phases, status and decisions), [PLANNED.md](PLANNED.md) (backlog), [api.md](api.md)
+(API guide), [data-sources.md](data-sources.md) (data sources and licences).
 
 Diagrams are [Mermaid](https://mermaid.js.org/) and render on GitHub.
 
-**State as of 2026-10-04.**
+**State as of 2026-10-11.**
 
-- Production serves `v2-handtuned` (14 factors, 64,320 score rows; the Lambda runs
-  `SCORING_WEIGHTS_VERSION=v2-handtuned`). Cutover was 2026-10-03.
-- `v2.1-handtuned` (13 factors) is built. Migration 0009 is applied; the full
-  ingestion for its new columns is in progress, and the cutover waits for owner
-  approval.
-- Neighborhood names (migration 0008) are applied. Areas are capped at 0.8 sq mi
-  and there are 49,158 of them.
-- Chat ("Ask Benri", `POST /v1/chat`) is in progress; migration 0010 is not
-  applied yet.
-- Valhalla routing precompute and the v3 scoring model are planned, not built.
+- Production serves `v2.2-density` (13 factors, scored once per road-bounded area from
+  routed travel times on one absolute scale for the whole region; [SCORING.md](SCORING.md)
+  A10). Cutover was 2026-10-06. The `v2.1-handtuned` rows are kept as the rollback.
+- Migrations 0002 to 0023 are applied. The database is 292 MB of the 500 MB Supabase free
+  tier.
+- Production has 64,320 grid cells, 35,943 road-bounded areas (`areas_slim`) and the routed
+  travel tables for the whole region (`cell_travel`, `cell_graph`, `cell_hubs`,
+  `rail_matrix`).
+- The score file, the per-area score file and the vector tiles are served from Cloudflare R2.
+- Live: Ask Benri chat (it can set up the searched place, points of interest and their overlap
+  on the map), the MCP connector for Claude, travel-time overlap with points of interest, and
+  the Login and Pricing pages (UI only: no auth or payments yet).
+- Not applied: chat streaming infrastructure and the Cloudflare edge cache. Planned: scoring
+  v3, automating the monthly v2.2 refresh, auth and tiers.
 
 ## 1. Runtime: how a request is served
 
 ```mermaid
 flowchart LR
   user([Browser])
+  claude([Claude / MCP clients])
 
-  subgraph cf["Cloudflare (DNS only, no proxy)"]
-    dns["DNS records<br/>benrispace.com · www · api"]
+  subgraph cf["Cloudflare"]
+    dns["DNS records (DNS only)<br/>benrispace.com · www · api"]
+    r2[("R2 bucket benrispace-static<br/>tiles.benrispace.com<br/>manifest · score files · PMTiles")]
   end
 
   subgraph aws["AWS · us-east-1"]
     amp["Amplify Hosting<br/>Next.js 15 + TypeScript"]
-    apigw["API Gateway HTTP API<br/>api.benrispace.com · throttled"]
-    lam["Lambda: benrispace-api<br/>FastAPI + Mangum<br/>Python 3.12 · arm64"]
-    ssm[("SSM Parameter Store<br/>database URL · API keys · encrypted")]
+    apigw["API Gateway HTTP API<br/>api.benrispace.com<br/>10 rps · burst 20"]
+    lam["Lambda: benrispace-api<br/>FastAPI + Mangum<br/>Python 3.12 · arm64 · 512 MB"]
+    ssm[("SSM Parameter Store<br/>database URL · API keys")]
   end
 
-  pg[("Supabase Postgres + PostGIS<br/>session pooler")]
-  nom["OSM Nominatim<br/>address to lat/lon"]
-  liq["LocationIQ<br/>autocomplete · reverse"]
+  pg[("Supabase Postgres + PostGIS<br/>scores · areas · places · routing")]
+  liq["LocationIQ<br/>autocomplete · reverse · geocode"]
   photon["Photon<br/>keyless fallback"]
+  nom["OSM Nominatim<br/>geocode fallback"]
   llm["Anthropic Haiku 4.5<br/>explanations · chat"]
-  ors["openrouteservice<br/>matrix refinement"]
+  ors["openrouteservice<br/>optimizer refinement"]
 
   user -. "resolve" .-> dns
-  user -- "HTTPS · page" --> amp
-  user -- "HTTPS · /v1/* (CORS)" --> apigw
+  user -- "page" --> amp
+  user -- "static data (range requests)" --> r2
+  user -- "/v1/* (CORS)" --> apigw
+  claude -- "/mcp (JSON-RPC)" --> apigw
   apigw --> lam
   lam -- "cold start only" --> ssm
-  lam -- "read precomputed scores" --> pg
-  lam -- "free-text addresses" --> nom
-  lam -- "/suggest · /reverse" --> liq
-  lam -. "fallback" .-> photon
+  lam -- "read precomputed data" --> pg
+  lam -- "/suggest · /reverse · geocode" --> liq
+  lam -. "no key / failure" .-> photon
+  lam -. "geocode fallback" .-> nom
   lam -- "cached, budget-capped" --> llm
-  lam -- "best-effort, /optimize" --> ors
+  lam -- "best effort, /optimize" --> ors
 ```
+
+### Inside the Lambda
+
+- **Entry point.** `api/lambda_handler.py` resolves the database URL and the LocationIQ,
+  Anthropic and openrouteservice keys from SSM on a cold start, then wraps the FastAPI app
+  (`api/main.py`) with Mangum (`lifespan="off"`). A missing database URL fails the cold start
+  loudly; a missing optional key turns that feature off and the rest keeps working.
+- **Routes are thin.** Each handler in `api/main.py` calls a module that holds the logic;
+  request and response models are in `api/schemas.py` (camelCase on the wire) and match
+  `contracts/openapi.yaml`, from which the web app's TypeScript types are generated.
+- **Database connections.** `common/db.py`'s `api_connection()` keeps a small locked pool per
+  Lambda instance (`API_DB_POOL_SIZE`, default 4), because a new Supabase connection costs about
+  200 ms. Each request gets its own transaction; idle connections are pinged before reuse. On the
+  transaction pooler (port 6543) prepared statements are turned off.
+- **In-process caches** (5 minutes, about a warm instance's life): the area under a point and its
+  scores (`api/area_cache.py`), suggestion and reverse lookups (`api/suggest.py` TTL LRU), the
+  per-factor metro distributions (`api/metro_stats.py`, once per instance) and the score file
+  (`score_files` row, rebuilt only when missing).
+- **Runtime writes** are small: `feedback`, `chat_usage` (per-visitor daily chat cap), `llm_usage`
+  and `llm_cache` (LLM spend and cached replies) and `score_files`. Everything else is written by
+  offline jobs.
 
 ### API endpoints
 
-All under `/v1`, defined in `contracts/openapi.yaml` (the source of the web
-app's generated TypeScript types) and implemented in `api/main.py`. Full guide:
-[api.md](api.md).
+All under `/v1`, defined in `contracts/openapi.yaml` and implemented in `api/main.py`. Full
+guide: [api.md](api.md).
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /score` | Score for an address or coordinate (grid cell) |
-| `GET /score/{id}/explanation` | Explanation of a score (AI-written when possible, rule-based otherwise) |
-| `GET /area` | Score for the road-bounded area under a point (area-weighted average of its cells) |
-| `GET /area/explanation` | Grounded explanation for the area under a point |
-| `GET /suggest` | Address autocomplete (LocationIQ, Photon fallback) |
-| `GET /reverse` | Readable address for a clicked point |
-| `GET /places` | Named places (OSM POIs, NCES schools, transit stops) near a point |
-| `GET /improve` | Deterministic "what would raise this score" suggestions with named places |
-| `GET /similar` | Well-separated areas with a similar factor profile (SQL distance over z-scored factors) |
-| `GET /map/cells` | Composite score per map cell for a chosen set of factors and weights |
-| `GET /map/top` | Best, well-separated areas for the chosen factors (with neighborhood names) |
-| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) from the precomputed cell graph |
-| `POST /triangulate` | Best locations for several commute anchors: real isochrone intersection / union, with the polygons |
-| `POST /optimize` | Multi-destination optimizer: minimise weekly travel to work, a store brand, a gym... |
-| `POST /chat` | "Ask Benri", a tool-using Haiku assistant (in progress) |
-| `GET /map/scores` | The compact all-cells score file the browser scores from (see below) |
-| `POST /chat/stream` | The same chat as server-sent events (`status` frames, then one `reply` or `error`) |
+| Endpoint | Purpose | Module |
+| --- | --- | --- |
+| `GET /score` | Score for an address or coordinate (grid cell; `?precision=point` scores the exact spot) | `lookup.py`, `point_score.py` |
+| `GET /score/{id}/explanation` | Explanation of a score (AI-written when possible, rule-based otherwise) | `explain.py`, `ai_explain.py` |
+| `GET /area` | Score for the road-bounded area under a point | `slim_areas.py`, `area_scores.py`, `area_cache.py` |
+| `GET /area/explanation` | Grounded explanation for the area under a point | `ai_explain.py` |
+| `GET /suggest` | Address autocomplete (LocationIQ, Photon fallback) | `suggest.py` |
+| `GET /reverse` | Readable address for a clicked point | `reverse.py` |
+| `GET /places` | Named places (OSM POIs, NCES schools, transit stops) near a point | `places.py` |
+| `GET /improve` | "What would raise this score" suggestions with named places | `improve.py` |
+| `GET /similar` | Well-separated areas with a similar factor profile | `similar.py`, `metro_stats.py` |
+| `GET /map/cells` | Composite score per map cell for chosen factors and weights | `mapdata.py` |
+| `GET /map/top` | Best, well-separated areas for the chosen factors, with names | `mapdata.py` |
+| `GET /map/scores` | The compact all-cells score file the browser scores from | `scorefile.py` |
+| `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, train) | `isochrone.py`, `reach.py`, `routing_data.py` |
+| `POST /triangulate` | Best places inside the overlap (or union) of several anchors' travel-time areas | `triangulate.py`, `isochrone.py` |
+| `POST /optimize` | Multi-destination optimizer: minimise weekly travel to work, a store brand, a gym... | `optimize.py` |
+| `POST /chat` | "Ask Benri", a tool-using Haiku assistant; may return a map `plan` | `chat.py` |
+| `POST /chat/stream` | The same chat as server-sent events (`status` frames, then `reply` or `error`) | `chat.py`, `stream_server.py` |
+| `GET /sources` | Data sources and their last ingestion runs | `sources.py` |
+| `POST /feedback` | Thumbs up/down and comments from the web app | `feedback.py` |
+| `POST /mcp` (also `/v1/mcp`) | MCP connector: Claude calls BenriSpace's tools over JSON-RPC | `mcp.py` |
 
 Behavior worth knowing:
 
-- **Click-to-polygon.** `/area` finds the road-bounded polygon containing the
-  point (`areas` + `area_cells`) and returns the area-weighted average of the
-  overlapping cells' latest scores. It returns 404 when no polygon fits (over
-  0.8 sq mi or 1.4 mi across, or none contains the point), and the web app then
-  falls back to the single cell rectangle.
-- **Point precision (experimental).** `?precision=point` on `/score` and `/area` scores
-  the exact location on demand: one pipelined round trip (cell row plus one PostGIS
-  statement over `places`), normalized with per-metro factor scales (`score_scales`,
-  migration 0013, or computed once per Lambda instance). Falls back to the grid score on
-  any error. See [SCORING.md](SCORING.md) A8.
-- **Serving version.** Score reads prefer the Lambda's `SCORING_WEIGHTS_VERSION`.
-  The code default is `v2-handtuned`; production sets it through the Terraform
-  variable `scoring_weights_version`. Roll back by setting it to
-  `v1-handtuned` and applying.
-- **Neighborhood names.** `geo_entities.neighborhood` and `areas.neighborhood`
-  (migration 0008); the API tolerates the columns being absent (the name is then
-  null).
-- **Isochrones and triangulate** run on the precomputed cell graph (section 6): Dijkstra in
-  pure Python over `cell_graph` rows, polygon traced from the reached cells. With no routing
-  data for an area they fall back to the straight-line circle.
-- **Optimize** estimates minutes (straight line x 1.3 / mode speed) for every
-  candidate cell, then refines the best candidates with openrouteservice for
-  walk and drive (`common/ors.py`, best-effort, free tier). Transit stays an
-  estimate.
-- **Not on the request path:** scoring and ingestion. Requests read `scores`,
-  `areas`, `area_cells`, `places` and the caches.
+- **Serving version.** Score reads use the Lambda's `SCORING_WEIGHTS_VERSION`, set by the
+  Terraform variable `scoring_weights_version` (default `v2.2-density`). Roll back by setting it
+  to `v2.1-handtuned` and republishing the v2.1 static files.
+- **Click-to-polygon.** `/area` finds the smallest `areas_slim` polygon containing the point
+  (`ST_Contains` on a GiST index; a point on a road snaps to the nearest polygon within 40 m).
+  For a density version it returns the stored `area_scores` row (migration 0023); for older
+  versions it scores sample points on demand. It returns 404 when no polygon fits, and the web
+  app then falls back to the grid cell.
+- **Point precision.** `?precision=point` on `/score` scores the exact location on demand: one
+  pipelined round trip (cell row plus one PostGIS statement over `places`), normalized with
+  per-metro factor scales (`score_scales`). Falls back to the grid score on any error. The web
+  app builds with `NEXT_PUBLIC_SCORE_PRECISION=point`. See [SCORING.md](SCORING.md) A8.
+- **Isochrones and triangulate** run on the precomputed cell graph (section 6): Dijkstra in pure
+  Python over the `cell_graph` rows around the origin, the polygon traced from the reached cells.
+  `intersect` and `union` are exact set operations on those cells, and the ranking reads the
+  scores inside. An anchor with no routing data falls back to a straight-line circle
+  (`method: "estimate"`).
+- **Optimize** seeds with a geometric median, prunes with exact lower bounds, reads stored times
+  (`cell_travel`, `cell_hubs`, `rail_matrix`) and refines the survivors with openrouteservice for
+  walk and drive (`common/ors.py`, best effort). Estimates (straight line x 1.3 / mode speed) are
+  the fallback.
+- **Chat plans.** When `optimize_location` anchors on an address and brands or categories, the
+  chat response carries a `plan` (the address as the searched place, up to two stops as points
+  of interest). The web app hydrates them and shows the overlap. The MCP connector strips the
+  plan, since it is web-only.
+- **Not on the request path:** scoring, ingestion and routing precompute.
 
-### The web app: local scoring, vector tiles, compare, streaming chat
+### The web app
 
-- **Scoring in the browser.** The app downloads `GET /map/scores` once
-  (`web/src/lib/scores/`): every cell's 13 sub-scores as bytes. The overall score
-  is a weighted average, so the browser recomputes it exactly for any filter or
-  importance change (`compositeAll`), recolours the map and ranks areas with no
-  API call. While the file loads, or if it fails, the API endpoints answer as
-  before.
-- **Best areas, locally.** `localTop` (`lib/scores/topk.ts`) builds a max-heap of
-  the cells in view (O(n)), pops the best, and checks the 1-mile spacing against
-  the chosen cells in the 3 x 3 neighbouring squares of a grid hash, so selection
-  is O(n + k log n) rather than a sort plus pairwise distances. The only API
-  call left is for neighbourhood names, and it is made only when a ranked cell has
-  not been named yet (`useMapData`); names are remembered per geohash.
-- **Vector tiles (opt-in).** `scripts/build_tiles.py` turns the cell grid and the
-  `areas_slim` polygons into one PMTiles file with tippecanoe (Docker, image from
-  `scripts/tiles/Dockerfile`): layers `parents` (geohash-5, z5-9), `cells`
-  (geohash-6, z10-13) and `areas` (z9-13), carrying geometry and ids only (`g` is
-  the geohash). About 10 MB for 64,320 cells. With `NEXT_PUBLIC_PMTILES_URL` set at
-  build time the map draws that archive (HTTP range requests, no tile server) and
-  joins it to the score file by `g` through MapLibre feature-state
-  (`components/map/usePmtilesCells.ts`): a filter change updates only the cells
-  whose score moved. If a tile request fails the map falls back to GeoJSON cells.
-  Unset (the default), nothing changes and the `pmtiles` library is not loaded.
-  The archive is served from R2 (next section); the web app finds it through
-  `manifest.json` (`NEXT_PUBLIC_STATIC_URL`). Rebuild the tiles only when the grid
-  or area polygons change, not when scores do. Tiles read the FULL-detail polygons
-  from the local build table; production Postgres keeps only simplified outlines.
-- **Static files on R2 (opt-in, `NEXT_PUBLIC_STATIC_URL`).** When set (for example
-  `https://tiles.benrispace.com`, same CORS and CSP rules as the tiles URL), the app
-  fetches `manifest.json` once per page (4 s timeout, `web/src/lib/static/manifest.ts`)
-  and uses what it lists, each piece independently: `scores` (the same bytes as
-  `GET /map/scores`, so `decodeScoreMatrix` is reused; `loadScoreMatrix` tries R2 first),
-  `areaScores` (every road-bounded area's 13 sub-scores, centre, neighbourhood and metro,
-  decoded by `lib/static/areaScores.ts`, binary-searched by area id) and `tiles` (the
-  PMTiles archive; `NEXT_PUBLIC_PMTILES_URL` still wins when set). A missing manifest or
-  piece, a network or CORS error, or a decode error silently means "ask the API as
-  before"; with the variable unset nothing changes. Two things use the area file: a map
-  click that lands in exactly one area (an invisible `areas` fill layer in the tiles is
-  queried) shows that area's sub-scores and its overall score, computed with the same
-  `cellComposite` as the cells for the selected filters, while `GET /area` loads, and the
-  API's answer then replaces them; and similar areas are computed in the browser
-  (`lib/static/similar.ts`, mirroring `api/similar.py`: same metro, per-metro z-scores,
-  L2 over the 13 factors, overfetch then re-rank on selected factors, spread-out) with the
-  API as fallback. Candidates are areas where the API's are grid cells, so ranks can
-  differ slightly; the response shape is identical.
-- **Compare places.** Pin 2-4 places (`useCompare`, kept in `sessionStorage`);
-  `CompareDrawer` shows factor rings side by side, marks the best value in each
-  row, shows how many points each place trails the best, and lists the three
-  factors where the places differ most (`lib/compare.ts`).
-- **Chat streaming.** `POST /chat/stream` runs the same tool loop (`run_chat`
-  takes an optional `on_event` callback) and emits `status` frames ("Searching
-  areas") while it works, then the validated reply. The reply text is not sent
-  token by token: it is checked against the tool output first, and unvalidated
-  tokens could show claims the check later replaces. The web client
-  (`createApiClient({ chatStreamUrl })`) uses the stream only when
-  `NEXT_PUBLIC_CHAT_STREAM_URL` is set and falls back to plain `/chat` when the
-  stream is missing, not an event stream, or ends without a reply (a rate-limit or
-  validation error is shown, not retried). API Gateway buffers responses, so the
-  frames only arrive live through a Lambda function URL in `RESPONSE_STREAM`
-  mode. `infra/chat_stream.tf` defines that second function (same zip, uvicorn
-  behind the AWS Lambda Web Adapter via `api/run_stream.sh` and
-  `api/stream_server.py`); it is off (`chat_stream_enabled = false`) and not
-  applied. Owner steps: remove `uvicorn` from `EXCLUDED_DEPENDENCIES` in
-  `scripts/build_lambda.sh`, set `chat_stream_enabled = true` and
-  `chat_stream_adapter_layer_arn`, apply, then set `NEXT_PUBLIC_CHAT_STREAM_URL`
-  to the `chat_stream_url` output plus `v1/chat/stream`. The function URL is
-  public and shares the per-visitor daily limit and monthly budget with `/chat`.
+`web/` is Next.js 15 (App Router) with React 19, TypeScript, CSS modules and MapLibre GL.
+Pages: `/` (Home), `/app` (the workspace), `/map`, `/data` (sources), `/docs` (API docs),
+`/settings`, `/pricing` and `/login`. Pricing and Login are UI only.
+
+- **Workspace.** `components/Workspace.tsx` holds the search box, score card, map and the
+  phone bottom sheet. The searched place's travel toggle sits inside the search box
+  (`MainTravel`, state in `hooks/useMainTravel.ts`); each point of interest has its own
+  (`TripPlanner`, `hooks/useTripPlanner.ts`). Toggles show the mode icon with the minutes in a
+  small badge (`TravelBadge`).
+- **Travel-time overlap.** Points of interest (work, a gym, family) each get a travel-time area
+  from `POST /triangulate`, and the best areas are ranked inside the overlap. Once per new set of
+  places, `tuneTravel` (`lib/travel.ts`) picks one mode and the fewest minutes for the areas to
+  overlap (walk when close, train in dense places, otherwise drive) and widens up to two steps
+  (`widerTravel`) if the overlap is empty and the user has not changed anything.
+- **Map focus.** The map flies to a single pin, or fits all pins, when a pin is clicked, an
+  address is scored, a point of interest is added, or an overlap, best or similar area is picked.
+  With an overlap pick open, a map tap clears the pick instead of moving the searched place.
+- **Scoring in the browser.** The app downloads the score file once (`lib/scores/`): every
+  cell's 13 sub-scores as bytes. The overall score is a weighted average, so the browser
+  recomputes it for any filter or importance change, recolours the map and ranks areas with no
+  API call. `localTop` (`lib/scores/topk.ts`) picks well-separated best areas with a max-heap and
+  a grid hash. Names come from the API only for cells not yet named.
+- **Static files from R2** (`NEXT_PUBLIC_STATIC_URL`, `lib/static/`): `manifest.json` lists the
+  score file, the per-area score file and the PMTiles archive. Each piece is optional, and any
+  failure means "ask the API as before". The area file gives instant area scores on a click
+  (replaced by `GET /area` when it answers) and browser-side similar areas (`lib/static/similar.ts`,
+  mirroring `api/similar.py`).
+- **Vector tiles.** The cell grid and area polygons are drawn from one PMTiles file
+  (`scripts/build_tiles.py`, tippecanoe in Docker): layers `parents` (geohash-5, z5-9), `cells`
+  (geohash-6, z10-13) and `areas` (z9-13), geometry and ids only. Scores join by geohash through
+  MapLibre feature-state (`components/map/usePmtilesCells.ts`). GeoJSON cells are the fallback.
+- **Compare places.** Pin 2-4 places (`useCompare`, `sessionStorage`); `CompareDrawer` shows
+  them side by side with the biggest differences.
+- **Chat.** Ask Benri (`components/chat/ChatPanel.tsx`) loads lazily, offers starter questions
+  built from the selected factors and trip context, and passes any returned `plan` to the
+  workspace (`applyChatPlan`). Streaming is used only when `NEXT_PUBLIC_CHAT_STREAM_URL` is set.
+
+### Chat streaming (built, not applied)
+
+API Gateway buffers responses, so `POST /chat/stream` frames only arrive live through a Lambda
+function URL in `RESPONSE_STREAM` mode. `infra/chat_stream.tf` defines that second function (same
+zip, uvicorn behind the AWS Lambda Web Adapter via `api/run_stream.sh` and `api/stream_server.py`).
+It is off (`chat_stream_enabled = false`). The reply itself is never streamed token by token: it is
+checked against the tool output first. Owner steps: remove `uvicorn` from `EXCLUDED_DEPENDENCIES`
+in `scripts/build_lambda.sh`, set `chat_stream_enabled = true` and
+`chat_stream_adapter_layer_arn`, apply, then set `NEXT_PUBLIC_CHAT_STREAM_URL` to the
+`chat_stream_url` output plus `v1/chat/stream`. The function URL shares the per-visitor daily
+limit and monthly budget with `/chat`.
 
 ### Static files on R2 (`benrispace-static`)
 
 Static data is served from a private Cloudflare R2 bucket behind
-`https://tiles.benrispace.com` (web env `NEXT_PUBLIC_STATIC_URL`), so the browser does not
-call the API for it. Everything is content-addressed and immutable except the manifest:
+`https://tiles.benrispace.com`, so the browser does not call the API for it. Everything is
+content-addressed and immutable except the manifest:
 
 | Key | Content | Headers |
 | --- | --- | --- |
@@ -204,10 +217,10 @@ call the API for it. Everything is content-addressed and immutable except the ma
 `sha12` is the first 12 hex characters of the SHA-256 of the UNCOMPRESSED bytes. The manifest:
 
 ```json
-{"format": 1, "weightsVersion": "v2.1-handtuned", "generatedAt": "2026-10-05T16:00:00+00:00",
- "scores":     {"path": "scores/v2.1-handtuned.<sha12>.bin", "bytes": 1234567, "sha256": "<hex>"},
- "areaScores": {"path": "areas/v2.1-handtuned.<sha12>.bin",  "bytes": 1234567, "sha256": "<hex>"},
- "tiles":      {"path": "tiles/benrispace.<sha12>.pmtiles",  "bytes": 1234567, "sha256": "<hex>"}}
+{"format": 1, "weightsVersion": "v2.2-density", "generatedAt": "2026-10-06T16:00:00+00:00",
+ "scores":     {"path": "scores/v2.2-density.<sha12>.bin", "bytes": 1234567, "sha256": "<hex>"},
+ "areaScores": {"path": "areas/v2.2-density.<sha12>.bin",  "bytes": 1234567, "sha256": "<hex>"},
+ "tiles":      {"path": "tiles/benrispace.<sha12>.pmtiles", "bytes": 1234567, "sha256": "<hex>"}}
 ```
 
 Any of the three may be absent; paths are relative to the manifest; `bytes` is the
@@ -220,13 +233,12 @@ spaces so `4 + header_length` is a multiple of 4: `{"format":1,"kind":"areaScore
 `N*4` uint32 area ids (ascending), `N*4` int32 centroid latitude x 1e5, `N*4` int32 centroid
 longitude x 1e5, `N*2` uint16 index into `names` (65535 = none), `N*1` uint8 index into
 `metros` (255 = none), `N*13` uint8 sub-scores area-major (0-100, 255 = none). Trailing
-bytes are ignored. The scores are what `GET /area?precision=point` returns for the area
-(`scripts/build_area_scores.py`: the same sample points, `score_points_cells` and
-`area_aggregate_from_points`); the centroid is `ST_PointOnSurface` of the area polygon.
-Areas outside every scored cell's reach have all 255.
+bytes are ignored. For `v2.2-density` the scores are the `area_scores` rows; for older versions
+they are what `GET /area?precision=point` returns (`scripts/build_area_scores.py`). The
+centroid is `ST_PointOnSurface` of the area polygon.
 
-Scores are published by CI after the scoring job (`ingestion.yml`, `--scores-only`). Area
-scores and tiles need the local areas database and are a manual step for now.
+The weekly ingestion job republishes the score file (`--scores-only`). The v2.2 score and area
+files and the tiles are published by hand (section 2).
 
 #### Runbook: R2 static files
 
@@ -237,11 +249,11 @@ come from `.env`; the build only reads production. Run from the repo root with t
 # once: CORS (GET/HEAD, Range, the site origins and localhost:3000)
 python scripts/publish_static.py --setup-bucket
 
-# area scores (about an hour; resumable from build/area_scores.<version>.jsonl)
-export PATH=$HOME/.local/bin:$HOME/.local/opt/lima/bin:$PATH; colima start; docker start benri-postgis
-python scripts/build_area_scores.py            # AREAS_DATABASE_URL defaults to the local Docker DB
+# v2.2: score and area files straight from the database
+python scripts/publish_static.py --weights-version v2.2-density
 
 # tiles (needs the local DB to hold scored cells and areas_slim, and Docker)
+export PATH=$HOME/.local/bin:$PATH; colima start; docker start benri-postgis
 python scripts/build_tiles.py --out build/tiles
 
 # publish: plan first, then for real; the manifest is uploaded last
@@ -256,9 +268,7 @@ python scripts/publish_static.py --prune --yes
 
 Uploads only happen for keys `head_object` reports missing, so reruns are cheap. To check a
 publish, fetch `manifest.json` and one file with boto3 and decode it (`api.areafile.decode`,
-or the decoder in `docs/api.md` for scores). Owner steps to go live: attach the custom
-domain `tiles.benrispace.com` to the bucket in Cloudflare, set `NEXT_PUBLIC_STATIC_URL` in
-Amplify and redeploy.
+or the decoder in `docs/api.md` for scores).
 
 #### Simplified polygons in Postgres
 
@@ -266,100 +276,120 @@ Production `areas_slim` holds simplified outlines only (Douglas-Peucker at 3e-5 
 3 m, snapped to a 1e-5 degree grid, made valid); the PMTiles carry the full detail. The local
 build table keeps the 1e-5 degree geometry that the tiles read. Copy with
 `python scripts/copy_areas_slim.py --target-url <url>` (`--dry-run` measures only; the target
-is never taken from `DATABASE_URL`). Measured on the local 35,943 areas: vertices 1,448,855 to
-1,059,776 (-27 percent), geometry bytes 24.9 MB to 18.7 MB, table with a fresh index 28 MB
-(the build table's own index is bloated by its inserts: 86 MB total), and 2,946 of 2,946
-random point-in-polygon lookups returned the same area id.
+is never taken from `DATABASE_URL`). Measured on the 35,943 areas: vertices 1,448,855 to
+1,059,776 (-27 percent), geometry 24.9 MB to 18.7 MB, and 2,946 of 2,946 random
+point-in-polygon lookups returned the same area id.
 
 ## 2. Data pipeline: how scores are produced
 
+Two pipelines feed production: a **weekly** GitHub Actions job that refreshes the raw data,
+and a **monthly, local** job that computes the routed travel tables and the v2.2 scores.
+
 ```mermaid
 flowchart LR
-  cron(["GitHub Actions<br/>weekly cron · Mon 06:00 UTC"])
-  grid["grid<br/>64,320 geohash6 cells"]
+  cron(["GitHub Actions<br/>weekly · Mon 06:00 UTC"])
+  grid["ingestion.grid<br/>64,320 geohash6 cells"]
+  dens["ingestion.density<br/>Census 2020 people / sq mi<br/>travel mode per cell"]
 
   subgraph jobs["Ingestion jobs · one at a time · one source query per metro area"]
     air["airports"]
-    sch["schools<br/>NCES + EDFacts ratings"]
-    gtfs["gtfs_transit<br/>MTA · LIRR · Metro-North · PATH · NJ Transit<br/>+ OSM transit stops"]
-    poi["osm_poi<br/>groceries · gyms · cafes · restaurants · bars<br/>gas · convenience · brands"]
-    retail["osm_retail_parks<br/>shopping · parks (v2.1)"]
-    nb["neighborhoods<br/>names from Census + OSM"]
-    roads["roads<br/>traffic · noise corridor · facilities"]
-    trails["trails<br/>OSM running trails"]
+    sch["schools<br/>NCES + EDFacts"]
+    gtfs["gtfs_transit<br/>MTA · LIRR · Metro-North · PATH · NJ Transit<br/>+ OSM stops"]
+    poi["osm_poi"]
+    retail["osm_retail_parks"]
+    nb["neighborhoods"]
+    roads["roads"]
+    trails["trails"]
   end
 
-  fs[("feature_store<br/>raw counts + distances")]
+  fs[("feature_store<br/>raw counts + distances (imperial)")]
   places[("places<br/>named amenities")]
-  score["scoring.run<br/>normalize per metro<br/>weighted composite"]
-  scores[("scores<br/>versioned by weights_version")]
-  log[("ingestion_runs")]
-  abuild["ingestion.areas.build<br/>manual, not in the cron"]
-  areas[("areas + area_cells<br/>49,158 areas")]
+  srun["scoring.run<br/>v2.1 per-metro scales"]
+  sfile["api.scorefile +<br/>publish_static --scores-only"]
 
-  cron --> grid --> jobs --> fs --> score --> scores --> emb
+  subgraph monthly["Monthly, on the owner's machine (local Docker Postgres)"]
+    pbf["ingestion.routing.pbf<br/>Geofabrik NY · NJ · CT extracts<br/>walk + drive networks"]
+    rrun["ingestion.routing.run<br/>cell_travel · cell_graph · hubs · rail"]
+    reach["ingestion.routing.reach<br/>routed reach per area"]
+    arun["scoring.area_run --write<br/>v2.2-density"]
+    pub["publish_static.py<br/>--weights-version v2.2-density"]
+    abuild["ingestion.areas.build<br/>road-bounded areas (rare)"]
+  end
+
+  scores[("scores · area_scores")]
+  routing[("routing tables")]
+  areas[("areas_slim")]
+  r2[("R2 static files")]
+  log[("ingestion_runs")]
+
+  cron --> grid --> dens --> jobs
+  jobs --> fs --> srun --> scores --> sfile --> r2
   jobs --> places
   jobs -.-> log
-  abuild --> areas
-  areas -. "area-weighted avg of cell scores at request time" .-> scores
+  pbf --> rrun -- "scripts/copy_routing.py" --> routing
+  pbf --> reach --> arun --> scores
+  places -- "reach --sync-places" --> reach
+  areas --> reach
+  arun --> pub --> r2
+  abuild -- "scripts/copy_areas_slim.py" --> areas
 ```
 
-- The weekly workflow (`.github/workflows/ingestion.yml`) runs the grid, then
-  the sources one after another (airports, schools, gtfs_transit, osm_poi,
-  osm_retail_parks, neighborhoods, roads, trails), then `scoring.run` and
-  `api.scorefile` (persists the compact score file). It runs sequentially because every job updates different
-  columns of the same `feature_store` rows and a job's transaction holds those
-  row locks until commit; in parallel they hit Postgres' 2-minute
-  `statement_timeout`. Scoring runs even if one source failed (stale values
-  persist; the red job still surfaces the failure). The `schools` job needs the
-  `.[schools]` pip extra (shapely, pyshp).
-- **Each job queries a source once per metro area** and computes per-cell results
-  locally, never one request per cell. The shared Overpass client retries a fast
-  502/503/504 with backoff and lets a slow one reach the bbox-splitting that
-  roads, trails, osm_poi and osm_transit use.
-- **Jobs degrade independently**: an Overpass timeout fails one job and its
-  `ingestion_runs` row, not the pipeline. Strava is not configured, so the route
-  popularity signal comes from mapped OSM trails alone.
-- **Writes** go through one shared DB layer (`common/db.py`) that wraps every
-  connection in psycopg3 pipeline mode (this dropped airport ingestion from more
-  than 3 minutes and zero rows to 5.9 s for all 64,320 rows). Bookkeeping writes
-  use a separate connection so a failure can always be recorded.
-- **Transit coverage.** MTA, LIRR, Metro-North, PATH (public Trillium feed) and
-  NJ Transit (open official rail and bus downloads, no key or account) are
-  separate per-agency jobs inside `gtfs_transit`. `ingestion/osm_transit.py`
-  adds OpenStreetMap stops as a pseudo-agency to fill gaps (CT, Westchester and
-  Long Island buses, areas near PATH).
-- **Schools.** NCES EDGE locations for NY/NJ/CT plus EDFacts district
-  proficiency (2018) from the Urban Institute Education Data Portal, converted to
-  within-state percentiles. See [data-sources.md](data-sources.md).
-- **Trails lessons.** An early tag selection captured ordinary sidewalks
-  (`highway=footway` without excluding `footway=sidewalk|crossing`); excluding
-  them server-side cut NYC from 1,173,871 to 326,522 segments. Bucket-index
-  lookups expand rings instead of falling back to a brute-force scan (the
-  fallback took 921 s for 4,029 cells).
-- **Areas** are rebuilt by hand (`python -m ingestion.areas.build --source region
-  --write`; Overpass tiles are cached, fetching needs `--allow-network`). They
-  are a face of the network of secondary-and-above roads closed at the coast,
-  cut to the limits in `ingestion/areas/limits.py`: at most 0.8 sq mi and 1.4 mi
-  across, about 0.75 mi tile cuts, slivers under 0.02 sq mi merged into a
-  neighbour when the caps allow. Apply migration 0006 before `--write`. Product
-  rule: "your 10-minute radius dictates your life", so an area is about a
-  square mile at most. Secondary roads and above are hard barriers (owner
-  decision).
-- **Neighborhood names** (`ingestion/neighborhoods.py`): Census TIGER/Line county
-  subdivisions say which town a point is in (a label never crosses a river or
-  state line); OSM `place=neighbourhood|suburb|quarter` nodes supply the
-  names, giving labels like "Park Slope, Brooklyn" or "Montclair, NJ".
-- **Places** (`places` table): one row per named amenity (OSM POIs, NCES schools,
-  GTFS stops). Each job owns its `source` and replaces it wholesale. Powers
-  `/places` and `/improve`.
-- **Similar areas**: `/similar` computes, in SQL, the L2 distance between per-metro
-  z-scored factor scores over the target's metro (one scan of about 25,000 rows, tens of
-  milliseconds), spread out geographically and re-ranked on the selected factors. No
-  embedding column or vector index is stored (the HNSW index alone was 46 MB).
-- Scores are relative within each metro cohort in v1/v2/v2.1, and area scores are
-  averages of about 0.6 x 0.4 mi cells, so small areas share similar scores
-  until per-polygon scoring exists.
+### Weekly (`.github/workflows/ingestion.yml`)
+
+- Runs the grid, `ingestion.density`, then the sources one after another (airports, schools,
+  gtfs_transit, osm_poi, osm_retail_parks, neighborhoods, roads, trails), then `scoring.run`,
+  `api.scorefile` and `publish_static.py --scores-only`. Jobs run sequentially because every job
+  updates different columns of the same `feature_store` rows and holds those row locks until
+  commit; in parallel they hit Postgres' 2-minute `statement_timeout`. Scoring runs even if one
+  source failed (stale values persist; the red job still surfaces the failure).
+- `scoring.run` writes the version named by the repository variable `SCORING_WEIGHTS_VERSION`.
+  A density version (`v2.2-density`) is skipped there: the job only re-stores and republishes its
+  score file from `scores`.
+- `road_segments` is no longer loaded weekly (97 MB, unread); run `python -m
+  ingestion.road_segments` by hand when the frontage-noise factor needs it.
+- **Each job queries a source once per metro area** and computes per-cell results locally,
+  never one request per cell. The shared Overpass client (`common/overpass.py`) retries fast
+  502/503/504s with backoff and splits slow bounding boxes.
+- **Jobs degrade independently**: an Overpass timeout fails one job and its `ingestion_runs`
+  row, not the pipeline.
+- **Writes** go through `common/db.py`, which uses psycopg 3 pipeline mode for bulk writes;
+  bookkeeping writes use a separate connection so a failure can always be recorded.
+- **Transit coverage.** MTA, LIRR, Metro-North, PATH and NJ Transit (open rail and bus feeds)
+  are separate per-agency jobs in `gtfs_transit`; `ingestion/osm_transit.py` adds
+  OpenStreetMap stops for the gaps (CT, Westchester and Long Island buses).
+- **Schools.** NCES EDGE locations plus EDFacts district proficiency, converted to within-state
+  percentiles. See [data-sources.md](data-sources.md).
+- **Places** (`places` table): one row per named amenity. Each job owns its `source` and
+  replaces it wholesale. Powers `/places`, `/improve`, chat brand lookups and point scoring.
+- **Neighborhood names** (`ingestion/neighborhoods.py`): Census TIGER/Line county subdivisions
+  say which town a point is in; OSM `place=neighbourhood|suburb|quarter` nodes supply names
+  ("Park Slope, Brooklyn", "Montclair, NJ").
+
+### Monthly (local, by hand)
+
+v2.2 and the routed tables are not recomputed by the weekly job. About monthly:
+
+```bash
+python -m ingestion.routing.reach --sync-places   # copy production places locally, then reach
+python -m scoring.area_run --write                # area_scores + scores for v2.2-density
+python scripts/publish_static.py --weights-version v2.2-density
+```
+
+Road networks (`build/routing`, built from `build/osm` Geofabrik extracts by `python -m
+ingestion.routing.pbf`) are reused for months. The routed tables are computed into the LOCAL
+database (`python -m ingestion.routing.run --all --networks build/routing --steps
+amenity,graph,hubs`) and copied with `scripts/copy_routing.py --target-url <prod>`. Never point
+these jobs at production through `DATABASE_URL` unless a write is intended. Automating this is
+the next planned piece of pipeline work ([PLANNED.md](PLANNED.md)).
+
+### Areas
+
+Road-bounded areas are rebuilt rarely, by hand (`python -m ingestion.areas.build --source
+region --write`; Overpass tiles are cached, fetching needs `--allow-network`). They follow the
+road hierarchy with density caps (about 0.1 to 1 sq mi, smaller where people are denser);
+a remainder with no fitting road is cut by the next road class down, then by tiles. Production
+holds 35,943 of them, simplified, in `areas_slim`. Product rule: "your 10-minute radius dictates
+your life", so an area is about a square mile at most.
 
 ## 3. Data model
 
@@ -367,103 +397,123 @@ flowchart LR
 erDiagram
   geo_entities ||--o| feature_store : "one row per cell"
   geo_entities ||--o{ scores : "one per weights_version"
-  areas ||--o{ area_cells : "overlaps"
-  geo_entities ||--o{ area_cells : "geohash"
+  geo_entities ||--o| cell_travel : "geohash"
+  geo_entities ||--o{ cell_graph : "geohash, per mode"
+  geo_entities ||--o{ cell_hubs : "geohash, per hub kind"
+  routing_hubs ||--o| rail_matrix : "rail station rows"
+  areas_slim ||--o{ area_scores : "one per density version"
 
   geo_entities {
     uuid id PK
     text geohash UK "geohash6 grid cell"
     float latitude
     float longitude
-    text formatted_address "nullable"
     text metro_area "nyc, long_island, westchester, ..."
-    text neighborhood "0008"
-    geometry geom "0012 Point 4326, generated from lat/lon, GiST"
+    text neighborhood
   }
   feature_store {
-    uuid geo_entity_id PK, FK
-    int grocery_count_500m
-    numeric grocery_nearest_m
-    numeric premium_retail_raw
-    numeric emergency_corridor_facility_raw
-    numeric school_district_rating "state percentile"
-    int transit_stop_count_800m
-    jsonb transit_agencies
-    numeric congestion_proxy_raw
-    text street_orientation
-    numeric airport_drive_time_min
-    numeric shopping_raw "0009, v2.1"
-    float pop_density_per_sq_mi "0012, Census 2020 area-weighted"
-    text travel_mode "0012, drive below 10000 else walk"
-    numeric strava_segment_popularity_raw "null = not measured"
+    uuid geo_entity_id PK
+    real grocery_nearest_ft "imperial (0020/0021)"
+    smallint grocery_count_1600ft
+    real school_district_rating "state percentile"
+    real pop_density_per_sq_mi "Census 2020"
+    text travel_mode "drive below 10,000 / sq mi, else walk"
   }
   scores {
-    uuid id PK
-    uuid geo_entity_id FK
-    text weights_version "v1-handtuned, v2-handtuned, v2.1-handtuned"
-    smallint grocery_score "0-100 whole points, higher is better (0017)"
-    numeric school_proximity_score "informational"
-    numeric composite_score
+    uuid geo_entity_id PK
+    text weights_version PK "v2.1-handtuned, v2.2-density"
+    smallint grocery_score "0-100, one per factor"
+    real composite_score
     timestamptz computed_at
   }
-  areas {
+  areas_slim {
     int id PK
-    text build_version "e.g. areas-v1-2026-10"
-    float area_sq_m
-    float extent_m "0006"
-    float compactness "0006"
-    jsonb geometry "GeoJSON, lon/lat"
+    geometry geom "simplified MultiPolygon 4326, GiST"
+    real area_sq_mi
     text_array bounded_by "road names"
-    text neighborhood "0008"
-    geometry geom "0012 MultiPolygon 4326, GiST"
+    text neighborhood
+    text metro_area
   }
-  area_cells {
-    int area_id PK, FK
+  area_scores {
+    int area_id PK
+    text weights_version PK
+    smallint grocery_score "0-100, one per factor"
+    real composite_score
+  }
+  cell_travel {
     text geohash PK
-    float overlap_sq_m
+    text mode "walk, drive"
+    smallint_array minutes_dm "deci-minutes to nearest places per category"
+  }
+  cell_graph {
+    text geohash PK
+    text mode PK "walk, drive"
+    smallint_array edges_dm "deci-minutes to 8 neighbours"
+  }
+  cell_hubs {
+    text geohash PK
+    text kind PK "airport, rail"
+    int_array hub_ids
+    smallint_array minutes_dm
+  }
+  routing_hubs {
+    int id PK
+    text kind "airport, rail"
+    text code
+    text name
+  }
+  rail_matrix {
+    int origin_id PK
+    smallint_array minutes_dm "ride minutes to every station"
+  }
+  places {
+    bigint id PK
+    text source "osm, nces, gtfs:agency"
+    text category
+    text name
+    text brand "trigram index on name and brand"
+    geometry geom "Point 4326, GiST"
   }
 ```
 
-Other tables: `ingestion_runs` (per-job status log: source, status, rows
-affected, error), `places` (named amenities, 0004), `llm_cache` and `llm_usage`
-(0005), `chat_usage` (0010), and `road_segments` (0012, not applied: `osm_id`, `highway`, `name`, `is_emergency_route`, `geom` LineString 4326 with a GiST index; major roads and mainline rail). `places.geom` (Point 4326, GiST) is added by 0012 too. The geometry columns are not used by any API query yet.
-
-`feature_store` has dozens of raw columns; only a representative set is shown. A
-`null` raw value always means "not measured yet", never "zero".
-`area_cells.geohash` is a plain text join to `geo_entities.geohash`, not a
-foreign key. `contracts/schema.sql` is the full schema for a fresh database; each
-migration is mirrored into it.
+Other tables: `ingestion_runs` (per-job status log), `routing_meta` (array layouts),
+`routing_hubs` (airports and rail stations), `score_scales` (per-metro factor scales for point
+scoring), `score_files` (the stored compact score file), `llm_cache` and `llm_usage`,
+`chat_usage`, `feedback`, and `road_segments` (empty in production). The diagram shows
+representative columns only; the routing tables join cells by `geohash`, not a foreign key; `contracts/schema.sql` is the full schema for a fresh database, and
+each migration is mirrored into it. A `null` raw value always means "not measured yet", never
+"zero". The local build database also keeps the full-detail `areas` and `area_cells` tables that
+the area build and tiles read.
 
 ### Migrations
 
-Migrations live in `contracts/migrations/` and are run by hand against production
-after review (additive and idempotent, so old code keeps working).
+Migrations live in `contracts/migrations/` and are run by hand against production after review
+(additive and idempotent unless marked destructive). **All of 0002 to 0023 are applied.**
 
-| # | Adds | Status |
-| --- | --- | --- |
-| 0002 `v2` | v2 feature_store columns (restaurants, bars, brands, noise-corridor facilities, school rating) | applied 2026-10-02 |
-| 0003 `areas` | `areas`, `area_cells` | applied 2026-10-02 |
-| 0004 `places` | named `places` table | applied 2026-10-03 |
-| 0005 `llm` | `llm_cache`, `llm_usage` | applied 2026-10-03 |
-| 0006 `area_shape` | `areas.extent_m`, `areas.compactness` | applied 2026-10-03; written by the area build (49,158 areas at 0.8 sq mi) |
-| 0007 `embeddings` | pgvector extension, `scores.embedding vector(14)`, HNSW index | applied 2026-10-03; 64,320 embeddings written by `scoring.embeddings` |
-| 0008 `neighborhoods` | `neighborhood` on `geo_entities` and `areas` | applied 2026-10-04 |
-| 0009 `v2_1` | v2.1 feature_store and scores columns (imperial units) | applied 2026-10-04 |
-| 0010 `chat` | `chat_usage` (per-visitor daily message count) | not applied; the API skips the limit while the table is missing |
-| 0022 `routing` | `routing_meta`, `cell_travel`, `cell_graph`, `routing_hubs`, `cell_hubs`, `rail_matrix` (about 7 MB for the metro; smallint arrays, deci-minutes) | not applied; written by `python -m ingestion.routing.run` |
-| 0012 `density_postgis` | PostGIS; `feature_store.pop_density_per_sq_mi` and `travel_mode`; `geom` on `geo_entities`, `places`, `areas` with GiST indexes; `road_segments` | not applied; written by `ingestion.density` and `ingestion.road_segments` |
-
-Migrations 0016 to 0021 (storage compaction, not applied; apply order in the storage model
-below; 0015 is the point-scoring places index and 0014 `areas_slim`):
-
-| # | Does | Destructive |
-| --- | --- | --- |
-| 0016 `drop_embeddings_similar` | drops `scores.embedding`, its HNSW index and `similar_cells` | yes (data no longer used) |
-| 0017 `scores_compact` | sub-scores to smallint, composite to real, drops `scores.id` (primary key becomes `(geo_entity_id, weights_version)`) and two redundant indexes; table rewrite | yes (rounds scores) |
-| 0018 `geo_entities_trim` | drops the unused `geom` column and GiST index, `created_at`, `updated_at` | yes |
-| 0019 `score_files` | `score_files` table holding the gzipped compact score file | no |
-| 0020 `feature_store_imperial_expand` | adds `*_nearest_ft`, `*_count_1600ft`, `*_count_half_mi`, `*_count_1mi`, `school_avg_rating_1mi` (smallint / real) and backfills them | no (adds about 40 MB transiently) |
-| 0021 `feature_store_imperial_contract` | drops the 27 metric columns and narrows other numeric columns to real / smallint in one rewrite | yes, irreversible |
+| # | Adds or does |
+| --- | --- |
+| 0002 `v2` | v2 feature_store columns (restaurants, bars, brands, noise-corridor facilities, school rating) |
+| 0003 `areas` | `areas`, `area_cells` |
+| 0004 `places` | named `places` table |
+| 0005 `llm` | `llm_cache`, `llm_usage` |
+| 0006 `area_shape` | `areas.extent_m`, `areas.compactness` |
+| 0007 `embeddings` | pgvector and `scores.embedding` (removed again by 0016) |
+| 0008 `neighborhoods` | `neighborhood` on `geo_entities` and `areas` |
+| 0009 `v2_1` | v2.1 feature_store and scores columns |
+| 0010 `chat` | `chat_usage` |
+| 0011 `perf` | lat/lon and covering indexes, `pg_trgm` brand search, `feedback` |
+| 0012 `density_postgis` | PostGIS; population density and travel mode; `geom` columns with GiST; `road_segments` |
+| 0013 `score_scales` | per-metro factor scales for point scoring |
+| 0014 `areas_slim` | the compact areas table the API reads |
+| 0015 `places_cat_geom_gist` | `(category, geom)` GiST index for point scoring |
+| 0016 `drop_embeddings_similar` | drops `scores.embedding`, its HNSW index and `similar_cells` (destructive) |
+| 0017 `scores_compact` | sub-scores to smallint, composite to real, key `(geo_entity_id, weights_version)` (destructive) |
+| 0018 `geo_entities_trim` | drops unused `geo_entities` columns (destructive) |
+| 0019 `score_files` | the stored gzipped score file |
+| 0020 `feature_store_imperial_expand` | imperial `*_nearest_ft`, `*_count_1600ft`... columns, backfilled |
+| 0021 `feature_store_imperial_contract` | drops the 27 metric columns (destructive, irreversible) |
+| 0022 `routing` | `routing_meta`, `cell_travel`, `cell_graph`, `routing_hubs`, `cell_hubs`, `rail_matrix` |
+| 0023 `area_scores` | per-area scores for density versions |
 
 ## 4. Scoring engine
 
@@ -472,105 +522,98 @@ Full method in [SCORING.md](SCORING.md). Summary:
 | Version | `weights_version` | Factors | State |
 | --- | --- | --- | --- |
 | v1 | `v1-handtuned` | 11 | retired (rows deleted) |
-| v2 | `v2-handtuned` | 14 (12 toggleable + premium retail and trail popularity as underlying signals) | **live in production** |
-| v2.1 | `v2.1-handtuned` | 13, every one a user-facing pill | built; full ingestion in progress; cutover pending owner approval |
-| v3 | `v3-timeaccess` | 13+ | planned: absolute time-to-access curves, mode by density |
+| v2 | `v2-handtuned` | 14 | retired (rows deleted 2026-10-05) |
+| v2.1 | `v2.1-handtuned` | 13 pills, per-metro relative scales | kept as the rollback; still written by the weekly job |
+| v2.2 | `v2.2-density` | 13 pills, same default weights | **live since 2026-10-06**: per area, routed density and proximity, one absolute scale |
+| v3 | `v3-timeaccess` | 13+ | planned: per-factor time-to-access curves |
 
-`scoring/engine.py` holds the per-version category specs and weights (`DEFAULT_WEIGHTS`,
-`V2_1_WEIGHTS`); `scoring/run.py` writes versioned rows and nulls stale columns;
-`scoring/similarity.py` holds the similarity dimensions and z-score helpers.
+`scoring/engine.py` holds the category specs and weights per version; `scoring/run.py` writes
+cell versions; `scoring/area_run.py` and `scoring/density.py` score density versions per area
+and copy each area's scores to the cells inside it, so the map, score file, `/score` and `/area`
+agree. `scoring/point.py` and `scoring/scales.py` back point precision; `scoring/similarity.py`
+holds the similarity dimensions.
 
 ## 5. AI layer
 
-- **Model.** Anthropic Haiku 4.5 (`claude-haiku-4-5`) only, through
-  `common/llm.py`. Decided 2026-10-03.
-- **RAG, not fine-tuning.** The data changes constantly, and retrieval
-  constrains the model to what is in the evidence. A hallucinated "great coffee
-  shop nearby" is a trust-breaking failure for this product.
-- **Grounding.** The model sees only a JSON evidence packet (the user's
-  priorities, sub-scores, nearest-feature distances, how each factor compares
-  with the metro). Output is validated; on any failure the rule-based
-  explanation (`api/explain.py`) is returned. Explanations: `api/ai_explain.py`,
-  prompt version `expl-v2`. Chat (`api/chat.py`) can only call read-only tools
-  that run our own code in-process; structured results and sources are built
-  deterministically from tool outputs, and the free-text reply passes a grounding
-  validator (numbers and capitalised proper nouns must appear in tool outputs or
-  the user's messages) or is replaced by a deterministic summary.
-- **Budget.** `llm_cache` stores validated responses keyed by a hash of the
-  evidence (entity, weights_version, scores, prompt version) so an area is paid
-  for once. `llm_usage` logs every paid call; month-to-date spend at or above
-  `LLM_MONTHLY_BUDGET_USD` (default $5) switches to rule-based text. Chat adds a
-  per-visitor daily message cap (15, table `chat_usage`) and returns 503 without
-  an API key.
+- **Model.** Anthropic Haiku 4.5 (`claude-haiku-4-5`) only, through `common/llm.py`.
+- **RAG, not fine-tuning.** The data changes constantly, and retrieval constrains the model to
+  what is in the evidence. A hallucinated "great coffee shop nearby" is a trust-breaking failure.
+- **Explanations** (`api/ai_explain.py`, prompt `expl-v2`): the model sees only a JSON evidence
+  packet (priorities, sub-scores, nearest-feature distances, metro comparisons). Output is
+  validated; on any failure the rule-based explanation (`api/explain.py`) is returned.
+- **Chat** (`api/chat.py`): a tool loop over read-only tools that run our own code in-process:
+  `geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `find_places`
+  and `optimize_location`. Structured results, sources and the map `plan` are built
+  deterministically from tool outputs. The free-text reply passes a grounding validator (numbers
+  and capitalised proper nouns must appear in tool outputs or the user's messages) or is replaced
+  by a deterministic summary.
+- **MCP connector** (`api/mcp.py`): stateless JSON-RPC over HTTP POST exposing the same tools
+  (plus `travel_area` and `triangulate`) to Claude and other MCP clients, through the chat's
+  `run_tool`. No LLM call happens on our side.
+- **Budget.** `llm_cache` stores validated responses keyed by a hash of the evidence, so an area
+  is paid for once. `llm_usage` logs every paid call; month-to-date spend at or above
+  `LLM_MONTHLY_BUDGET_USD` (default $5) switches to rule-based text. Chat has a per-visitor
+  daily cap (15 messages, `chat_usage`) and returns 503 without an API key.
 - **Evaluation scripts:** `scripts/eval_explanations.py`, `scripts/eval_chat.py`.
 
 ## 6. Routing and optimizer
 
-### Precompute (`ingestion/routing/`, Wave 4)
+### Precompute (`ingestion/routing/`)
 
-Run by hand or by a batch job (needs the `routing` extra: Pandana, numpy; **not** in the Lambda
-bundle). Nothing here runs on the request path.
+Runs on the owner's machine (needs the `routing` extra: Pandana, numpy, pyosmium; **not** in the
+Lambda bundle). Nothing here runs on the request path.
 
 | Product (table) | What | How |
 | --- | --- | --- |
-| Amenity minutes (`cell_travel`) | For every cell, minutes to the 1st-3rd nearest place of each of the 14 categories, in the cell's own travel mode (walk at or above 10k people / sq mi, drive below) | One multi-source Pandana search per category per tile (contraction hierarchy), read at each cell's snapped node |
-| Cell graph (`cell_graph`) | Minutes from each cell to its 8 neighbours, for walk and for drive | `shortest_path_lengths` between snapped cell centres, never faster than a straight line |
-| Hub matrices (`routing_hubs`, `cell_hubs`) | Drive minutes to the 3 nearest airports (JFK, LGA, EWR, TEB, HPN, ISP, SWF, BDR) and rail stations | One arterial-only backbone network for the region (motorway to secondary), cell access leg at 15 mph |
-| Train times (`rail_matrix`) | Ride minutes between every rail station pair | Connection Scan over GTFS (subway, LIRR, Metro-North, PATH, NJ Transit rail), weekday, three AM-peak departures, median; stations within 300 m linked by walking |
+| Networks (`build/routing/*.npz`) | Walk and drive networks for the region | `ingestion.routing.pbf`: one pass over each Geofabrik extract (NY, NJ, CT); ways crossing a state line collapse to the fastest edge |
+| Amenity minutes (`cell_travel`) | For every cell, minutes to the 1st-3rd nearest place of each category, in the cell's travel mode | One multi-source Pandana search per category per tile (contraction hierarchy) |
+| Cell graph (`cell_graph`) | Minutes from each cell to its 8 neighbours, walk and drive | Shortest paths between snapped cell centres, never faster than a straight line |
+| Hub matrices (`routing_hubs`, `cell_hubs`) | Drive minutes to the nearest airports and rail stations | An arterial backbone network for the region; cell access leg at 15 mph |
+| Train times (`rail_matrix`) | Ride minutes between every rail station pair (933 stations) | Connection Scan over GTFS rail, weekday AM peak, median of three departures |
+| Area reach (`build/reach/reach.npz`) | Per-area origins, place tallies, pair minutes and nearest minutes | `ingestion.routing.reach`; the input to `scoring.area_run` |
 
-**Tiling.** The grid is cut into tiles of whole cells (walk 10 x 8 cells, drive 30 x 20). A tile fetches
-its network with a pad as wide as the search cap (walk 3 km; drive 6 km of full network plus 45 km of
-arterials only), computes, commits and drops everything, so peak memory is set by the tile and not
-by the region. A 5 hour radius is more tiles, not more memory. The OSM source
-(`ingestion/routing/network.py`, `fetch_network`) is the one swap point: public Overpass is fine for the
-current metro but rate limits and 504s under bulk load (responses are cached on disk and retried),
-so a 5 hour radius should read a Geofabrik extract instead.
+**Tiling.** The grid is cut into tiles of whole cells (walk 10 x 8 cells, drive 30 x 20). A tile
+loads its network with a pad as wide as the search cap, computes, commits and drops everything,
+so peak memory is set by the tile, not by the region.
 
-**Units and caps.** Minutes are stored as deci-minutes in `smallint[]`, -1 meaning "not within the cap"
-(walk 30 min, drive 45 min, hubs 120 min). Layout is recorded in `routing_meta`. Walk is 3 mph;
-drive is OSM maxspeed (or highway-class defaults) x 0.8, free flow.
+**Units and caps.** Minutes are stored as deci-minutes in `smallint[]`, -1 meaning "not within
+the cap" (walk 30 min, drive 45 min, hubs 120 min). Layout is recorded in `routing_meta`. Walk is
+3 mph; drive is OSM maxspeed (or highway-class defaults) x 0.8, free flow.
 
 ### Request time
 
-- **Isochrones** (`api/isochrone.py`, `api/reach.py`, `api/routing_data.py`): pandana, osmnx and numpy do
-  not fit the Lambda bundle (50 MB zip) and an OSM graph cannot be loaded in the 29 s cap, so the road
-  network is pre-folded into the cell graph. A request loads the `cell_graph` rows around the origin
-  (one indexed bounding-box query), runs Dijkstra in pure Python, and traces the cells into a polygon
-  (boundary tracing + two rounds of corner cutting; no shapely, no PostGIS). Resolution is one cell
-  (0.58 x 0.38 mi). `ingestion/routing/isochrone.py` builds the street-level version offline (reachable
-  nodes to buffered union or concave hull) for QA and special cases.
-- **Triangulate** ranks the precomputed scores inside the intersection or union of the anchors' cell sets.
+- **Isochrones** (`api/isochrone.py`, `api/reach.py`, `api/routing_data.py`): Pandana and osmnx do
+  not fit the Lambda bundle and an OSM graph cannot load within the 29 s cap, so the road network
+  is pre-folded into the cell graph. A request loads the `cell_graph` rows around the origin (one
+  indexed bounding-box query), runs Dijkstra in pure Python, and traces the cells into a polygon
+  (no shapely, no PostGIS). Resolution is one cell (0.58 x 0.38 mi). A walk isochrone takes about
+  2 ms of Dijkstra plus one query; a 45-minute train isochrone about 30 ms.
+- **Train trips** = walk to a station within 1.5 mi + `rail_matrix` ride + walk from a station
+  near the destination, best of up to 6 stations at each end.
+- **Triangulate** intersects or unions the anchors' reached cell sets and ranks the scores inside.
 - **Optimize** (`api/optimize.py`): Weiszfeld geometric-median seed, exact lower-bound pruning,
-  stored times in place of estimates (cell_travel, cell_hubs, rail matrix), then openrouteservice
-  refinement of what is left (walk and drive). Estimates remain the fallback: straight line x 1.3 /
-  mode speed (walk 3 mph, drive 25 mph + 2 min parking, transit 15 mph).
-- **Address train trip** = walk to a station within 1.5 mi (straight line x 1.3 at 3 mph) + `rail_matrix`
-  ride + walk from a station near the destination, best of up to 6 stations at each end.
-
-### Measured (laptop, Jersey City + Hoboken sample, walk, 2026-10-05)
-
-Tiles of 10 x 8 cells (about 6 x 8 km) plus a 3 km pad held 100k to 220k nodes each: 21 s, 236 s and 96 s
-per tile, 490 to 940 MB peak RSS, almost all of it Overpass download time (the public server was
-returning 504s; compute is a few seconds per tile). Train matrix: 933 stations, 273k connections,
-fetch 4.5 s + build 0.2 s + 2,800 scans 12 s, 190 MB. A walk isochrone request over the stored graph
-takes about 2 ms of Dijkstra plus one query; a 45 minute rail isochrone about 30 ms.
+  stored times in place of estimates, then openrouteservice refinement (walk and drive).
+  Estimates are the fallback: straight line x 1.3 / mode speed (walk 3 mph, drive 25 mph + 2 min
+  parking, transit 15 mph).
 
 ### Scaling to a 5 hour radius
 
-Work grows with cells (about 25x the current 64k at 5 h), not with memory. Drive-time cell graphs at
-that range need coarser levels (a geohash5 graph for trips beyond about 90 minutes) because a request
-would otherwise load hundreds of thousands of rows; `reach.MAX_MINUTES` is where that cap lives.
+Work grows with cells (about 25x the current 64k at 5 h), not with memory. Drive-time cell graphs
+at that range need coarser levels (a geohash5 graph for trips beyond about 90 minutes) because a
+request would otherwise load hundreds of thousands of rows; `reach.MAX_MINUTES` is where that cap
+lives.
 
 ## 7. Delivery: how code and infrastructure ship
 
 ```mermaid
 flowchart LR
   dev(["Developer"])
-  gh["GitHub repo<br/>main"]
+  gh["GitHub repo<br/>dev-benrispace → PR → main"]
 
   subgraph ci["GitHub Actions"]
-    ci1["ci.yml<br/>tests on dev pushes and PRs"]
-    dep["deploy-api.yml<br/>test · build · deploy · smoke check"]
+    ci1["ci.yml<br/>Python + web checks · ci-ok"]
+    e2e["e2e.yml<br/>Playwright · Chromium + WebKit"]
+    dep["deploy-api.yml<br/>test · build zip · deploy · smoke"]
     tfci["terraform.yml<br/>fmt + validate on PRs"]
     ing["ingestion.yml<br/>weekly data refresh"]
   end
@@ -582,144 +625,122 @@ flowchart LR
     tfstate[("S3<br/>Terraform state")]
   end
 
-  tf["Terraform infra/<br/>AWS + Cloudflare DNS"]
+  r2[("Cloudflare R2<br/>static files")]
+  tf["Terraform infra/<br/>AWS + Cloudflare"]
 
   dev -- "git push" --> gh
-  gh -- "push · PRs" --> ci1
-  gh -- "api/** changes" --> dep
+  gh -- "pushes · PRs" --> ci1
+  gh -- "PRs · main" --> e2e
+  gh -- "main: api/ common/ scoring/ pyproject" --> dep
   gh -- "PRs touching infra/" --> tfci
   gh -- "schedule" --> ing
-  gh -- "webhook · web/" --> amp
+  gh -- "main: every push" --> amp
   dep -- "assume role · no static keys" --> role --> lam
-  dev -- "terraform apply<br/>via IAM Identity Center SSO" --> tf
+  ing -- "score file" --> r2
+  dev -- "terraform apply<br/>via AWS SSO" --> tf
   tf --> aws
   tf --- tfstate
 ```
 
-- **Branches.** All work happens on `dev-benrispace`; `main` changes only through
-  a pull request, because merging to `main` triggers the Amplify build (every
-  push) and `deploy-api.yml` (changes to `api/`, `common/`, `scoring/`,
-  `pyproject.toml`). `ci.yml` diffs against `main` and runs the Python and/or web
-  checks only for changed areas; **`ci-ok`** is the single status to require.
-  Batching several changes into one PR means one deploy instead of many.
-- **Terraform** (`infra/`, plus `infra/bootstrap/` for the S3 state bucket)
-  manages every AWS resource and every Cloudflare DNS record: Lambda
-  (`python3.12`, arm64), API Gateway HTTP API (throttled 10 rps, burst 20), ACM
-  certificates, the `api.benrispace.com` custom domain, Amplify app and domain,
-  SSM parameters, the GitHub OIDC provider and deploy role, and a $10/month
-  budget alert. `terraform apply` is deliberately manual (AWS SSO). Not yet
-  applied: the Valhalla EC2 instance.
-- **No long-lived AWS keys** exist anywhere: CI uses OIDC, the developer uses SSO.
-  The database URL and API keys live only in SSM; Terraform writes placeholders
-  and never sees the real values.
+- **Branches.** All work happens on `dev-benrispace` (`scratch` mirrors it); `main` changes only
+  through a pull request, because merging to `main` triggers the Amplify build (every push) and
+  `deploy-api.yml` (changes to `api/`, `common/`, `scoring/`, `pyproject.toml`,
+  `scripts/build_lambda.sh`). `ci.yml` runs the Python and/or web checks for the changed areas;
+  **`ci-ok`** is the single status to require. Batch changes into one PR for one deploy.
+- **API build.** `scripts/build_lambda.sh` builds `build/lambda.zip` inside AWS's own Python 3.12
+  arm64 image, so compiled packages match Lambda; the workflow then calls
+  `aws lambda update-function-code` and smoke-tests the live API.
+- **Terraform** (`infra/`, plus `infra/bootstrap/` for the S3 state bucket) manages every AWS
+  resource and Cloudflare record: Lambda, API Gateway (throttled 10 rps, burst 20), ACM
+  certificates, the custom domains, Amplify app and build variables, SSM parameters, the GitHub
+  OIDC provider and deploy role, a $10/month budget alert and CloudWatch alarms
+  (`infra/alarms.tf`: Lambda errors, p95 duration, throttles, API Gateway 5xx). Off by default:
+  `chat_stream.tf` and `edge_cache.tf`. `terraform apply` is deliberately manual (AWS SSO).
+- **No long-lived AWS keys** exist anywhere: CI uses OIDC, the developer uses SSO. The database
+  URL and API keys live only in SSM; Terraform writes placeholders and never sees the real values.
 - **Operational lessons.**
-  - Amplify built from a private repo needs the console's "Migrate to our GitHub
-    App" step; a personal token alone broke builds once revoked. For a rebuild:
-    create the app with a short-lived token, migrate immediately, revoke the
-    token.
-  - GitHub issues the OIDC `sub` claim with immutable IDs
-    (`repo:owner@id/repo@id:ref:...`); the IAM trust matches that form
-    (`github_owner_id`, `github_repository_id`), which also resists rename or
-    transfer impersonation.
-  - Use the Supabase **Session pooler** connection string: the direct host is
-    IPv6-only and fails from IPv4-only places (this sandbox, GitHub runners).
-  - The `execute-api.amazonaws.com` address is disabled
-    (`disable_execute_api_endpoint = true`); `api.benrispace.com` is the only
-    entry point.
-- The API zip is cross-built for Linux arm64 / Python 3.12 from any host
-  (`scripts/build_lambda.sh`), so local and CI builds match.
+  - Amplify built from a private repo needs the console's "Migrate to our GitHub App" step; a
+    personal token alone broke builds once revoked.
+  - GitHub issues the OIDC `sub` claim with immutable IDs (`repo:owner@id/repo@id:ref:...`); the
+    IAM trust matches that form, which also resists rename or transfer impersonation.
+  - Use the Supabase **Session pooler** connection string: the direct host is IPv6-only and fails
+    from IPv4-only places (GitHub runners).
+  - The `execute-api.amazonaws.com` address is disabled; `api.benrispace.com` is the only entry.
+  - CI pins `ruff<0.17`: 0.17 disagrees with 0.16 about which `noqa` directives are needed.
 
 ## 8. Hosting, domain and costs
 
-- **Domain** `benrispace.com` (registered 2026-09-28 at Cloudflare Registrar).
-  DNS stays at Cloudflare (the registrar requires its nameservers); Terraform
-  manages every record as DNS-only so AWS certificates validate end to end.
-  `benrispace.com` and `www` go to Amplify; `api.benrispace.com` goes to API
-  Gateway.
-- **Why AWS, everything.** Switched from GCP on 2026-09-29, and the frontend moved
-  off Firebase the same day. Not a cost decision (free tiers are comparable); AWS
-  has broader market and resume recognition, which matters because the project
-  doubles as a portfolio piece. The original reason for GCP (co-locating
-  Valhalla) turned out not to require it.
-- **Why Lambda + API Gateway.** Lambda scales to zero and its always-free
-  allowance (1M requests + 400,000 GB-s per month) covers this traffic. A bare
-  Function URL does not support custom domains, so API Gateway HTTP API (about
-  $1 per million requests) sits in front.
-- **Why Next.js on Amplify.** React/TypeScript is the most in-demand frontend
-  stack; Amplify gives git-push deploys and per-branch previews while keeping the
-  stack single-cloud.
-- **Storage.** Supabase free tier (Postgres + PostGIS; see the storage model below; it was about 180 MB of 500 MB
-  used after the v2 scores); no separate vector database.
-- **Costs.** Close to $0/month: domain (about $12-20 a year), Supabase and Lambda
-  free tiers, GitHub Actions free minutes, free data sources (OSM, GTFS, NCES,
-  EDFacts). Real items: API Gateway pennies, Amplify per build-minute
-  (about $0.01) and GB served, Terraform state in S3 (effectively $0), and the
-  LLM, capped at about $5/month. AWS restructured its free tier for new
-  accounts in 2025 (starting credits plus a set of always-free offers such as
-  Lambda); EC2 for Valhalla would draw down credits then bill normally, so budget
-  a few dollars a month if it is ever run continuously. A card on file is an AWS
-  signup requirement, and the $10 budget alert guards against surprises.
-- **Request limits** exist to protect that cost budget: API Gateway throttles at
-  10 rps with bursts of 20 across all callers; per-user tiers come in Phase 4
-  (see [ROADMAP.md](ROADMAP.md)).
+- **Domain** `benrispace.com` (registered 2026-09-28 at Cloudflare Registrar). DNS stays at
+  Cloudflare (the registrar requires its nameservers); Terraform manages every record as
+  DNS-only so AWS certificates validate end to end. `benrispace.com` and `www` go to Amplify,
+  `api.benrispace.com` to API Gateway, `tiles.benrispace.com` to the R2 bucket.
+- **Why AWS.** Switched from GCP on 2026-09-29. Not a cost decision (free tiers are comparable);
+  AWS has broader market and resume recognition, which matters because the project doubles as a
+  portfolio piece.
+- **Why Lambda + API Gateway.** Lambda scales to zero and its always-free allowance (1M requests
+  + 400,000 GB-s per month) covers this traffic. A bare Function URL does not support custom
+  domains, so API Gateway HTTP API (about $1 per million requests) sits in front.
+- **Why Next.js on Amplify.** React/TypeScript is the most in-demand frontend stack; Amplify gives
+  git-push deploys while keeping the stack single-cloud.
+- **Storage.** Supabase free tier (Postgres + PostGIS), 292 MB of 500 MB; Cloudflare R2 (10 GB
+  free, no egress fees) for the static files.
+- **Costs.** Close to $0/month: domain (about $12-20 a year), Supabase, Lambda and R2 free tiers,
+  GitHub Actions free minutes, free data sources (OSM, GTFS, NCES, EDFacts). Real items: API
+  Gateway pennies, Amplify build minutes and GB served, and the LLM, capped at about $5/month.
+  The $10 budget alert guards against surprises.
+- **Request limits** protect that budget: API Gateway throttles at 10 rps with bursts of 20
+  across all callers; per-user tiers come in Phase 4 (see [ROADMAP.md](ROADMAP.md)).
 
 ## 9. Key design decisions
 
-- **Precompute, don't compute live.** Scoring is batch; the API is a thin read
+- **Precompute, don't compute live.** Scoring and routing are batch; the API is a thin read
   layer. Latency is about 0.2 s warm and cost near zero.
-- **One grid, many independent jobs.** Every source writes into the same geohash
-  grid, so sources can fail, retry and be added without touching each other.
-- **Contract first.** `contracts/openapi.yaml` and `contracts/schema.sql` were
-  fixed before code that depends on them; the web types are generated from the
-  spec.
-- **Infrastructure as code, single cloud.** Everything on AWS in Terraform; DNS at
-  Cloudflare because the registrar requires it.
-- **Honest missing data.** Unmeasured factors are `null` end to end: the scorer
-  re-weights around them and the UI shows "No data" instead of 0.
-- **GitHub Actions for orchestration.** Enough for a weekly cadence; Airflow or
-  Dagster only if multiple metros with different refresh cadences justify it.
-- **Imperial units on the wire and in the UI** (feet and miles; the API's newer
-  columns are imperial). Older raw columns are still metres, and renaming them is
-  planned (see [ROADMAP.md](ROADMAP.md)).
+- **Score in the browser.** The score file lets every filter or weight change recolour the map
+  and re-rank areas without an API call.
+- **One grid, many independent jobs.** Every source writes into the same geohash grid, so sources
+  can fail, retry and be added without touching each other.
+- **Contract first.** `contracts/openapi.yaml` and `contracts/schema.sql` are fixed before code
+  that depends on them; the web types are generated from the spec.
+- **Infrastructure as code, single cloud.** Everything on AWS in Terraform; DNS and static files
+  at Cloudflare.
+- **Honest missing data.** Unmeasured factors are `null` end to end: the scorer re-weights around
+  them and the UI shows "No data" instead of 0.
+- **Internal tallies stay internal.** Place counts and densities drive scores but are never shown
+  to users.
+- **GitHub Actions for orchestration.** Enough for a weekly cadence; Airflow or Dagster only if
+  several regions with different refresh cadences justify it.
+- **Imperial units everywhere**: database columns, code, API and UI use feet, miles, sq mi and
+  mph.
 
-## 10. Storage model and the 5-hour radius
+## 10. Storage model and growth
 
-Measured on production on 2026-10-05 (read-only queries): database 469 MB of the 500 MB
-free tier, 456 MB of it in `public`.
+Measured on production on 2026-10-11 (read-only queries): database 292 MB of the 500 MB free
+tier.
 
-| Table | Rows | Total | Heap | Indexes | Per row (total) |
-| --- | --- | --- | --- | --- | --- |
-| `scores` (2 versions) | 128,640 | 181 MB | 80 MB | 101 MB (HNSW 46, cover 22, unique 15, pkey 9, geo 5, version 4) | 1,406 B |
-| `areas` | 49,158 | 105 MB | 92 MB (`geometry` jsonb 26.5, `geom` 14.9) | 12 MB | 2,142 B |
-| `feature_store` | 64,320 | 68 MB | 63 MB | 5 MB | 1,054 B |
-| `places` | 101,749 | 39 MB | 16 MB | 23 MB (trigram 6.5, unique 5.2, category/lat/lon 4.6, geom 4.2) | 384 B |
-| `area_cells` | 163,903 | 36 MB | 16 MB | 21 MB | 222 B |
-| `geo_entities` | 64,320 | 19 MB | 10 MB | 9 MB | 290 B |
-| `spatial_ref_sys` (PostGIS) | 8,500 | 7 MB | | | |
-| everything else | | under 1 MB | | | |
-
-Bytes per cell today (cells = geo_entities + feature_store + scores for both versions):
-about 2,750 B. Areas cost about 2,900 B each with `area_cells`.
-
-### What the compaction saves (local copy of production's shape, 64,320 cells)
-
-| Change | Before | After |
+| Table | Rows | Total |
 | --- | --- | --- |
-| Delete `v2-handtuned` scores (`scripts/delete_scores.py`) | 181 MB | about 90 MB |
-| 0016 + 0017: no embedding or HNSW, smallint scores, no `id`, 2 indexes dropped | about 90 MB per version (production, bloated) | about 15 MB per version (227 B per cell) |
-| 0018: geo_entities | 19 MB | about 16 MB (about 248 B per cell) |
-| 0020 + 0021: narrower feature_store types | 68 MB | about 50 MB (about 775 B per cell, estimated from the 27 percent measured locally) |
-| Stored score file (0019) | 8 s cold rebuild | one 300 KB row |
-| Areas to `areas_slim` (0014, owned by the area build) | 142 MB (`areas` + `area_cells`) | about 25 to 30 MB (estimate) |
+| `places` | 101,883 | 78 MB |
+| `scores` (v2.1 + v2.2) | 128,640 | 51 MB |
+| `geo_entities` | 64,320 | 32 MB |
+| `areas_slim` | 35,943 | 27 MB |
+| `feature_store` | 64,320 | 22 MB |
+| `cell_graph` | 128,640 | 21 MB |
+| `cell_hubs` | 98,048 | 14 MB |
+| `cell_travel` | 64,320 | 12 MB |
+| `area_scores` | 35,943 | 9 MB |
+| `spatial_ref_sys` (PostGIS) | 8,500 | 7 MB |
+| `rail_matrix` | 933 | 2 MB |
+| everything else | | under 4 MB |
 
-Projected production total after all of it: about 469 MB to about 160 MB with `areas_slim`
-(about 276 MB if `areas` stays), leaving 220 to 340 MB of room.
+Deleting the v2.1 rollback rows frees about 25 MB. Most of the compaction work (0016 to 0021,
+`areas_slim`, the stored score file) is done; it took the database from 469 MB on 2026-10-05 to
+about 286 MB before the routing tables were added.
 
 ### How big is a 5-hour radius?
 
 From Census 2020 county land area and 2023 population estimates (county centroids within a
-great-circle radius of Manhattan; today's six metro boxes cover 29 counties, 10,472 sq mi
-and 23.4 million people):
+great-circle radius of Manhattan; today's six metro boxes cover 29 counties, 10,472 sq mi and
+23.4 million people):
 
 | Radius | Land (sq mi) | x today | Population | x today |
 | --- | --- | --- | --- | --- |
@@ -729,66 +750,33 @@ and 23.4 million people):
 | 250 mi (about 5 h at highway speeds) | 108,442 | 10.4 | 56.8 M | 2.4 |
 | 300 mi | 143,583 | 13.7 | 63.9 M | 2.7 |
 
-So the 5-hour radius is about 10x the land and 2.4x the people, not 30 to 50x (that figure
-was a whole-US estimate). Cell-count tables grow with land, `places` with population, and
-road-bounded areas with land unless rural land is left unsubdivided. Today's grid is
-rectangles with water included (64,320 cells for 10,472 sq mi of land, about 1.75 cells per
-land cell of 0.287 sq mi), so pruning water cells alone cuts a rebuild by about 40 percent.
+Cell-count tables (and the routing tables) grow with land, `places` with population, and
+road-bounded areas with land unless rural land is left unsubdivided. Today's grid is rectangles
+with water included, so pruning water cells alone cuts a rebuild by about 40 percent.
 
-Projection at 250 mi, with the compacted per-row costs above:
+What keeps growth inside a small database, in order of leverage:
 
-| Plan | Cells | Cell tables (1,250 B each) | Places (about 270,000 x 384 B) | Areas | Total |
-| --- | --- | --- | --- | --- | --- |
-| A. Everything at geohash6, land only | about 378,000 | 472 MB | 104 MB | about 245 MB (`areas_slim`, one per 0.56 sq mi of land) | about 820 MB, does not fit |
-| B. Tiered grid: geohash6 where county density is 200 or more people per sq mi, geohash5 (about 9.2 sq mi) below | about 166,000 | 207 MB | 104 MB | about 40 MB (areas only in the dense tier) | about 350 MB, fits with 30 percent headroom |
-| C. B plus raw features kept off the database (below) | about 166,000 | 117 MB | 104 MB | about 40 MB | about 260 MB |
-| D. A on a paid database tier | about 378,000 | | | | Supabase Pro (8 GB, about $25 a month) |
+1. Prune water cells from `ingestion/grid.py` and tier the grid by density (geohash6 where county
+   density is 200 or more people per sq mi, geohash5 below): about 2.3x fewer cells.
+2. Keep raw `feature_store` values and other read-only bulk data off the serving database (for
+   example Parquet on R2 or S3); the API reads only a few of the raw columns.
+3. Move to Supabase Pro (8 GB, about $25 a month) when traction justifies it. The whole US is
+   estimated at a few GB of Postgres, which needs a paid tier either way. CockroachDB's or
+   YugabyteDB's free tiers would need a port away from PostGIS and `pg_trgm` (looked at
+   2026-10-11; YugabyteDB's sandbox is not meant for production).
 
-What fits in 500 MB, in order of leverage:
-
-1. Apply the compaction above (needed even for today's data: 469 MB is one bad ingestion
-   from the limit, because an ingestion rewrite briefly doubles a table).
-2. Prune water cells from `ingestion/grid.py` and tier the grid by density (plan B). The
-   biggest lever: 2.3x fewer cells than plan A.
-3. Keep `feature_store` raw values out of the serving database. The API reads only about 16
-   of its columns (nearest distances for explanations, school info, density). Ingestion can
-   write the full table as Parquet to Cloudflare R2 (free 10 GB, no egress fees) or CI
-   artifacts and keep a slim serving table of about 120 B per cell (plan C).
-4. If traction justifies it, move to Supabase Pro instead of tiering: plan A fits with 8 GB
-   and removes the 7-day pause and the 500 MB cliff. Cloudflare R2 would also hold PMTiles
-   for the cell grid (Wave 2) and the stored score file.
-
-Not worth more effort: `places` indexes (23 MB) are 60 percent of its size, but each serves a
-query (trigram brand search, upsert key, KNN). When migration 0015 (`places_category_geom_gist`)
-is applied, `places_category_lat_lon_idx` (4.6 MB) becomes redundant and can be dropped.
-`spatial_ref_sys` (7 MB) can be trimmed to the SRIDs in use.
-
-### Owner commands for the compaction (production, in this order)
-
-1. `python scripts/delete_scores.py --version v2-handtuned` (dry run), then `--yes`; then
-   `vacuum full scores;` in the SQL editor. (Frees about 90 MB; needed headroom for the
-   rewrites below.)
-2. Deploy the API / ingestion built from this branch (it no longer reads `embedding`, and
-   reads and writes the imperial feature_store columns through `common/feature_columns.py`).
-   Deploy after step 3 for the feature columns, before step 4 for `embedding`.
-3. Apply `0020` (adds and backfills the imperial columns), then deploy, then run the
-   ingestion and scoring job once.
-4. Apply `0016`, `0017`, `0018`, `0019` (each in its own run), then `python -m api.scorefile`.
-5. When the new code has run cleanly: apply `0021` (irreversible).
-6. Optional: `vacuum full geo_entities;`.
+The bigger cost of growth is the pipeline, not the database: the routing build for three states
+is already 1.5 GB of networks from 838 MB of extracts, and grows with land.
 
 ### Cold starts
 
-`import api.lambda_handler` takes about 290 ms (measured with `python -X importtime`):
-FastAPI 144 ms, `api.main` itself 18 ms, `api.point_score` 62 ms (mostly psycopg), mangum 31
-ms. The Anthropic SDK, httpx and shapely are already imported lazily (`common/lazy.py`,
-`common/llm.py`), so there is nothing large left to defer; the remaining cold-start cost was
-the 8 s score-file rebuild, now stored in `score_files`. Lambda SnapStart is a separate,
-untested option.
+`import api.lambda_handler` takes about 290 ms (measured with `python -X importtime`): FastAPI
+144 ms, `api.main` 18 ms, `api.point_score` 62 ms (mostly psycopg), mangum 31 ms. The Anthropic
+SDK, httpx and shapely are imported lazily (`common/lazy.py`, `common/llm.py`). The score file is
+stored in `score_files`, so a cold start never rebuilds it.
 
-### Edge caching and alarms (Terraform, not applied)
+### Edge caching (Terraform, not applied)
 
-`infra/edge_cache.tf` proxies `api.benrispace.com` through Cloudflare and caches GETs that
-send `Cache-Control` (off unless `enable_edge_cache = true`). `infra/alarms.tf` adds
-CloudWatch alarms (Lambda errors, p95 duration, throttles, API Gateway 5xx) to an SNS topic
-emailing `budget_alert_email`.
+`infra/edge_cache.tf` proxies `api.benrispace.com` through Cloudflare and caches GETs that send
+`Cache-Control` (`max-age=300` on cells, area, score and similar). Off unless
+`enable_edge_cache = true`; POSTs, errors, `/chat` and `/optimize` are never stored.
