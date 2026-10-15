@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -222,6 +222,48 @@ describe("TripPlanner", () => {
       label: "1 Main St",
       score: 81.4,
     });
+  });
+
+  it("numbers the results like their markers on the map", async () => {
+    const { user } = setup();
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    const first = await screen.findByRole("button", { name: /1 Main St/ });
+    const second = screen.getByRole("button", { name: /2 Side St/ });
+    expect(first).toHaveAccessibleName(/^Rank 1:\s*1 Main St/);
+    expect(second).toHaveAccessibleName(/^Rank 2:\s*2 Side St/);
+    expect(first.textContent?.startsWith("1")).toBe(true);
+    expect(second.textContent?.startsWith("2")).toBe(true);
+  });
+
+  it("keeps the results in place, dimmed, while a new travel time loads", async () => {
+    let release: (value: Triangulation) => void = () => {};
+    const triangulate = vi
+      .fn<() => Promise<Triangulation>>()
+      .mockImplementationOnce(async () => response())
+      .mockImplementation(() => new Promise<Triangulation>((resolve) => (release = resolve)));
+    const { user, onNeedSpace } = setup(triangulate as never);
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    const asks = onNeedSpace.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: /^Travel for Point of interest 1:/ }));
+    await user.click(screen.getByRole("button", { name: "More minutes for Point of interest 1" }));
+    await waitFor(() => expect(triangulate).toHaveBeenCalledTimes(2));
+
+    // The previous answer stays: no "Working out" line, no empty panel to jump around.
+    const results = screen.getByRole("list", { name: "Best areas in the overlap" }).parentElement!;
+    expect(results).toHaveAttribute("data-refreshing");
+    expect(screen.getByRole("region", { name: "Overlap results" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByText(/Working out the overlap/)).toBeNull();
+    expect(screen.getByRole("button", { name: /1 Main St/ })).toBeInTheDocument();
+
+    act(() => release(response({ results: [{ lat: 40.72, lon: -73.98, score: 90, address: "3 New St" }] })));
+    expect(await screen.findByRole("button", { name: /3 New St/ })).toBeInTheDocument();
+    expect(results).not.toHaveAttribute("data-refreshing");
+    // The phone sheet is not asked to snap again for a refresh of the same overlap.
+    expect(onNeedSpace.mock.calls.length).toBe(asks);
   });
 
   it("marks the result on show as pressed", async () => {

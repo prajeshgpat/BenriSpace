@@ -12,15 +12,19 @@ export interface MainTravelProps {
   mode: ReachMode;
   minutes: number;
   onChange: (mode: ReachMode, minutes: number) => void;
+  /** Whether the searched place's travel boundary is drawn on the map. */
+  showOnMap: boolean;
+  onShowOnMap: (on: boolean) => void;
 }
 
 /**
  * The searched place's travel mode and minutes, inside the search box on its left edge like a
- * point of interest's: the mode icon with its minutes, and a chevron that opens the modes and
- * a minutes stepper.
+ * point of interest's: the mode icon with its minutes, and a chevron that opens the modes, a
+ * minutes stepper and the "Show on map" switch for the travel boundary.
  */
-export function MainTravel({ mode, minutes, onChange }: MainTravelProps) {
+export function MainTravel({ mode, minutes, onChange, showOnMap, onShowOnMap }: MainTravelProps) {
   const panelId = useId();
+  const showId = useId();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -103,6 +107,19 @@ export function MainTravel({ mode, minutes, onChange }: MainTravelProps) {
             fewerLabel="Fewer minutes"
             moreLabel="More minutes"
           />
+          <div className={styles.show}>
+            <span id={showId}>Show on map</span>
+            <button
+              type="button"
+              role="switch"
+              className={styles.switch}
+              aria-checked={showOnMap}
+              aria-labelledby={showId}
+              onClick={() => onShowOnMap(!showOnMap)}
+            >
+              <span className={styles.thumb} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

@@ -341,16 +341,16 @@ export function TripResults({
   onNeedSpace,
 }: TripResultsProps) {
   const rootId = useId();
-  const { status, data } = planner;
-  const previousStatus = useRef(status);
+  const { status, shownStatus, data, refreshing } = planner;
+  // Asks for room once per answer arriving from nothing, not on every refresh of it, so a
+  // phone's sheet does not snap each time the minutes change.
+  const previousShown = useRef(shownStatus);
 
   useEffect(() => {
-    const arrived =
-      (status === "ready" || status === "empty") &&
-      previousStatus.current !== status;
-    previousStatus.current = status;
+    const arrived = shownStatus !== null && previousShown.current === null;
+    previousShown.current = shownStatus;
     if (arrived) onNeedSpace?.("half");
-  }, [status, onNeedSpace]);
+  }, [shownStatus, onNeedSpace]);
 
   if (status === "idle") return null;
 
@@ -362,12 +362,17 @@ export function TripResults({
         : "";
 
   return (
-    <section ref={sectionRef} className={styles.outcome} aria-label="Overlap results">
+    <section
+      ref={sectionRef}
+      className={styles.outcome}
+      aria-label="Overlap results"
+      aria-busy={refreshing || undefined}
+    >
       <p className="sr-only" role="status" aria-live="polite">
         {live}
       </p>
 
-      {status === "loading" ? (
+      {status === "loading" && !refreshing ? (
         <p className={styles.meta}>Working out the overlap&hellip;</p>
       ) : null}
 
@@ -384,17 +389,21 @@ export function TripResults({
         </div>
       ) : null}
 
-      {status === "empty" ? (
+      {shownStatus === "empty" ? (
         <p className={styles.meta}>{NO_OVERLAP_MESSAGE}</p>
       ) : null}
 
-      {status === "ready" && data ? (
-        <div className={styles.results} data-overlap-results>
+      {shownStatus === "ready" && data ? (
+        <div
+          className={styles.results}
+          data-overlap-results
+          data-refreshing={refreshing || undefined}
+        >
           <h3 id={`${rootId}-results`} className={styles.heading}>
             Best areas in the overlap
           </h3>
           <ol className={styles.list} aria-labelledby={`${rootId}-results`}>
-            {data.results.map((result) => {
+            {data.results.map((result, index) => {
               const selected = selectedKey === resultKey(result);
               return (
                 <li key={resultKey(result)}>
@@ -412,7 +421,14 @@ export function TripResults({
                       })
                     }
                   >
-                    <span className={styles.resultLabel}>{result.label}</span>
+                    {/* The same number as the result's marker on the map. */}
+                    <span className={styles.resultRank} aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <span className={styles.resultLabel}>
+                      <span className="sr-only">Rank {index + 1}: </span>
+                      {result.label}
+                    </span>
                     <span className={styles.resultScore}>
                       {Math.round(result.score)}
                     </span>

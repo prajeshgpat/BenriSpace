@@ -226,3 +226,82 @@ def test_candidates_sql_selects_every_factor_column():
 
     sql, _ = build_candidates_sql(None, "v")
     assert all(f"s.{col}" in sql for col in FACTOR_COLUMNS.values())
+
+
+# --- results are moved onto land (Pier 26 sat in the Hudson cell next to it) -------------------
+def test_triangulate_moves_results_onto_land_and_drops_open_water(client, monkeypatch):
+    seen = {}
+
+    def fake_snap(conn, points):
+        seen["points"] = list(points)
+        # The first result is in the water; the rest move a little onto land.
+        return [None] + [(lat + 0.001, lon) for lat, lon in points[1:]]
+
+    monkeypatch.setattr(main.slim_areas, "snap_to_land", fake_snap)
+    anchors = [
+        {"label": "a", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
+        {"label": "b", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
+    ]  # fmt: skip
+    body = client.post("/v1/triangulate", json={"anchors": anchors, "limit": 3}).json()
+    # Over-fetched so a dropped result is replaced, then trimmed to the limit.
+    assert len(seen["points"]) > 3
+    assert len(body["results"]) == 3
+    water = seen["points"][0]
+    for result in body["results"]:
+        assert (result["latitude"], result["longitude"]) != water
+    moved = {(round(lat + 0.001, 6), lon) for lat, lon in seen["points"][1:]}
+    assert all((round(r["latitude"], 6), r["longitude"]) in moved for r in body["results"])
+
+
+def test_triangulate_keeps_results_when_the_areas_table_is_unavailable(client, monkeypatch):
+    monkeypatch.setattr(main.slim_areas, "snap_to_land", lambda conn, points: None)
+    anchors = [
+        {"label": "a", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
+        {"label": "b", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
+    ]  # fmt: skip
+    body = client.post("/v1/triangulate", json={"anchors": anchors, "limit": 3}).json()
+    assert len(body["results"]) == 3
+
+
+def test_snap_to_land_distance_cutoff_and_failures():
+    from api import slim_areas
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params):
+            self.params = params
+
+        def fetchall(self):
+            return self.rows
+
+    class Conn:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def transaction(self):
+            return Cursor([])
+
+        def cursor(self):
+            return Cursor(self.rows)
+
+    rows = [
+        {"ord": 1, "lat": 40.7187, "lon": -74.0166, "dist_m": 120.0},
+        {"ord": 2, "lat": 40.0, "lon": -74.0, "dist_m": 2000.0},  # 1.2 mi from any area
+    ]
+    out = slim_areas.snap_to_land(Conn(rows), [(40.7222, -74.018), (40.0, -74.2)])
+    assert out == [(40.7187, -74.0166), None]
+    assert slim_areas.snap_to_land(Conn(rows), []) == []
+
+    class Broken:
+        def transaction(self):
+            raise RuntimeError("no table")
+
+    assert slim_areas.snap_to_land(Broken(), [(40.7, -74.0)]) is None

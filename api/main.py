@@ -1,6 +1,7 @@
-"""BenriSpace API -- FastAPI app implementing contracts/openapi.yaml's
-three data endpoints: GET /score, GET /score/{geoEntityId}/explanation,
-POST /triangulate.
+"""BenriSpace API -- the FastAPI app implementing contracts/openapi.yaml (every /v1
+endpoint: score, area, explanations, suggest, reverse, places, improve, similar, map data,
+isochrone, triangulate, optimize, chat, sources, feedback) plus the /mcp connector.
+Route handlers stay thin and call the module that holds each feature's logic.
 
 **Phase 4 (auth + rate limiting) is intentionally NOT implemented here.**
 Per docs/ROADMAP.md, that's a later addition on top of this app: a
@@ -10,14 +11,14 @@ ordinary FastAPI parameter declarations (Query/path params, a Pydantic
 request-body model) -- no custom dependency-injection container, no
 module-level state touched at import time -- specifically so Phase 4 can
 add an auth `Depends()` to each handler's signature and rate-limit
-middleware to the app without restructuring anything here. Every DB
-connection is opened per-request via `common.db.get_connection()`'s context
-manager, never held at module scope, so `from api.main import app` works
-without a live Postgres (see tests/test_api.py) and adding request-scoped
-auth dependencies later is a purely additive change.
+middleware to the app without restructuring anything here. Each request
+takes a connection from `common.db.api_connection()`'s small per-process pool,
+opened lazily on first use, so `from api.main import app` works without a live
+Postgres (see tests/test_api.py) and adding request-scoped auth dependencies
+later is a purely additive change.
 
-All three endpoints are unauthenticated for now per this task's scope --
-the `security`/`401`/`429` parts of openapi.yaml are Phase 4, ignored here.
+Every endpoint is unauthenticated for now -- the `security`/`401`/`429` parts
+of openapi.yaml are Phase 4, ignored here.
 """
 
 import contextlib
@@ -365,9 +366,20 @@ def triangulate(body: TriangulateRequest):
             get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
         )
 
-    for c in candidates:
+        # A cell's centre can lie in a river (Pier 26 is the Hudson cell next to it): move each
+        # result onto land, and drop open water. Over-fetch so dropped ones are replaced.
+        ranked = rank_in_cells(candidates, combined, body.limit * 3, spec)
+        landed = slim_areas.snap_to_land(conn, [(r["latitude"], r["longitude"]) for r in ranked])
+
+    if landed is not None:
+        ranked = [
+            {**r, "latitude": point[0], "longitude": point[1]}
+            for r, point in zip(ranked, landed, strict=True)
+            if point is not None
+        ]
+    ranked = ranked[: body.limit]
+    for c in ranked:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-    ranked = rank_in_cells(candidates, combined, body.limit, spec)
 
     results = [
         RankedAddress(

@@ -561,7 +561,7 @@ create table if not exists rail_matrix (
     minutes_dm  smallint[] not null
 );
 
--- Per-area scores for density weights versions, v2.2-density (migration 0023, not yet applied).
+-- Per-area scores for density weights versions, v2.2-density (migration 0023).
 create table if not exists area_scores (
     area_id                  integer     not null,
     weights_version          text        not null,

@@ -52,6 +52,6 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# v2.1 is live (13 factors). Set SCORING_WEIGHTS_VERSION=v2-handtuned to roll back while
-# those rows still exist (scripts/delete_scores.py removes retired versions).
+# Production serves v2.2-density, set on the Lambda by terraform `scoring_weights_version`.
+# The code default stays v2.1-handtuned, the rollback that the weekly scoring job writes.
 SCORING_WEIGHTS_VERSION = os.environ.get("SCORING_WEIGHTS_VERSION", WEIGHTS_VERSION_V2_1)

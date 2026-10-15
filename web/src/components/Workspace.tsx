@@ -74,10 +74,11 @@ import { APP_PATH, SITE_TITLE, resultTitle } from "@/lib/site";
 
 import { AddressSearch } from "./AddressSearch";
 import { MainTravel } from "./MainTravel";
+import { useMainReach } from "@/hooks/useMainReach";
 import { useMainTravel } from "@/hooks/useMainTravel";
-import { distanceMi, tuneTravel, widerTravel } from "@/lib/travel";
+import { distanceMi, tuneTravel, widenPlan, type Travel, type TravelPlan } from "@/lib/travel";
 import { resultKey, TripPlannerPills, TripResults } from "./TripPlanner";
-import { effectiveTravel, anchorName, useTripPlanner } from "@/hooks/useTripPlanner";
+import { effectiveTravel, anchorName, hasCoordinates, useTripPlanner } from "@/hooks/useTripPlanner";
 import { BottomSheet } from "./BottomSheet";
 import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
@@ -85,7 +86,6 @@ import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
-import { ReachCard } from "./ReachCard";
 import { ScoreHeader, ScoreSummary } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { BestAreas } from "./map/BestAreas";
@@ -265,6 +265,10 @@ function Layout({
 }
 
 /** What the server renders before the URL is known: the search box and an empty map. */
+function sameTravel(a: Travel, b: Travel): boolean {
+  return a.mode === b.mode && a.minutes === b.minutes;
+}
+
 export function WorkspaceFallback() {
   return (
     <Layout
@@ -318,8 +322,11 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     geometry: AreaGeometry;
   } | null>(null);
   const [mapUnavailable, setMapUnavailable] = useState(false);
-  // The reachable-area polygon from the ReachCard, drawn on the map.
-  const [reachGeometry, setReachGeometry] = useState<AreaGeometry | null>(null);
+  // "Show on map" for the searched place's travel boundary: on by default, and a separate
+  // choice (off by default) while an overlap with points of interest is drawn, so turning it
+  // on there is an override that does not stick once the overlap goes.
+  const [showReach, setShowReach] = useState(true);
+  const [showReachOverOverlap, setShowReachOverOverlap] = useState(false);
   // "Ask Benri" expands in place where its button sits (side panel and phone
   // sheet alike), with its own scrolling log. `/app?chat=1` (the home page's
   // "Ask Benri") opens it on load; `ask=`
@@ -474,59 +481,66 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
     [setPoiPlace, poiRows, armedPoi],
   );
-  // Once per new set of places (the searched place and at least one point of interest), pick
-  // one travel mode and the fewest minutes for their travel areas to overlap, so the user
-  // need not step every box by hand. If the overlap still comes back empty, widen it a step
-  // (twice at most) while the user has not changed anything since.
-  const tunePlaces = useMemo(
-    () =>
-      tripPlace
-        ? [
-            { lat: tripPlace.lat, lon: tripPlace.lon },
-            ...planner.urlPoints,
-          ]
-        : [],
-    [tripPlace, planner.urlPoints],
+  // Once per new set of places (the searched place and at least one point of interest), tune
+  // the travel so their areas overlap, without the user stepping every box by hand. The
+  // searched place is the one gone to most, so it keeps its mode and minutes; each point of
+  // interest gets only the extra time it needs (lib/travel.ts tuneTravel). If the overlap still
+  // comes back empty, widen the farthest point of interest a step (twice at most) while the
+  // user has not changed anything since.
+  const tunePois = useMemo(
+    () => planner.rows.flatMap((row) => (hasCoordinates(row) ? [{ id: row.id, lat: row.lat, lon: row.lon }] : [])),
+    [planner.rows],
   );
-  const tuneKey = tunePlaces.length > 1 ? JSON.stringify(tunePlaces) : null;
-  const tuned = useRef<{ key: string; travel: { mode: ReachMode; minutes: number }; steps: number } | null>(
-    null,
-  );
+  const tuneKey =
+    tripPlace && tunePois.length > 0
+      ? JSON.stringify([
+          [tripPlace.lat, tripPlace.lon],
+          tunePois.map((p) => [p.lat, p.lon]),
+        ])
+      : null;
+  const tuned = useRef<{ key: string; plan: TravelPlan; steps: number } | null>(null);
   const placeTravelMode = state.status === "success" ? state.score.travelMode : null;
   const setMainTravel = mainTravel.set;
   const setPoiTravel = planner.setTravel;
-  const applyTravel = useCallback(
-    (next: { mode: ReachMode; minutes: number }) => {
-      setMainTravel(next.mode, next.minutes);
-      for (const row of poiRows) setPoiTravel(row.id, next.mode, next.minutes);
+  const applyPlan = useCallback(
+    (plan: TravelPlan) => {
+      if (plan.main.mode !== travel.mode || plan.main.minutes !== travel.minutes) {
+        setMainTravel(plan.main.mode, plan.main.minutes);
+      }
+      tunePois.forEach((poi, i) => {
+        const own = plan.pois[i];
+        if (own) setPoiTravel(poi.id, own.mode, own.minutes);
+      });
     },
-    [setMainTravel, setPoiTravel, poiRows],
+    [setMainTravel, setPoiTravel, tunePois, travel],
   );
   useEffect(() => {
-    if (!tuneKey || tuned.current?.key === tuneKey) return;
-    const next = tuneTravel(tunePlaces, placeTravelMode);
-    tuned.current = next ? { key: tuneKey, travel: next, steps: 0 } : { key: tuneKey, travel, steps: 2 };
-    if (next) applyTravel(next);
+    if (!tuneKey || !tripPlace || tuned.current?.key === tuneKey) return;
+    const plan = tuneTravel({ ...tripPlace, ...travel }, tunePois, placeTravelMode);
+    tuned.current = plan
+      ? { key: tuneKey, plan, steps: 0 }
+      : { key: tuneKey, plan: { main: travel, pois: tunePois.map(() => travel) }, steps: 2 };
+    if (plan) applyPlan(plan);
     // Only for a new set of places.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tuneKey]);
   const untouched =
     tuned.current !== null &&
     tuned.current.key === tuneKey &&
-    travel.mode === tuned.current.travel.mode &&
-    travel.minutes === tuned.current.travel.minutes &&
-    poiRows.every((row) => {
-      const own = effectiveTravel(row, travel);
-      return own.mode === travel.mode && own.minutes === travel.minutes;
+    sameTravel(travel, tuned.current.plan.main) &&
+    tunePois.every((poi, i) => {
+      const row = planner.rows.find((r) => r.id === poi.id);
+      const want = tuned.current?.plan.pois[i];
+      return row !== undefined && want !== undefined && sameTravel(effectiveTravel(row, travel), want);
     });
   useEffect(() => {
     const current = tuned.current;
-    if (planner.status !== "empty" || !untouched || !current || current.steps >= 2) return;
-    const wider = widerTravel(current.travel);
+    if (planner.status !== "empty" || !untouched || !current || !tripPlace || current.steps >= 2) return;
+    const wider = widenPlan(current.plan, tripPlace, tunePois, placeTravelMode);
     if (!wider) return;
-    tuned.current = { ...current, travel: wider, steps: current.steps + 1 };
-    applyTravel(wider);
-  }, [planner.status, untouched, applyTravel]);
+    tuned.current = { ...current, plan: wider, steps: current.steps + 1 };
+    applyPlan(wider);
+  }, [planner.status, untouched, applyPlan, tripPlace, tunePois, placeTravelMode]);
 
   // Bring every pin into view: one is centred, several are fitted together.
   const focusPoints = useCallback((points: readonly { lat: number; lon: number }[]) => {
@@ -560,7 +574,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // When an overlap (or the news that there is none) arrives, bring the places and their
   // travel areas into view.
   const overlapKey =
-    planner.data && planner.overlay.pins.length > 1
+    planner.data && !planner.refreshing && planner.overlay.pins.length > 1
       ? `${planner.status}:${planner.overlay.pins.length}:${planner.data.combined?.areaSqMi ?? "none"}`
       : null;
   useEffect(() => {
@@ -958,13 +972,27 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   // about the one searched place: its score card, summary and suggestions step aside and
   // the best areas in the overlap are the results.
   const entered = planner.hasPlaces;
-  // An overlap exists and is drawn.
-  const overlapShown = entered && planner.status === "ready";
+  // An overlap exists and is drawn. While a new travel time loads for the same places the
+  // previous answer stays up, so the panel does not collapse and refill (and jump).
+  const overlapShown = entered && planner.shownStatus === "ready";
   // The triangulation's answer (an overlap, or none) is on the map.
-  const tripDrawn = entered && (planner.status === "ready" || planner.status === "empty");
+  const tripDrawn = entered && planner.shownStatus !== null;
   // Removing every point (or losing the overlap) drops the picked area with it.
   if (!overlapShown && overlapPick) setOverlapPick(null);
   const pickOpen = overlapShown && overlapPick !== null;
+
+  const reachSwitch = overlapShown ? showReachOverOverlap : showReach;
+  const setReachSwitch = overlapShown ? setShowReachOverOverlap : setShowReach;
+  // With no overlap the triangulation already draws the searched place's boundary itself.
+  const reachVisible = reachSwitch && !(tripDrawn && !overlapShown);
+  const mainReach = useMainReach(
+    client,
+    state.status === "success" ? { lat: state.score.latitude, lon: state.score.longitude } : null,
+    travel.mode,
+    travel.minutes,
+    reachVisible,
+  );
+  const reachGeometry = mainReach.status === "ready" ? mainReach.geometry : null;
 
   const pickedHere = picked?.key === placeKey ? picked : null;
   const activeTop =
@@ -1084,7 +1112,13 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           onSelectSuggestion={handleSelectSuggestion}
           suggestClient={client}
           startAdornment={
-            <MainTravel mode={travel.mode} minutes={travel.minutes} onChange={mainTravel.set} />
+            <MainTravel
+              mode={travel.mode}
+              minutes={travel.minutes}
+              onChange={mainTravel.set}
+              showOnMap={reachSwitch}
+              onShowOnMap={setReachSwitch}
+            />
           }
           endAdornment={
             <LocateButton
@@ -1245,21 +1279,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
                 ? state.score.subScores
                 : (provisional?.subScores ?? null)
           }
-        >
-          {/* Always mounted, so a switched-on travel area survives a change of place. */}
-          <ReachCard
-            coordinates={
-              state.status === "success"
-                ? { lat: state.score.latitude, lon: state.score.longitude }
-                : null
-            }
-            mode={travel.mode}
-            minutes={travel.minutes}
-            client={client}
-            onReach={setReachGeometry}
-            suspended={tripDrawn}
-          />
-        </FactorControls>
+        />
         {state.status === "success" && !overlapShown ? (
           <>
             <ScoreSummary
@@ -1397,7 +1417,19 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       )}
       <div className={styles.overlay}>
         <MapLegend range={range} />
-        {entered ? <TripLegend overlay={planner.overlay} status={planner.status} /> : null}
+        <TripLegend
+          overlay={entered ? planner.overlay : null}
+          status={entered ? planner.shownStatus : null}
+          reach={
+            reachGeometry
+              ? {
+                  mode: travel.mode,
+                  minutes: travel.minutes,
+                  estimate: mainReach.status === "ready" && mainReach.estimate,
+                }
+              : null
+          }
+        />
         <MapNotices
           loading={cells.status === "loading" && !noFactors}
           noFactors={noFactors}

@@ -3,12 +3,23 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MainTravel } from "./MainTravel";
 
-function setup(mode: "walk" | "transit" | "drive" = "drive", minutes = 15) {
+function setup(mode: "walk" | "transit" | "drive" = "drive", minutes = 15, showOnMap = true) {
   const onChange = vi.fn();
-  const view = render(<MainTravel mode={mode} minutes={minutes} onChange={onChange} />);
+  const onShowOnMap = vi.fn();
+  const view = render(
+    <MainTravel
+      mode={mode}
+      minutes={minutes}
+      onChange={onChange}
+      showOnMap={showOnMap}
+      onShowOnMap={onShowOnMap}
+    />,
+  );
   const toggle = () => screen.getByRole("button", { name: /^Travel time:/ });
-  return { onChange, toggle, ...view };
+  return { onChange, onShowOnMap, toggle, ...view };
 }
+
+const noop = () => {};
 
 describe("MainTravel", () => {
   it("shows the mode and minutes on a closed toggle", () => {
@@ -28,11 +39,13 @@ describe("MainTravel", () => {
     expect(screen.getByRole("button", { name: "Walk" }).textContent).toBe("");
   });
 
-  it("picking a mode reports its initial minutes", () => {
+  it("picking a mode starts it at 10 minutes", () => {
     const { toggle, onChange } = setup();
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: "Train" }));
-    expect(onChange).toHaveBeenLastCalledWith("transit", 20);
+    expect(onChange).toHaveBeenLastCalledWith("transit", 10);
+    fireEvent.click(screen.getByRole("button", { name: "Drive" }));
+    expect(onChange).toHaveBeenLastCalledWith("drive", 10);
     fireEvent.click(screen.getByRole("button", { name: "Walk" }));
     expect(onChange).toHaveBeenLastCalledWith("walk", 10);
   });
@@ -44,12 +57,38 @@ describe("MainTravel", () => {
     expect(onChange).toHaveBeenLastCalledWith("walk", 15);
     fireEvent.click(screen.getByRole("button", { name: "Fewer minutes" }));
     expect(onChange).toHaveBeenLastCalledWith("walk", 5);
-    rerender(<MainTravel mode="walk" minutes={5} onChange={onChange} />);
+    const at = (mode: "walk" | "transit" | "drive", minutes: number) =>
+      rerender(
+        <MainTravel mode={mode} minutes={minutes} onChange={onChange} showOnMap onShowOnMap={noop} />,
+      );
+    const more = () => screen.getByRole("button", { name: "More minutes" }) as HTMLButtonElement;
+    at("walk", 5);
     expect((screen.getByRole("button", { name: "Fewer minutes" }) as HTMLButtonElement).disabled).toBe(true);
-    rerender(<MainTravel mode="drive" minutes={60} onChange={onChange} />);
-    expect((screen.getByRole("button", { name: "More minutes" }) as HTMLButtonElement).disabled).toBe(true);
-    rerender(<MainTravel mode="transit" minutes={45} onChange={onChange} />);
-    expect((screen.getByRole("button", { name: "More minutes" }) as HTMLButtonElement).disabled).toBe(true);
+    // Walk tops out at 30, train at 45, drive at 60.
+    at("walk", 25);
+    expect(more().disabled).toBe(false);
+    at("walk", 30);
+    expect(more().disabled).toBe(true);
+    at("transit", 45);
+    expect(more().disabled).toBe(true);
+    at("drive", 55);
+    expect(more().disabled).toBe(false);
+    at("drive", 60);
+    expect(more().disabled).toBe(true);
+  });
+
+  it("has a Show on map switch for the travel boundary", () => {
+    const { toggle, onShowOnMap, rerender } = setup("drive", 10, true);
+    fireEvent.click(toggle());
+    const show = screen.getByRole("switch", { name: "Show on map" });
+    expect(show.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(show);
+    expect(onShowOnMap).toHaveBeenLastCalledWith(false);
+    rerender(
+      <MainTravel mode="drive" minutes={10} onChange={noop} showOnMap={false} onShowOnMap={onShowOnMap} />,
+    );
+    fireEvent.click(screen.getByRole("switch", { name: "Show on map" }));
+    expect(onShowOnMap).toHaveBeenLastCalledWith(true);
   });
 
   it("closes on an outside press but not an inside one", () => {

@@ -89,8 +89,60 @@
   color: var(--accent);
 }
 
+/* "Show on map" and its switch, on one line under the stepper. */
+.show {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 2.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.thumb {
+  position: absolute;
+  top: 50%;
+  left: 0.1875rem;
+  width: 1.0625rem;
+  height: 1.0625rem;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: translateY(-50%);
+  transition: transform 150ms ease;
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch[aria-checked="true"] .thumb {
+  transform: translate(1rem, -50%);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .chevron {
+  .chevron,
+  .switch,
+  .thumb {
     transition: none;
   }
 }
