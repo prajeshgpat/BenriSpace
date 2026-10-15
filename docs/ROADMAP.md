@@ -174,6 +174,7 @@ The wave-by-wave backlog (with status markers) lives in [PLANNED.md](PLANNED.md)
 | 2026-10-05 | Coverage target: ~5 hour radius on a density-tiered grid; static files move to Cloudflare R2 |
 | 2026-10-06 | v2.2 cutover: production serves `v2.2-density` (per-area routed density, one absolute scale); v2.2 and routed tables refreshed monthly by hand |
 | 2026-10-06 | `road_segments` no longer loaded weekly (97 MB, unread) |
+| 2026-10-14 | Every travel mode starts at 10 minutes (the point of the site); steppers cap at walk 30, train 45, drive 60. Overlap tuning keeps the searched place at its own travel and gives only the far points of interest more time, switching mode past a mode's maximum. "Show on map" for the searched place's boundary moves into its search-box panel (default on); the Factors "Travel time" row is gone. Results are moved onto land |
 | 2026-10-10 | Travel mode and minutes live in the search box; overlap travel is auto-tuned once per set of places; chat can set up the map; Login and Pricing ship as UI only (Pro $9/mo or $90/yr placeholder) |
 
 Other standing decisions: precompute scores rather than

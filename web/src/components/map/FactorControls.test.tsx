@@ -29,17 +29,10 @@ function Harness({
 }
 
 describe("FactorControls", () => {
-  it("puts the travel time row first, right under the heading", () => {
-    render(
-      <FactorControls selection={ALL_FACTORS} onChange={() => {}}>
-        <div data-testid="travel-row" />
-      </FactorControls>,
-    );
-    const travel = screen.getByTestId("travel-row");
-    const heading = screen.getByRole("heading", { name: "Factors" });
-    const firstGroup = screen.getAllByRole("group")[0];
-    expect(heading.compareDocumentPosition(travel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(travel.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  it("has no travel time row: travel lives in the search box", () => {
+    render(<FactorControls selection={ALL_FACTORS} onChange={() => {}} />);
+    expect(screen.queryByText("Travel time")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 
   it("shows a checkbox for each of the toggleable factors, grouped like the score card", () => {

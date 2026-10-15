@@ -136,7 +136,7 @@ export function pickSpreadResults<T extends { lat: number; lon: number; score: n
 
 const COORDINATE_TEXT = /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/;
 
-function hasCoordinates(row: TripRow): row is TripRow & { lat: number; lon: number } {
+export function hasCoordinates(row: TripRow): row is TripRow & { lat: number; lon: number } {
   return row.lat !== undefined && row.lon !== undefined;
 }
 
@@ -152,8 +152,8 @@ function needsResolving(row: TripRow): boolean {
 }
 
 type Settled =
-  | { key: string; status: "ready" | "empty"; data: TripData }
-  | { key: string; status: "error" };
+  | { key: string; placesKey: string; status: "ready" | "empty"; data: TripData }
+  | { key: string; placesKey: string; status: "error" };
 
 
 export interface TripPlannerState {
@@ -172,8 +172,17 @@ export interface TripPlannerState {
   canAdd: boolean;
   /** Id of the row added by the last `add`, so the UI can focus it. */
   lastAddedId: string | null;
+  /** The request for the current places and travel: "loading" while it is in flight. */
   status: TripStatus;
+  /**
+   * What is on screen: the current answer, or while a new travel time or set of factors loads
+   * for the same places, the previous answer, so the panel and map do not empty and refill.
+   */
+  shownStatus: "ready" | "empty" | null;
+  /** The answer behind `shownStatus`. */
   data: TripData | null;
+  /** The shown answer is the previous one; a new one is loading. */
+  refreshing: boolean;
   overlay: TripOverlay;
   /** Points with coordinates, for the shared URL. */
   urlPoints: UrlPoint[];
@@ -458,6 +467,7 @@ export function useTripPlanner(
     query.factors ?? null,
     Object.entries(query.weights ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)),
   ]);
+  const placesKey = JSON.stringify(placed.map((p) => [p.lat, p.lon]));
   const anchorKey =
     place && hasPoi && anchors.length >= 2
       ? `${JSON.stringify(anchors)}|${queryKey}#${nonce}`
@@ -495,7 +505,7 @@ export function useTripPlanner(
               (iso) => iso?.method === "estimate",
             ),
           };
-          setSettled({ key: anchorKey, status: empty ? "empty" : "ready", data });
+          setSettled({ key: anchorKey, placesKey, status: empty ? "empty" : "ready", data });
 
           for (const result of spread) {
             const cacheKey = `${result.lat.toFixed(4)},${result.lon.toFixed(4)}`;
@@ -530,7 +540,7 @@ export function useTripPlanner(
         })
         .catch(() => {
           if (controller.signal.aborted) return;
-          setSettled({ key: anchorKey, status: "error" });
+          setSettled({ key: anchorKey, placesKey, status: "error" });
         });
     }, TRIANGULATE_DEBOUNCE_MS);
     return () => {
@@ -543,7 +553,15 @@ export function useTripPlanner(
 
   const status: TripStatus =
     anchorKey === null ? "idle" : settled?.key === anchorKey ? settled.status : "loading";
-  const data = status === "ready" || status === "empty" ? (settled as { data: TripData }).data : null;
+  const shown =
+    settled !== null &&
+    settled.status !== "error" &&
+    (settled.key === anchorKey || (status === "loading" && settled.placesKey === placesKey))
+      ? settled
+      : null;
+  const shownStatus = shown ? shown.status : null;
+  const data = shown ? shown.data : null;
+  const refreshing = shown !== null && status === "loading";
 
   const overlay = useMemo<TripOverlay>(() => {
     const iso = data?.isochrones ?? [];
@@ -577,7 +595,9 @@ export function useTripPlanner(
     canAdd: rows.length < MAX_POIS,
     lastAddedId,
     status,
+    shownStatus,
     data,
+    refreshing,
     overlay,
     urlPoints,
     add,

@@ -366,9 +366,20 @@ def triangulate(body: TriangulateRequest):
             get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
         )
 
-    for c in candidates:
+        # A cell's centre can lie in a river (Pier 26 is the Hudson cell next to it): move each
+        # result onto land, and drop open water. Over-fetch so dropped ones are replaced.
+        ranked = rank_in_cells(candidates, combined, body.limit * 3, spec)
+        landed = slim_areas.snap_to_land(conn, [(r["latitude"], r["longitude"]) for r in ranked])
+
+    if landed is not None:
+        ranked = [
+            {**r, "latitude": point[0], "longitude": point[1]}
+            for r, point in zip(ranked, landed, strict=True)
+            if point is not None
+        ]
+    ranked = ranked[: body.limit]
+    for c in ranked:
         c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-    ranked = rank_in_cells(candidates, combined, body.limit, spec)
 
     results = [
         RankedAddress(

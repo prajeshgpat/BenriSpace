@@ -190,6 +190,7 @@
   padding: 0 0.75rem;
   border-radius: 999px;
   font-size: 0.8125rem;
+  text-overflow: ellipsis;
 }
 
 /* iOS Safari zooms the page on focusing any input under 16px: keep the box small

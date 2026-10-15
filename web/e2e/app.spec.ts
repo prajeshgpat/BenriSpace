@@ -70,6 +70,38 @@ test("points of interest: add two, see the overlap list, remove them", async ({ 
   await expect(add).toBeVisible();
 });
 
+test("points of interest stay side by side and the overlap list is numbered on a 320px phone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 700 });
+  await mockApi(page);
+  await page.goto("/app");
+  await page.getByRole("combobox").first().fill("350 5th");
+  await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
+  await expect(page.getByTestId("composite-score")).toBeVisible();
+
+  const add = page.getByRole("button", { name: "Point of interest", exact: true });
+  await add.click();
+  const first = page.getByRole("combobox", { name: "Point of interest 1 address" });
+  await first.fill("grand central");
+  await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
+  await expect(page.getByRole("heading", { name: "Best areas in the overlap" })).toBeVisible();
+  await add.click();
+
+  const second = page.getByRole("combobox", { name: "Point of interest 2 address" });
+  const one = await first.boundingBox();
+  const two = await second.boundingBox();
+  expect(one && two).toBeTruthy();
+  // Same row, left to right, inside the screen.
+  expect(Math.abs(one!.y - two!.y)).toBeLessThan(4);
+  expect(two!.x).toBeGreaterThan(one!.x + one!.width - 1);
+  expect(two!.x + two!.width).toBeLessThanOrEqual(320);
+
+  const results = page.getByRole("list", { name: "Best areas in the overlap" }).getByRole("button");
+  await expect(results.nth(0)).toContainText(/^\s*1/);
+  await expect(results.nth(1)).toContainText(/^\s*2/);
+});
+
 test("toggling a factor recolours the map and re-ranks best areas", async ({ page }) => {
   await mockApi(page);
   await page.goto("/app?center=40.75,-73.97&z=12");

@@ -62,3 +62,9 @@
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.4);
 }
+
+/* "Within 10 min by car" under the place's name. */
+.detail {
+  display: block;
+  font-size: 0.6875rem;
+}

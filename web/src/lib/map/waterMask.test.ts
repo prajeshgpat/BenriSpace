@@ -34,6 +34,31 @@ describe("waterMaskLayers", () => {
     expect(out[0]).toMatchObject({ source: "o", "source-layer": "water", minzoom: 2, filter: ["==", "a", 1], paint: { "fill-color": "#00f" } });
     expect(waterMaskLayers(layers).map((l) => l.id)).toEqual(out.map((l) => l.id));
   });
+  it("redraws piers above the water so places on them are not shown in the river", () => {
+    const withPiers = [
+      ...layers.slice(0, 2),
+      L({ id: "road_area_pier", type: "fill", source: "o", "source-layer": "transportation" }),
+      L({ id: "road_pier", type: "line", source: "o", "source-layer": "transportation" }),
+      ...layers.slice(2),
+    ];
+    expect(waterMaskLayers(withPiers).map((l) => l.id)).toEqual([
+      "benri-water:water",
+      "benri-water:river",
+      "benri-water:road_area_pier",
+      "benri-water:road_pier",
+    ]);
+    // No water layers, nothing to cover: piers are not copied on their own.
+    expect(waterMaskLayers(withPiers.filter((l) => l.id.includes("pier")))).toEqual([]);
+  });
+  it("does not count a point on a pier as water", () => {
+    const withPier = [
+      ...layers,
+      L({ id: "road_area_pier", type: "fill", source: "o", "source-layer": "transportation" }),
+    ];
+    const { map } = fakeMap(withPier);
+    addWaterMask(map, undefined);
+    expect(isOverWater(map, { x: 1, y: 1 })).toBe(false);
+  });
   it("does not re-clone masks", () => {
     expect(waterMaskLayers(waterMaskLayers(layers))).toEqual([]);
   });

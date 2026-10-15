@@ -395,7 +395,7 @@ How it is computed: the road network is folded ahead of time into a graph of the
 
 Given up to four anchors (workplace, gym, family, ...) with a maximum travel time each, return the best-scoring locations reachable from all of them (`intersect`) or any of them (`union`), ranked by composite score, plus each anchor's isochrone polygon and the combined polygon.
 
-Each anchor becomes a set of reachable cells (the same method as `GET /isochrone`); `intersect` and `union` are exact set operations on those cells and the ranking reads the precomputed scores of the cells inside. An anchor whose area has no routing data yet falls back to a straight-line circle (`method: "estimate"`), so the endpoint always answers; the circle ignores rivers, bridges and real transit lines and can be off by a lot.
+Each anchor becomes a set of reachable cells (the same method as `GET /isochrone`); `intersect` and `union` are exact set operations on those cells and the ranking reads the precomputed scores of the cells inside. A result's coordinates are moved onto the nearest road-bounded area when its cell centre falls in water (a cell on a riverbank), and results more than about a third of a mile from any area are dropped, so a returned point is always on land. An anchor whose area has no routing data yet falls back to a straight-line circle (`method: "estimate"`), so the endpoint always answers; the circle ignores rivers, bridges and real transit lines and can be off by a lot.
 
 Request body (JSON):
 

@@ -49,7 +49,8 @@ export const TRI_STYLE = {
   light: {
     casing: "#ffffff",
     anchors: [
-      { name: "Searched place", line: "#c026d3", dash: null },
+      // The same magenta as the searched place's own travel boundary (REACH_STYLE).
+      { name: "Searched place", line: REACH_STYLE.light.line, dash: null },
       { name: "Point of interest 1", line: "#ea580c", dash: [3, 1.5] },
       { name: "Point of interest 2", line: "#be123c", dash: [1, 1.5] },
     ],
@@ -58,7 +59,7 @@ export const TRI_STYLE = {
   dark: {
     casing: "#0b1020",
     anchors: [
-      { name: "Searched place", line: "#f0abfc", dash: null },
+      { name: "Searched place", line: REACH_STYLE.dark.line, dash: null },
       { name: "Point of interest 1", line: "#fdba74", dash: [3, 1.5] },
       { name: "Point of interest 2", line: "#fda4af", dash: [1, 1.5] },
     ],

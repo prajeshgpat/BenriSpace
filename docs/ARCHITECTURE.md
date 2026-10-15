@@ -160,12 +160,24 @@ Pages: `/` (Home), `/app` (the workspace), `/map`, `/data` (sources), `/docs` (A
   phone bottom sheet. The searched place's travel toggle sits inside the search box
   (`MainTravel`, state in `hooks/useMainTravel.ts`); each point of interest has its own
   (`TripPlanner`, `hooks/useTripPlanner.ts`). Toggles show the mode icon with the minutes in a
-  small badge (`TravelBadge`).
+  small badge (`TravelBadge`). Every mode starts at 10 minutes; the steppers stop at walk 30,
+  train 45 and drive 60. The searched place's panel holds the "Show on map" switch for its
+  travel boundary (`hooks/useMainReach.ts` loads `GET /isochrone`); `TripLegend` explains the
+  pink line ("Within 10 min by car") whenever it is drawn. The two POI boxes sit in one
+  non-wrapping row at any width; their place names ellipsize.
 - **Travel-time overlap.** Points of interest (work, a gym, family) each get a travel-time area
   from `POST /triangulate`, and the best areas are ranked inside the overlap. Once per new set of
-  places, `tuneTravel` (`lib/travel.ts`) picks one mode and the fewest minutes for the areas to
-  overlap (walk when close, train in dense places, otherwise drive) and widens up to two steps
-  (`widerTravel`) if the overlap is empty and the user has not changed anything.
+  places, `tuneTravel` (`lib/travel.ts`) tunes travel per place: the searched place keeps its mode
+  and minutes (it is the place visited most), each point of interest starts there and gets the
+  fewest extra minutes to overlap it (and the other point of interest), moving to the next faster
+  mode (`widerTravel`) only past its mode's maximum. If the overlap is empty and the user has not
+  changed anything, `widenPlan` widens the point of interest farthest from the searched place,
+  up to two steps. While a new travel time loads for the same places, the previous overlap stays
+  on screen (dimmed, `refreshing`) so the panel does not collapse and jump.
+- **Pins stay on land.** `POST /triangulate` over-fetches ranked cells and moves each onto the
+  nearest road-bounded area (`slim_areas.snap_to_land`, one KNN query on the `areas_slim` GiST
+  index), dropping cells more than 0.35 mi from any area (open water). The map redraws basemap
+  piers above its water layer (`lib/map/waterMask.ts`) so places on a pier show on land.
 - **Map focus.** The map flies to a single pin, or fits all pins, when a pin is clicked, an
   address is scored, a point of interest is added, or an overlap, best or similar area is picked.
   With an overlap pick open, a map tap clears the pick instead of moving the searched place.

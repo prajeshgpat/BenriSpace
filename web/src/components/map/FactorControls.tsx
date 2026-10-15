@@ -1,4 +1,4 @@
-import { memo, useId, type ReactNode } from "react";
+import { memo, useId } from "react";
 
 import type { FactorKey } from "@/lib/api/types";
 import {
@@ -38,8 +38,6 @@ interface FactorControlsProps {
   onChange: (selection: FactorSelection) => void;
   /** When set, each selected factor shows its score on its toggle. */
   scores?: FactorScores | null;
-  /** Shown first, right under the heading, inside the section (the travel-time row). */
-  children?: ReactNode;
 }
 
 const RING_RADIUS = 14;
@@ -78,7 +76,6 @@ function FactorControlsImpl({
   selection,
   onChange,
   scores = null,
-  children,
 }: FactorControlsProps) {
   const headingId = useId();
   return (
@@ -88,8 +85,6 @@ function FactorControlsImpl({
       </h2>
 
       <div className={styles.body}>
-        {children}
-
         {GROUPS.map((group) => (
           <fieldset key={group} className={styles.fieldset}>
             <legend className={styles.legend}>{FACTOR_GROUPS[group]}</legend>
