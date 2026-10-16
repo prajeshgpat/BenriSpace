@@ -33,10 +33,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api import area_cache, area_scores, point_score, scorefile, slim_areas, sources
-from api.ai_explain import ai_explanation
 from api.areas import (
     area_explanation,
-    bounded_by_text,
     build_area_response,
     pick_area,
     point_in_polygon,
@@ -110,7 +108,6 @@ from common.db import (
     get_area_candidates,
     get_geo_entities_in_bbox,
     get_geo_entity_by_geohash,
-    get_geo_entity_by_id,
     get_latest_score,
     get_map_cells,
     get_scored_cells_in_bbox,
@@ -259,39 +256,17 @@ def get_score_explanation(
     if score_row is None:
         return _error(404, "not_found", "No score on file for this geo entity.")
 
-    sub_scores = sub_scores_from_score_row(score_row)
-    # Phase 1 template placeholder, see api/explain.py. Distances are
-    # metric internally and rendered in feet/miles.
-    nearest_m = nearest_m_by_factor(feature_row)
-    with get_connection() as conn:
-        entity = None
-        try:
-            entity = get_geo_entity_by_id(conn, str(geo_entity_id))
-        except Exception:  # noqa: BLE001 - only used for the named-places evidence
-            with contextlib.suppress(Exception):
-                conn.rollback()
-        explanation = ai_explanation(
-            conn,
-            str(geo_entity_id),
-            sub_scores,
-            nearest_m,
-            float(score_row["composite_score"]),
-            "this location",
-            score_row.get("weights_version") or SCORING_WEIGHTS_VERSION,
-            priorities=priorities,
-            lat=entity["latitude"] if entity else None,
-            lon=entity["longitude"] if entity else None,
-        )
-    source = "ai"
-    if explanation is None:
-        explanation = build_explanation(
-            sub_scores, nearest_m, priorities.factors if priorities.explicit else None
-        )
-        source = "rules"
+    # Rule-based text only (the LLM summary was removed to save credits).
+    # Distances are metric internally and rendered in feet/miles.
+    explanation = build_explanation(
+        sub_scores_from_score_row(score_row),
+        nearest_m_by_factor(feature_row),
+        priorities.factors if priorities.explicit else None,
+    )
     return ExplanationResponse(
         geo_entity_id=geo_entity_id,
         explanation=explanation,
-        source=source,
+        source="rules",
         computed_at=score_row["computed_at"],
         nearest_mi=nearest_mi_by_factor(feature_row),
         priorities=priorities.factors,
@@ -671,8 +646,8 @@ def get_area_explanation(
     factors: str | None = Query(default=None, description=FACTORS_DOC),
     weights: str | None = Query(default=None, description=WEIGHTS_DOC),
 ):
-    """AI-written explanation for the area under a point; rule-based text when
-    the LLM layer is unavailable. Kept separate from /v1/area so that stays fast."""
+    """Rule-based explanation for the area under a point, speaking to the
+    selected priorities first. Kept separate from /v1/area so that stays fast."""
     try:
         priorities = parse_priorities(factors, weights)
     except InvalidMapRequest as exc:
@@ -682,31 +657,15 @@ def get_area_explanation(
         return resolved
     area, aggregate, geo_entity, feature_row = resolved
     neighborhood = area.get("neighborhood") or (geo_entity or {}).get("neighborhood")
-    sub_scores = sub_scores_from_score_row(aggregate)
-    nearest_m = nearest_m_by_factor(feature_row)
-    with get_connection() as conn:
-        text = ai_explanation(
-            conn,
-            f"area:{area['id']}",
-            sub_scores,
-            nearest_m,
-            float(aggregate["composite_score"]),
-            neighborhood or bounded_by_text(list(area.get("bounded_by") or [])),
-            aggregate.get("weights_version") or SCORING_WEIGHTS_VERSION,
-            priorities=priorities,
-            lat=lat,
-            lon=lon,
-        )
-    source = "ai"
-    if text is None:
-        text = area_explanation(
-            sub_scores, feature_row, priorities.factors if priorities.explicit else None
-        )
-        source = "rules"
+    text = area_explanation(
+        sub_scores_from_score_row(aggregate),
+        feature_row,
+        priorities.factors if priorities.explicit else None,
+    )
     response.headers["Cache-Control"] = CACHE_CONTROL_5_MIN
     return AreaExplanationResponse(
         explanation=text,
-        source=source,
+        source="rules",
         area_id=area["id"],
         priorities=priorities.factors,
         neighborhood=neighborhood,

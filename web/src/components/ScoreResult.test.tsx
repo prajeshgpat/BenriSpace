@@ -4,23 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { makeAreaScore, makeScore } from "@/test/fixtures";
 
-import { ScoreHeader, ScoreSummary } from "./ScoreResult";
-
-const READY = {
-  status: "ready",
-  text: "Transit is the strongest factor.",
-  explanationSource: "rules",
-} as const;
-
-function Summary({
-  explanation = READY,
-  score = makeScore(),
-}: {
-  explanation?: Parameters<typeof ScoreSummary>[0]["explanation"];
-  score?: ReturnType<typeof makeScore>;
-}) {
-  return <ScoreSummary score={score} explanation={explanation} />;
-}
+import { ScoreHeader } from "./ScoreResult";
 
 describe("ScoreHeader", () => {
   it("leads with the address the user typed, not the API's lat,lon string", () => {
@@ -109,49 +93,5 @@ describe("ScoreHeader", () => {
       screen.getByRole("heading", { level: 2, name: "Park Slope, Brooklyn" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Bedford/)).not.toBeInTheDocument();
-  });
-});
-
-describe("ScoreSummary", () => {
-  it("shows the explanation under a Summary heading", () => {
-    render(<Summary />);
-    expect(screen.getByRole("heading", { name: "Summary" })).toBeInTheDocument();
-    expect(screen.getByText("Transit is the strongest factor.")).toBeInTheDocument();
-  });
-
-  it("shows loading and unavailable states", () => {
-    const { rerender } = render(<Summary explanation={{ status: "loading" }} />);
-    expect(screen.getByText("Writing the explanation\u2026")).toBeInTheDocument();
-    rerender(<Summary explanation={{ status: "unavailable" }} />);
-    expect(screen.getByText(/explanation isn.t available/)).toBeInTheDocument();
-  });
-
-  it("shows the summary text without an AI caption or school details", () => {
-    render(
-      <Summary
-        explanation={{ ...READY, explanationSource: "ai" }}
-        score={makeScore({
-          school: { proximity: 90, ratingAvailable: true, districtName: "Great Neck UFSD", source: "SEDA" },
-        })}
-      />,
-    );
-    expect(screen.getByText(READY.text)).toBeInTheDocument();
-    expect(screen.queryByText(/AI-written summary/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/may be imperfect/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Rating source/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /GreatSchools/ })).not.toBeInTheDocument();
-  });
-});
-
-describe("ScoreSummary while the explanation refreshes", () => {
-  it("keeps the text and shows an Updating state", () => {
-    render(
-      <ScoreSummary
-        score={makeScore()}
-        explanation={{ status: "ready", text: "Old text.", explanationSource: "ai", updating: true }}
-      />,
-    );
-    expect(screen.getByText("Old text.")).toBeInTheDocument();
-    expect(screen.getByTestId("explanation-updating")).toHaveTextContent("Updating…");
   });
 });

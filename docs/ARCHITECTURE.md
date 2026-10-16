@@ -54,7 +54,7 @@ flowchart LR
   liq["LocationIQ<br/>autocomplete · reverse · geocode"]
   photon["Photon<br/>keyless fallback"]
   nom["OSM Nominatim<br/>geocode fallback"]
-  llm["Anthropic Haiku 4.5<br/>explanations · chat"]
+  llm["Anthropic Haiku 4.5<br/>chat"]
   ors["openrouteservice<br/>optimizer refinement"]
 
   user -. "resolve" .-> dns
@@ -101,9 +101,9 @@ guide: [api.md](api.md).
 | Endpoint | Purpose | Module |
 | --- | --- | --- |
 | `GET /score` | Score for an address or coordinate (grid cell; `?precision=point` scores the exact spot) | `lookup.py`, `point_score.py` |
-| `GET /score/{id}/explanation` | Explanation of a score (AI-written when possible, rule-based otherwise) | `explain.py`, `ai_explain.py` |
+| `GET /score/{id}/explanation` | Rule-based explanation of a score | `explain.py` |
 | `GET /area` | Score for the road-bounded area under a point | `slim_areas.py`, `area_scores.py`, `area_cache.py` |
-| `GET /area/explanation` | Grounded explanation for the area under a point | `ai_explain.py` |
+| `GET /area/explanation` | Rule-based explanation for the area under a point | `areas.py` |
 | `GET /suggest` | Address autocomplete (LocationIQ, Photon fallback) | `suggest.py` |
 | `GET /reverse` | Readable address for a clicked point | `reverse.py` |
 | `GET /places` | Named places (OSM POIs, NCES schools, transit stops) near a point | `places.py` |
@@ -550,13 +550,13 @@ holds the similarity dimensions.
 - **Model.** Anthropic Haiku 4.5 (`claude-haiku-4-5`) only, through `common/llm.py`.
 - **RAG, not fine-tuning.** The data changes constantly, and retrieval constrains the model to
   what is in the evidence. A hallucinated "great coffee shop nearby" is a trust-breaking failure.
-- **Explanations** (`api/ai_explain.py`, prompt `expl-v2`): the model sees only a JSON evidence
-  packet (priorities, sub-scores, nearest-feature distances, metro comparisons). Output is
-  validated; on any failure the rule-based explanation (`api/explain.py`) is returned.
+- **Explanations** are rule-based only (`api/explain.py`, `api/areas.py`). The LLM-written
+  summary (`api/ai_explain.py`, prompt `expl-v2`) was removed on 2026-10-15 to save credits; it
+  is in git history if it comes back.
 - **Chat** (`api/chat.py`): a tool loop over read-only tools that run our own code in-process:
   `geocode`, `area_score`, `nearby_places`, `improve`, `similar`, `search_areas`, `find_places`
   and `optimize_location`. Structured results, sources and the map `plan` are built
-  deterministically from tool outputs. The free-text reply passes a grounding validator (numbers
+  deterministically from tool outputs. The free-text reply passes a grounding validator (`api/grounding.py`: numbers
   and capitalised proper nouns must appear in tool outputs or the user's messages) or is replaced
   by a deterministic summary.
 - **MCP connector** (`api/mcp.py`): stateless JSON-RPC over HTTP POST exposing the same tools
@@ -566,7 +566,7 @@ holds the similarity dimensions.
   is paid for once. `llm_usage` logs every paid call; month-to-date spend at or above
   `LLM_MONTHLY_BUDGET_USD` (default $5) switches to rule-based text. Chat has a per-visitor
   daily cap (15 messages, `chat_usage`) and returns 503 without an API key.
-- **Evaluation scripts:** `scripts/eval_explanations.py`, `scripts/eval_chat.py`.
+- **Evaluation script:** `scripts/eval_chat.py`.
 
 ## 6. Routing and optimizer
 

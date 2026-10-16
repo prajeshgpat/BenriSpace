@@ -7,7 +7,6 @@ import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaScore } from "@/lib/api/types";
 import {
   jsonResponse,
-  liveExplanationBody,
   liveScoreBody,
   makeAreaScore,
 } from "@/test/fixtures";
@@ -79,11 +78,7 @@ interface Deferred {
 
 function setup(search = "address=350+5th+Ave&lat=40.7484&lon=-73.9857") {
   navigation.search = search;
-  const fetchMock = vi.fn<typeof fetch>(async (input) =>
-    String(input).includes("/explanation")
-      ? jsonResponse(liveExplanationBody)
-      : jsonResponse(liveScoreBody),
-  );
+  const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse(liveScoreBody));
   const pending: Deferred[] = [];
   const getAreaByCoordinates = vi.fn<ApiClient["getAreaByCoordinates"]>(
     ({ lat }, options) =>

@@ -8,7 +8,7 @@ import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
 import { DEFAULT_SELECTION } from "@/lib/map/selection";
 import { defaultTravel, tuneTravel, widenPlan } from "@/lib/travel";
-import { AREA_RING, emptySubScores, jsonResponse, makeAreaBody, makeAreaScore, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
+import { AREA_RING, emptySubScores, jsonResponse, makeAreaBody, makeAreaScore, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
 import { Workspace } from "./Workspace";
@@ -112,10 +112,7 @@ const VIEWPORT = {
 
 type Responder = (url: string) => Response | Promise<Response>;
 
-const liveApi: Responder = (url) =>
-  url.includes("/explanation")
-    ? jsonResponse(liveExplanationBody)
-    : jsonResponse(liveScoreBody);
+const liveApi: Responder = () => jsonResponse(liveScoreBody);
 
 const noArea: Responder = () =>
   jsonResponse({ code: "area_not_found", message: "No area" }, 404);
@@ -272,15 +269,12 @@ describe("Workspace: scoring an address", () => {
     expect(screen.queryByText("Factor breakdown")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Weights/)).not.toBeInTheDocument();
     expect(screen.queryByText(/grid squares?/)).not.toBeInTheDocument();
-    expect(
-      await screen.findByText(/strongest factor is airport drive time/),
-    ).toBeInTheDocument();
     expect(lookupStatus()).toHaveTextContent(
       "350 5th Ave, New York, NY scores 63 out of 100, Good.",
     );
     expect(document.title).toBe("350 5th Ave, New York, NY · BenriSpace");
-    // The score, its explanation, and the travel-time area (the switch starts on).
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // The score and the travel-time area (the switch starts on).
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("reserves the header slot while loading and when loaded, with the filters after it", async () => {
@@ -296,11 +290,6 @@ describe("Workspace: scoring an address", () => {
 
     const score = await screen.findByTestId("composite-score");
     expect(score.closest("div[class*=headerSlot]")).toBe(loadingSlot);
-    // Summary comes after the filters, not before.
-    const summary = await screen.findByRole("heading", { name: "Summary" });
-    expect(
-      filters.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
   });
 
   it("shows the out-of-coverage state for a 404, with no retry", async () => {
@@ -350,13 +339,13 @@ describe("Workspace: scoring an address", () => {
   it("re-runs the lookup when the current address is submitted again", async () => {
     const user = userEvent.setup();
     const { fetchMock } = setup("address=350+5th+Ave", liveApi);
-    await screen.findByText(/strongest factor/);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await screen.findByTestId("composite-score");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
     await user.click(screen.getByRole("button", { name: "Score" }));
 
-    // A fresh score, its explanation, and the travel-time area drawn again for the new lookup.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6));
+    // A fresh score and the travel-time area drawn again for the new lookup.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     expect(pushState).not.toHaveBeenCalled();
   });
 
@@ -1170,28 +1159,22 @@ describe("selection reaches the point endpoints", () => {
   function setupPoint() {
     const getImprove = vi.fn<ApiClient["getImprove"]>(async () => improveBody);
     const getSimilar = vi.fn<ApiClient["getSimilar"]>(async () => similarBody);
-    const getAreaExplanation = vi.fn<ApiClient["getAreaExplanation"]>(async () => ({
-      explanation: "AI text.",
-      source: "ai",
-      areaId: 1,
-      priorities: [],
-    }));
     const rendered = setup(
       "lat=40.7&lon=-74&factors=all",
       liveApi,
-      { getImprove, getSimilar, getAreaExplanation },
+      { getImprove, getSimilar },
       () => jsonResponse(makeAreaBody()),
     );
-    return { getImprove, getSimilar, getAreaExplanation, ...rendered };
+    return { getImprove, getSimilar, ...rendered };
   }
 
   it("omits factors while all are selected, then sends the narrowed list once", async () => {
     const user = userEvent.setup();
-    const { getImprove, getSimilar, getAreaExplanation } = setupPoint();
+    const { getImprove, getSimilar } = setupPoint();
 
     expect(await screen.findByText("Similar areas")).toBeInTheDocument();
-    await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(1));
-    for (const call of [getImprove.mock.calls[0], getSimilar.mock.calls[0], getAreaExplanation.mock.calls[0]]) {
+    await waitFor(() => expect(getImprove).toHaveBeenCalledTimes(1));
+    for (const call of [getImprove.mock.calls[0], getSimilar.mock.calls[0]]) {
       expect((call[2] as { factors?: unknown }).factors).toBeUndefined();
     }
     expect(screen.getByRole("button", { name: "Show similar area 1 on map" })).toBeInTheDocument();
@@ -1205,9 +1188,7 @@ describe("selection reaches the point endpoints", () => {
     });
     expect((getSimilar.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(11);
     await waitFor(() => expect(getImprove).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(getAreaExplanation).toHaveBeenCalledTimes(2));
     expect(getImprove.mock.calls[1][2]).toMatchObject({ factors: expect.any(Array) });
-    expect((getAreaExplanation.mock.calls[1][2] as { factors: string[] }).factors).toHaveLength(11);
     // Two toggles, one request each.
     expect(getSimilar).toHaveBeenCalledTimes(2);
   });
@@ -1251,7 +1232,7 @@ describe("Workspace: points of interest", () => {
       longitude: lon,
     }));
     setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi, { reverseGeocode });
-    await screen.findByText(/strongest factor/);
+    await screen.findByTestId("composite-score");
     await user.click(screen.getByRole("button", { name: "Point of interest" }));
     const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
     // The new box is armed ("Drop a pin") and the keyboard stays closed.
@@ -1273,7 +1254,7 @@ describe("Workspace: points of interest", () => {
   it("pressing elsewhere in the sheet disarms the box", async () => {
     const user = userEvent.setup();
     setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi);
-    await screen.findByText(/strongest factor/);
+    await screen.findByTestId("composite-score");
     await user.click(screen.getByRole("button", { name: "Point of interest" }));
     const box = screen.getByRole("combobox", { name: "Point of interest 1 address" });
     expect(box).toHaveAttribute("placeholder", "Drop a pin");
@@ -1602,7 +1583,7 @@ describe("Workspace: points of interest", () => {
         longitude: lon,
       }));
       setup("address=350+5th+Ave%2C+New+York%2C+NY", liveApi, { reverseGeocode });
-      await screen.findByText(/strongest factor/);
+      await screen.findByTestId("composite-score");
       const before = map().flyRequest;
       await user.click(screen.getByRole("button", { name: "Point of interest" }));
       act(() => map().onCellClick({ geohash: "dr5ru7", score: 77, lat: 40.6, lon: -74.1 }));

@@ -60,7 +60,7 @@ const FEATURES = [
 ] as const;
 
 const EXTRAS = [
-  { icon: "summary", title: "AI summary", text: "Plain words on what drives a score." },
+  { icon: "compare", title: "Compare places", text: "Pin up to four places side by side." },
   { icon: "similar", title: "Similar neighborhoods", text: "Find areas that feel alike." },
   { icon: "improve", title: "Improve this area", text: "See what would lift a score." },
 ] as const;

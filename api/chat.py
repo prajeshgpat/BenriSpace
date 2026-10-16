@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import Field, field_validator
 from pydantic.alias_generators import to_camel
 
-from api import ai_explain
+from api import grounding
 from api.explain import FACTOR_LABELS
 from api.factors import FACTOR_COLUMNS, canonical_factor
 from api.mapdata import InvalidMapRequest, find_top, parse_score_spec
@@ -982,7 +982,7 @@ def fallback_reply(results: list[ChatResult], sources: list[ChatSource], notes: 
 _ALLOWED_CAPS = frozenset(
     {"BenriSpace", "NYC", "I", "I'm", "I'd", "I'll", "I've", "Ask", "Tip", "Tradeoff"}
 )
-# ai_explain's pattern also hits the "m" of "I'm"; here a bare m must follow a digit.
+# A plain \bm\b also hits the "m" of "I'm"; here a bare m must follow a digit.
 _METRIC_RE = re.compile(r"\bkm\b|kilomet|\bmeters?\b|\bmetres?\b|\d\s*m\b", re.IGNORECASE)
 _GENERIC_TEXT = " ".join(
     [*FACTOR_KEYS, *FACTOR_LABELS.values(), "new york city metro new jersey connecticut"]
@@ -1022,7 +1022,7 @@ def derived_numbers(tool_payloads: list[Any]) -> set[str]:
     seen: set[float] = set()
     for payload in tool_payloads:
         for chunk in (json.dumps(payload, ensure_ascii=False),):
-            for raw in ai_explain._numbers(chunk):
+            for raw in grounding.numbers(chunk):
                 try:
                     v = float(raw)
                 except ValueError:
@@ -1056,19 +1056,19 @@ def validate_reply(
     source_text += user_texts + [context_json, _GENERIC_TEXT, SYSTEM]
     allowed = {"100"}
     for chunk in source_text:
-        allowed |= ai_explain._numbers(chunk)
+        allowed |= grounding.numbers(chunk)
     for payload in tool_payloads:  # counts such as "3 areas"
         for node in _walk(payload):
             if isinstance(node, list):
                 allowed.add(str(len(node)))
     allowed |= derived_numbers(tool_payloads)
-    if not ai_explain._numbers(text) <= allowed:
+    if not grounding.numbers(text) <= allowed:
         return False
-    haystack = ai_explain._norm(" ".join(source_text))
+    haystack = grounding.norm(" ".join(source_text))
     cleaned = _sentences(text)
     for word in _ALLOWED_CAPS:
         cleaned = re.sub(rf"\b{re.escape(word)}\b", "x", cleaned)
-    return not ai_explain._unknown_proper_nouns(cleaned, haystack)
+    return not grounding.unknown_proper_nouns(cleaned, haystack)
 
 
 def _walk(node: Any):

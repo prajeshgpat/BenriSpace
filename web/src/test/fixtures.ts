@@ -1,5 +1,5 @@
 import type { ApiClient } from "@/lib/api/client";
-import type { AreaScore, Explanation, Score, SubScores } from "@/lib/api/types";
+import type { AreaScore, Score, SubScores } from "@/lib/api/types";
 
 export const GEO_ENTITY_ID = "21c5d4bd-e66e-423b-8f4c-8e569604f187";
 
@@ -23,13 +23,6 @@ export const liveScoreBody = {
     airport: 62.7906976744186,
   },
   weightsVersion: "v1-handtuned",
-  computedAt: "2026-09-29T03:12:03.491922Z",
-};
-
-export const liveExplanationBody = {
-  geoEntityId: GEO_ENTITY_ID,
-  explanation:
-    "This location's strongest factor is airport drive time (63/100).",
   computedAt: "2026-09-29T03:12:03.491922Z",
 };
 
@@ -80,12 +73,6 @@ export function makeScore(overrides: Partial<Score> = {}): Score {
   };
 }
 
-export function makeExplanation(
-  overrides: Partial<Explanation> = {},
-): Explanation {
-  return { ...liveExplanationBody, ...overrides };
-}
-
 export function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -102,8 +89,6 @@ export function stubClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getScore: unexpected("getScore"),
     getScoreByCoordinates: unexpected("getScoreByCoordinates"),
     getAreaByCoordinates: unexpected("getAreaByCoordinates"),
-    getScoreExplanation: unexpected("getScoreExplanation"),
-    getAreaExplanation: unexpected("getAreaExplanation"),
     getImprove: unexpected("getImprove"),
     getSimilar: unexpected("getSimilar"),
     getReach: unexpected("getReach"),

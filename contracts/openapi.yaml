@@ -478,9 +478,9 @@ paths:
 
   /area/explanation:
     get:
-      summary: Plain-language explanation for the area under a point (AI or rules).
+      summary: Plain-language explanation for the area under a point.
       description: >
-        Separate from `/area` so that never waits on an LLM call. With
+        Rule-based text from the area's factor scores. With
         `factors`, the text speaks to those priorities first.
       operationId: getAreaExplanation
       parameters:
@@ -1157,6 +1157,7 @@ components:
         source:
           type: string
           enum: [ai, rules]
+          description: Always `rules` today; `ai` is reserved for a possible return of LLM summaries.
         priorities:
           $ref: "#/components/schemas/Priorities"
 
@@ -1687,6 +1688,7 @@ components:
         source:
           type: string
           enum: [ai, rules]
+          description: Always `rules` today; `ai` is reserved for a possible return of LLM summaries.
         areaId:
           type: integer
           nullable: true

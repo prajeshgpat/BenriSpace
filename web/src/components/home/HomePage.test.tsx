@@ -81,7 +81,7 @@ describe("HomePage", () => {
       "Real neighborhoods",
       "Plan several stops",
       "See how far you can get",
-      "AI summary",
+      "Compare places",
       "Similar neighborhoods",
       "Improve this area",
     ]) {

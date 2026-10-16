@@ -41,7 +41,7 @@ multi-destination solver, not a lookup tool.
 | Areas | 35,943 density-capped road-hierarchy areas (0.1-1 sq mi) in `areas_slim`, simplified outlines; full detail in the PMTiles on R2 |
 | Routing | Whole region precomputed from Geofabrik extracts: `cell_travel`, `cell_graph`, `cell_hubs`, `rail_matrix` |
 | Migrations | 0002-0023 all applied |
-| Features live | score, area click, address search, Best areas, improve, similar areas, places, compare, AI explanations, optimizer, travel-time overlap with points of interest (auto-tuned mode and minutes), Ask Benri chat with map plans, MCP connector, data page, feedback, mobile sheet, Home, Login and Pricing (UI only) |
+| Features live | score, area click, address search, Best areas, improve, similar areas, places, compare, rule-based explanations (API only), optimizer, travel-time overlap with points of interest (auto-tuned mode and minutes), Ask Benri chat with map plans, MCP connector, data page, feedback, mobile sheet, Home, Login and Pricing (UI only) |
 | Not applied | chat streaming infra, Cloudflare edge cache |
 | Planned | automate the monthly v2.2 refresh, scoring v3, density-tiered grid for a 5 hr radius, auth and tiers |
 
@@ -79,7 +79,8 @@ multi-destination solver, not a lookup tool.
 **Phase 3 pieces already shipped.**
 
 - AI-written, grounded score explanations (Haiku 4.5, prompt `expl-v2`, cache and
-  a $5/month cap).
+  a $5/month cap). Removed 2026-10-15 to save credits, along with the app's Summary card;
+  the explanation endpoints stay in the API with rule-based text.
 - `/v1/improve` and the Improve card with named places (migration 0004).
 - `/v1/similar` (first with pgvector embeddings, migration 0007; now SQL distance over per-metro
   z-scores, and computed in the browser from the area file).

@@ -11,7 +11,7 @@ BenriSpace scores how convenient a location is to live at, 0 to 100, for the New
 | `GET /score` | Score for one address or coordinate | live |
 | `GET /score/{geoEntityId}/explanation` | Plain-language explanation of a score | live |
 | `GET /area` | Score for the road-bounded area under a point | live |
-| `GET /area/explanation` | AI-written (or rule-based) explanation for the area under a point | live |
+| `GET /area/explanation` | Rule-based explanation for the area under a point | live |
 | `GET /isochrone` | Area reachable from a point in N minutes (walk, drive, rail) as a GeoJSON polygon | live |
 | `POST /triangulate` | Best locations that satisfy several commute anchors, with the isochrone polygons | live (routed; straight-line circles only where routing data is missing) |
 | `POST /optimize` | Neighborhoods that minimise weekly travel to several destinations (work, a store brand, a gym) | live |
@@ -293,7 +293,7 @@ Errors:
 
 ## `GET /area/explanation`
 
-The explanation for the road-bounded area under a point, written by the LLM layer when available and rule-based otherwise. It resolves the area exactly as `GET /area` does; it is a separate endpoint so `/area` stays fast and never waits on an LLM call. Results are cached for 5 minutes (and AI text is cached server-side).
+The rule-based explanation for the road-bounded area under a point. It resolves the area exactly as `GET /area` does; it is a separate endpoint so a client can refresh the text for new `factors` without re-scoring. Results are cached for 5 minutes.
 
 | Parameter | In | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -310,21 +310,21 @@ Example response (invented, for shape only; not captured from production):
 
 ```json
 {
-  "explanation": "This area scores 77 overall, driven by excellent transit and everyday amenities close by. Strengths: transit access 99; cafe access 98. Weaknesses: distance from convenience stores is only 2.",
-  "source": "ai",
+  "explanation": "This area's strongest factor is transit access (99/100). Its weakest factor is distance from convenience stores (2/100). Other factors: cafe access 98/100, ...",
+  "source": "rules",
   "areaId": 5432,
   "neighborhood": "Park Slope, Brooklyn",
   "priorities": ["grocery", "gym", "cafe", "restaurant", "bar", "shopping", "gasConvenience", "transit", "school", "traffic", "emergencyCorridor", "airport", "recreation"]
 }
 ```
 
-With `factors` the text speaks to those priorities first. The AI text (prompt version `expl-v2`) is written from an evidence packet: the selected factors, every factor's score with where it sits in the metro (for example "top 3% of the metro"), the neighborhood name (or, without one, the road-bounded area name), up to two named nearby places per selected place-based factor with distances in feet or miles, and the selected factors that are strongest and weakest against the metro median. It names at least two of those places when they exist, states one tradeoff ("Tradeoff: ...") and one suggestion ("Tip: ..."), and runs 60 to 90 words. A reply is accepted only if every number comes from the evidence, only feet and miles are used, every capitalised proper noun is in the evidence (place and street names), and praise words such as "excellent" appear only for a selected factor in the top 5% of the metro; otherwise the rule-based text is returned, which also leads with the selected priorities. The server-side cache key includes the sorted selected factors.
+With `factors` the text speaks to those priorities first.
 
-`source` is `"ai"` or `"rules"` (the same rule-based text `/area` returns in its `explanation` field). Errors are the same as `GET /area`: 400 `invalid_request`, 404 `area_not_found`, 422 `out_of_coverage`.
+`source` is always `"rules"` (`"ai"` is reserved; the LLM-written summary was removed in October 2026). Without `factors` the text is the same one `/area` returns in its `explanation` field. Errors are the same as `GET /area`: 400 `invalid_request`, 404 `area_not_found`, 422 `out_of_coverage`.
 
 ## `GET /score/{geoEntityId}/explanation`
 
-A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. The text is written by an LLM, constrained to the stored scores and distances (every number in it must come from them, and only feet and miles are used), and falls back to the rule-based text (`api/explain.py`) whenever the LLM is unavailable, over budget or fails validation. The `source` field says which one you got: `"ai"` or `"rules"`.
+A short plain-language explanation of one score: the strongest factor, the weakest, the rest, and (when known) the distance to the nearest feature for the strongest and weakest. The text is rule-based (`api/explain.py`), so `source` is always `"rules"`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
