@@ -17,13 +17,16 @@ export const EXAMPLE_ADDRESSES = [
 /** The split-screen app. `/` is the static home page. */
 export const APP_PATH = "/app";
 
-/** The tabs on the left of the header. */
+/** The tabs on the left of the header; the logo links Home. */
 export const NAV_ITEMS = [
-  { href: "/", label: "Home" },
-  { href: APP_PATH, label: "App" },
-  { href: "/docs", label: "API" },
+  { href: APP_PATH, label: "Map" },
+  { href: "/business", label: "For Business" },
+  { href: "/docs", label: "Developers" },
   { href: "/pricing", label: "Pricing" },
 ] as const;
+
+export const API_BASE_URL = "https://api.benrispace.com";
+export const MCP_URL = `${API_BASE_URL}/mcp`;
 
 /** Account controls on the far right: settings icon, then Login last. */
 export const SETTINGS_ITEM = { href: "/settings", label: "Settings" } as const;

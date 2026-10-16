@@ -30,17 +30,17 @@ describe("MobileMenu", () => {
     const links = within(panel()).getAllByRole("link");
     expect(links.map((l) => l.textContent)).toEqual([
       "BenriSpace",
-      "Home",
-      "App",
-      "API",
+      "Map",
+      "For Business",
+      "Developers",
       "Pricing",
       "Settings",
       "Login",
     ]);
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
       "/",
-      "/",
       "/app",
+      "/business",
       "/docs",
       "/pricing",
       "/settings",
@@ -61,7 +61,7 @@ describe("MobileMenu", () => {
       "aria-current",
       "page",
     );
-    expect(within(panel()).getByRole("link", { name: "Home" })).not.toHaveAttribute(
+    expect(within(panel()).getByRole("link", { name: "Map" })).not.toHaveAttribute(
       "aria-current",
     );
   });

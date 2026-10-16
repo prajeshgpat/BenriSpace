@@ -21,7 +21,7 @@
 - **Compare** 2-4 pinned places side by side.
 - **Public API**, no key needed today: [docs/api.md](docs/api.md). **MCP connector** so Claude can use BenriSpace: `https://api.benrispace.com/mcp`.
 
-Pages: Home (`/`, the explainer), the app (`/app`, search and score panel beside the map), Data sources, API docs, Settings, and Pricing (Free $0, Pro $9/mo or $90/yr as a placeholder, Business contact us) and Login pages. Both are UI only: auth and payments are not wired yet.
+Pages: Home (`/`, the explainer, linked from the logo) and the header tabs Map (`/app`, search and score panel beside the map), For Business (`/business`), Developers (`/docs`: API and MCP connector sections, linking to Data sources at `/data`) and Pricing (Free $0, Pro $9/mo or $90/yr as a placeholder, Business contact us); plus Settings and Login. Pricing and Login are UI only: auth and payments are not wired yet.
 
 Known limits: scores are per road-bounded area, so every point in an area shares its score; school ratings are district-level; travel times are free-flow (no live traffic) and train times use weekday morning-peak schedules; buses count toward transit but are not routed.
 
