@@ -31,6 +31,8 @@ multi-destination solver, not a lookup tool.
   primary revenue path: sell the convenience and optimizer scores to real estate
   platforms, relocation companies, brokerages and multifamily marketers (closest
   comp: Walk Score's licensing). The consumer app is the front door and demo.
+  Reverse-search and location-intelligence ideas (amenity gaps, growth areas, factor
+  quality, score history) are in PLANNED.md Wave 8.
 
 ## Status at a glance (2026-10-11)
 
