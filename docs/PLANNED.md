@@ -257,6 +257,9 @@ access, seasonal considerations.
 
 ## Expansion
 
+- [ ] **Data platform** (Dagster + dbt-duckdb on R2, ephemeral spot runner, data quality
+  gates): moves all pipeline compute off the owner's Mac. Plan and phases in
+  [DATA_PLATFORM.md](DATA_PLATFORM.md).
 - [ ] **~5 hour radius** (density-tiered grid, R2 offload; fits the free tier as modelled).
 - [ ] **US and territories** (estimated 2-4 GB of Postgres, 1.5-2 GB with R2 offload;
   needs Supabase Pro and national data sources in place of state ones).

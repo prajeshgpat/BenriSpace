@@ -14,7 +14,7 @@ features and docs/ARCHITECTURE.md for the system design.
 - `common/`: DB layer, Overpass client, LLM client (`llm.py`), geo and unit helpers
 - `contracts/`: `openapi.yaml` (source of truth for the API), `schema.sql`, numbered `migrations/`
 - `infra/`: Terraform for AWS and Cloudflare
-- `docs/`: ARCHITECTURE, SCORING, ROADMAP, PLANNED, api, data-sources
+- `docs/`: ARCHITECTURE, SCORING, ROADMAP, PLANNED, DATA_PLATFORM (target pipeline), api, data-sources
 
 ## Commands
 
