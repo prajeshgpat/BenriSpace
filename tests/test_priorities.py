@@ -6,18 +6,18 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from api import ai_explain, improve, main, similar
+from api import improve, main, similar
 from api.explain import build_explanation
 from api.mapdata import InvalidMapRequest
 from api.metro_stats import ColumnStats, get_stats
 from api.priorities import TOGGLEABLE_FACTORS, parse_priorities
 from api.schemas import SubScores
 from scoring.similarity import SIMILARITY_COLUMNS
-from tests.test_ai_explain import client  # (fixture reused from the AI explanation tests)
 from tests.test_api_area import CLICK
 from tests.test_api_improve import LAT, LON, OWN, aggregate, cell, miles_lat
 from tests.test_api_improve import FakeConn as ImproveConn
 from tests.test_api_similar import cand, scores
+from tests.test_explanation_endpoints import client  # (fixture reused from the explanation tests)
 
 # --- parsing ----------------------------------------------------------------
 
@@ -210,152 +210,10 @@ def test_get_stats_degrades_without_a_database():
     assert get_stats(None, "no-such-version") is None
 
 
-# --- evidence ---------------------------------------------------------------
+# --- rule-based explanations ----------------------------------------------
 
 SUBS = SubScores(grocery=91.4, transit=72.0, gas_convenience=12.0, cafe=99.0)
 NEAREST = {"grocery": 300.0, "transit": 2000.0, "cafe": 100.0}
-STATS = {
-    f"{k}_score": ColumnStats(50.0, 10.0, tuple(float(i) for i in range(101)))
-    for k in ("grocery", "transit", "gas_convenience", "cafe")
-}
-PLACES = {
-    "grocery": [{"name": "Key Food", "distance": "0.2 mi"}, {"name": "Aldi", "distance": "0.3 mi"}],
-    "cafe": [{"name": "Cafe by The Girls", "distance": "200 ft"}],
-    "transit": [{"name": "7 AV/3 ST", "distance": "200 ft"}],
-    "gym": [{"name": "Hidden Gym", "distance": "0.1 mi"}],
-}
-
-
-def evidence(factors="grocery,cafe,transit"):
-    return ai_explain.build_evidence(
-        SUBS, NEAREST, 63.6, "Area bounded by 4th Ave and Union St", "v2-handtuned",
-        priorities=parse_priorities(factors), stats=STATS, places=PLACES,
-    )  # fmt: skip
-
-
-def test_evidence_has_priorities_percentiles_places_and_imperial_only():
-    ev = evidence()
-    assert ev["priorities"] == ["grocery access", "transit access", "cafe access"]
-    assert ev["place"] == "Area bounded by 4th Ave and Union St"
-    by = {f["factor"]: f for f in ev["factors"]}
-    assert by["grocery"]["selected"] and not by["gasConvenience"]["selected"]
-    assert by["grocery"]["percentile"] == 91 and by["grocery"]["metroMedian"] == 50
-    assert by["cafe"]["vsMetro"] == "top 1% of the metro"
-    # Places only for selected factors, keyed by label; gym is not selected.
-    assert set(ev["places"]) == {"grocery access", "cafe access", "transit access"}
-    assert ev["places"]["grocery access"][0] == {"name": "Key Food", "distance": "0.2 mi"}
-    assert ev["strongestSelected"][0] == "cafe access"
-    dumped = str(ev).lower()
-    assert "km" not in dumped and "meter" not in dumped and "_m'" not in dumped
-
-
-def test_vs_metro_text():
-    assert ai_explain.vs_metro_text(99) == "top 1% of the metro"
-    assert ai_explain.vs_metro_text(92) == "top 8% of the metro"
-    assert ai_explain.vs_metro_text(70) == "ahead of 70% of the metro"
-    assert ai_explain.vs_metro_text(30) == "ahead of only 30% of the metro"
-    assert ai_explain.vs_metro_text(0) == "bottom 1% of the metro"
-
-
-def test_fetch_priority_places_limits_and_survives_errors(monkeypatch):
-    calls = []
-
-    def fake(conn, lat, lon, factor, radius, limit):
-        calls.append((factor, limit))
-        if factor == "gym":
-            raise RuntimeError("boom")
-        return [{"name": f"{factor} place", "distance_label": "0.1 mi"}]
-
-    monkeypatch.setattr(ai_explain, "places_for_factor", fake)
-    out = ai_explain.fetch_priority_places(None, 1.0, 2.0, ["grocery", "gym", "gasStation"])
-    assert out == {"grocery": [{"name": "grocery place", "distance": "0.1 mi"}]}
-    assert calls == [("grocery", 2), ("gym", 2)]  # gasStation has no named-place evidence
-
-
-# --- validation -------------------------------------------------------------
-
-GOOD = {
-    "summary": (
-        "Grocery access is strong, with Key Food, 0.2 mi and Aldi, 0.3 mi nearby. "
-        "Tradeoff: transit access is ahead of 72% of the metro. "
-        "Tip: use Cafe by The Girls, 200 ft away."
-    ),
-    "strengths": [],
-    "weaknesses": [],
-}
-
-
-def test_validator_accepts_grounded_named_places():
-    assert ai_explain.validate_output(GOOD, evidence())
-
-
-def test_validator_rejects_invented_proper_noun():
-    bad = dict(GOOD, summary=GOOD["summary"].replace("Aldi", "Trader Joe's"))
-    assert not ai_explain.validate_output(bad, evidence())
-    bad = dict(GOOD, summary=GOOD["summary"] + " It sits near Manhattan.")
-    assert not ai_explain.validate_output(bad, evidence())
-
-
-def test_validator_normalises_apostrophes_and_ignores_sentence_starts():
-    ev = evidence()
-    ev["places"]["grocery access"][0]["name"] = "Joe’s Market"
-    ok = dict(GOOD, summary="Grocery is close: Joe's Market, 0.2 mi. Tradeoff: slow transit.")
-    assert ai_explain.validate_output(ok, ev)
-
-
-@pytest.mark.parametrize(
-    "word", ["excellent", "exceptional", "convenient lifestyle", "everyday amenities"]
-)
-def test_validator_rejects_filler_unless_earned(word):
-    text = f"Transit is ahead of 72% of the metro, a {word} point. Tradeoff: none."
-    low = dict(GOOD, summary=text)
-    assert not ai_explain.validate_output(low, evidence("transit"))
-    # cafe is selected and at the 99th percentile, so praise is earned.
-    assert ai_explain.validate_output(low, evidence("cafe,transit"))
-
-
-def test_filler_not_earned_by_an_unselected_factor():
-    ev = evidence("transit")  # cafe (99th) is in the evidence but not selected
-    assert not ai_explain.filler_allowed(ev)
-    assert not ai_explain.validate_output(dict(GOOD, summary="An excellent spot for transit."), ev)
-
-
-def test_validator_rejects_long_text_and_invented_numbers():
-    assert not ai_explain.validate_output(dict(GOOD, summary="word " * 120), evidence())
-    assert not ai_explain.validate_output(dict(GOOD, summary="Key Food, 0.9 mi away."), evidence())
-
-
-# --- caching and wiring -----------------------------------------------------
-
-
-def test_cache_key_varies_with_selected_factors(monkeypatch):
-    keys = []
-
-    def fake(conn, **kw):
-        keys.append(kw["cache_key"])
-
-    monkeypatch.setattr(ai_explain, "complete_json", fake)
-    monkeypatch.setattr(ai_explain, "get_stats", lambda *a, **k: None)
-    for f in ("grocery,cafe", "cafe,grocery", "grocery,transit", None):
-        ai_explain.ai_explanation(
-            None, "k", SUBS, NEAREST, 63.6, "x", "v", priorities=parse_priorities(f)
-        )
-    assert keys[0] == keys[1]  # order of the request does not matter
-    assert len({keys[0], keys[2], keys[3]}) == 3
-    assert ai_explain.PROMPT_VERSION == "expl-v2"
-
-
-def test_system_prompt_rules():
-    s = ai_explain.SYSTEM
-    for needle in (
-        "priorities",
-        "Tradeoff:",
-        "Tip:",
-        "65 and 85 words",
-        "Feet and miles",
-        "named places",
-    ):
-        assert needle in s
 
 
 def test_rule_based_fallback_leads_with_priorities():
@@ -368,16 +226,7 @@ def test_rule_based_fallback_leads_with_priorities():
 # --- explanation endpoints --------------------------------------------------
 
 
-def test_explanation_endpoints_pass_priorities_to_the_ai_layer(client, monkeypatch):
-    seen = []
-
-    def fake(conn, key, *args, **kw):
-        seen.append((key, kw["priorities"].factors, kw["lat"] is not None))
-
-    monkeypatch.setattr(main, "ai_explanation", fake)
-    monkeypatch.setattr(
-        main, "get_geo_entity_by_id", lambda c, i: {"latitude": 40.7, "longitude": -73.9}
-    )
+def test_explanation_endpoints_speak_to_priorities(client):
     r = client.get(
         "/v1/area/explanation", params={"lat": CLICK[0], "lon": CLICK[1], "factors": "cafe,transit"}
     )
@@ -386,7 +235,6 @@ def test_explanation_endpoints_pass_priorities_to_the_ai_layer(client, monkeypat
     assert body["explanation"].startswith("For your priorities,")
     r = client.get(f"/v1/score/{uuid4()}/explanation", params={"factors": "gym"})
     assert r.json()["priorities"] == ["gym"]
-    assert [s[1:] for s in seen] == [(["cafe", "transit"], True), (["gym"], True)]
     # No factors: the plain rule-based text, 13 priorities echoed.
     body = client.get("/v1/area/explanation", params={"lat": CLICK[0], "lon": CLICK[1]}).json()
     assert body["explanation"].startswith("This area's strongest") and len(body["priorities"]) == 13

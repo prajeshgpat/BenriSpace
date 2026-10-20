@@ -11,14 +11,14 @@ describe("SiteNav", () => {
     render(<SiteNav />);
     const links = screen.getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Home",
-      "App",
-      "API",
+      "Map",
+      "For Business",
+      "Developers",
       "Pricing",
     ]);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/",
       "/app",
+      "/business",
       "/docs",
       "/pricing",
     ]);
@@ -31,31 +31,27 @@ describe("SiteNav", () => {
       "aria-current",
       "page",
     );
-    for (const name of ["Home", "App", "API"]) {
+    for (const name of ["Map", "For Business", "Developers"]) {
       expect(screen.getByRole("link", { name })).not.toHaveAttribute(
         "aria-current",
       );
     }
   });
 
-  it("matches the path exactly, so /app is not Home", () => {
+  it("marks Map on /app", () => {
     pathname.mockReturnValue("/app");
     render(<SiteNav />);
-    expect(screen.getByRole("link", { name: "App" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Map" })).toHaveAttribute(
       "aria-current",
       "page",
-    );
-    expect(screen.getByRole("link", { name: "Home" })).not.toHaveAttribute(
-      "aria-current",
     );
   });
 
-  it("marks Home on /", () => {
+  it("marks no tab on the home page, which the logo links", () => {
     pathname.mockReturnValue("/");
     render(<SiteNav />);
-    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    for (const link of screen.getAllByRole("link")) {
+      expect(link).not.toHaveAttribute("aria-current");
+    }
   });
 });

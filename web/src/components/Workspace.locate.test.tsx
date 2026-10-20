@@ -4,7 +4,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApiClient, type ApiClient } from "@/lib/api/client";
-import { jsonResponse, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
+import { jsonResponse, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
 import { Workspace } from "./Workspace";
@@ -86,9 +86,7 @@ function setup(search = "", respond?: (url: string) => Response) {
   const fetchMock = vi.fn<typeof fetch>(async (input) => {
     const url = String(input);
     if (respond) return respond(url);
-    return url.includes("/explanation")
-      ? jsonResponse(liveExplanationBody)
-      : jsonResponse(liveScoreBody);
+    return jsonResponse(liveScoreBody);
   });
   const client: ApiClient = {
     ...createApiClient({ baseUrl: "http://api.test/v1", fetch: fetchMock }),

@@ -86,7 +86,7 @@ import { SimilarCard } from "./SimilarCard";
 import { ErrorNotice } from "./ErrorNotice";
 import { LocateButton } from "./LocateButton";
 import { ResultSkeleton } from "./ResultSkeleton";
-import { ScoreHeader, ScoreSummary } from "./ScoreResult";
+import { ScoreHeader } from "./ScoreResult";
 import { SiteFooter } from "./SiteFooter";
 import { BestAreas } from "./map/BestAreas";
 import { MapErrorBoundary } from "./map/MapErrorBoundary";
@@ -412,7 +412,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     [selection, weights],
   );
 
-  const { state: lookup, retry } = useScoreLookup(target, client, priorities);
+  const { state: lookup, retry } = useScoreLookup(target, client);
   // The overall score is normalised to the selected factors and weights, with
   // the same arithmetic as the map colours and the best-areas list.
   const state: LookupState = useMemo(
@@ -434,11 +434,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         : null,
     [overlapPick],
   );
-  const { state: pickLookup, retry: retryPick } = useScoreLookup(
-    overlapTarget,
-    client,
-    priorities,
-  );
+  const { state: pickLookup, retry: retryPick } = useScoreLookup(overlapTarget, client);
   const pickState: LookupState = useMemo(
     () => normaliseLookup(pickLookup, selection.factors, weights),
     [pickLookup, selection.factors, weights],
@@ -1282,12 +1278,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         />
         {state.status === "success" && !overlapShown ? (
           <>
-            <ScoreSummary
-              score={state.score}
-              explanation={state.explanation}
-              client={client}
-              target={readableAddress ?? state.address}
-            />
             <ImproveCard
               coordinates={scoreCoordinates ?? { lat: state.score.latitude, lon: state.score.longitude }}
               client={client}

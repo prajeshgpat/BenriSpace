@@ -324,14 +324,12 @@ export function ExtraIcon({
   name,
   className,
 }: {
-  name: "summary" | "similar" | "improve";
+  name: "compare" | "similar" | "improve";
   className?: string;
 }) {
   return (
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false" {...GLYPH}>
-      {name === "summary" && (
-        <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" />
-      )}
+      {name === "compare" && <path d="M4 4h7v16H4zM13 4h7v16h-7z" />}
       {name === "similar" && <path d="M4 5h9v9H4zM11 10h9v9h-9z" />}
       {name === "improve" && <path d="M12 20V6M6 12l6-6 6 6" />}
     </svg>

@@ -9,7 +9,6 @@ import { ApiError, isApiError } from "./errors";
 import type {
   AreaGeometry,
   AreaInfo,
-  AreaExplanation,
   AreaScore,
   ChatContext,
   ChatPlan,
@@ -18,14 +17,12 @@ import type {
   ChatResult,
   ChatTurn,
   DataSource,
-  Explanation,
   Feedback,
   Improve,
   ImproveBestNearby,
   ImproveBetterArea,
   ImprovePlace,
   ImproveSuggestion,
-  ExplanationSource,
   Position,
   PriorityQuery,
   Reach,
@@ -116,16 +113,6 @@ export interface ApiClient {
   ): Promise<ReverseGeocode>;
   getMapCells(query: MapCellsQuery, options?: RequestOptions): Promise<MapCells>;
   getMapTop(query: MapTopQuery, options?: RequestOptions): Promise<MapTop>;
-  getScoreExplanation(
-    geoEntityId: string,
-    options?: RequestOptions & PriorityQuery,
-  ): Promise<Explanation>;
-  /** Slower than `getAreaByCoordinates`: the text may be written by the LLM. */
-  getAreaExplanation(
-    lat: number,
-    lon: number,
-    options?: RequestOptions & PriorityQuery,
-  ): Promise<AreaExplanation>;
   /** What would raise the score nearby: named places and better spots. */
   getImprove(
     lat: number,
@@ -386,44 +373,6 @@ export function parseAreaScore(body: unknown): AreaScore {
     areaId: body.areaId,
     area,
     explanation: body.explanation,
-  };
-}
-
-function parseSource(value: unknown): ExplanationSource | undefined {
-  return value === "ai" || value === "rules" ? value : undefined;
-}
-
-export function parseAreaExplanation(body: unknown): AreaExplanation {
-  if (
-    !isObject(body) ||
-    typeof body.explanation !== "string" ||
-    (body.source !== "ai" && body.source !== "rules") ||
-    !(body.areaId === null || isFiniteNumber(body.areaId))
-  ) {
-    throw invalidResponse("area explanation");
-  }
-  return {
-    explanation: body.explanation,
-    source: body.source,
-    areaId: body.areaId,
-    priorities: parseFactors(body.priorities),
-  };
-}
-
-export function parseExplanation(body: unknown): Explanation {
-  if (
-    !isObject(body) ||
-    !isNonEmptyString(body.geoEntityId) ||
-    typeof body.explanation !== "string" ||
-    typeof body.computedAt !== "string"
-  ) {
-    throw invalidResponse("explanation");
-  }
-  return {
-    geoEntityId: body.geoEntityId,
-    explanation: body.explanation,
-    computedAt: body.computedAt,
-    ...(parseSource(body.source) ? { source: parseSource(body.source) } : {}),
   };
 }
 
@@ -1033,16 +982,6 @@ export function createApiClient({
       return parseAreaScore(await getJson(`/area?${params}`, options));
     },
 
-    async getAreaExplanation(lat, lon, { factors, weights, ...options } = {}) {
-      const params = priorityParams(
-        { factors, weights },
-        new URLSearchParams({ lat: String(lat), lon: String(lon) }),
-      );
-      return parseAreaExplanation(
-        await getJson(`/area/explanation?${params}`, options),
-      );
-    },
-
     async getImprove(lat, lon, { factors, weights, ...options } = {}) {
       const params = priorityParams(
         { factors, weights },
@@ -1098,16 +1037,6 @@ export function createApiClient({
       return parseTriangulate(
         await requestJson("/triangulate", { method: "POST", body }, options),
       );
-    },
-
-    async getScoreExplanation(geoEntityId, { factors, weights, ...options } = {}) {
-      const params = priorityParams(
-        { factors, weights },
-        new URLSearchParams(),
-      );
-      const query = params.size > 0 ? `?${params}` : "";
-      const path = `/score/${encodeURIComponent(geoEntityId)}/explanation${query}`;
-      return parseExplanation(await getJson(path, options));
     },
 
     async suggestAddresses(query, { limit = 8, ...options } = {}) {

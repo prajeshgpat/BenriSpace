@@ -6,7 +6,7 @@ what is done and the decisions log; this file is the backlog to pull from. Each 
 `[~]` built or partly done (not fully in production), `[x]` done (move done items
 to ROADMAP.md).
 
-Last updated 2026-10-11.
+Last updated 2026-10-15.
 
 ---
 
@@ -157,9 +157,88 @@ Last updated 2026-10-11.
 - [ ] Public API docs with keys and an OpenAPI playground.
 - [ ] Saved places, saved anchors, shareable reports, score-change alerts.
 
+## Wave 8 — Location intelligence: reverse search and score depth (ideas)
+
+Today the product answers "what is around this place?". These ideas turn it around to
+"where is demand high but supply low?" and give the score more depth. They are mostly sold
+to businesses (see the Business model in ROADMAP.md). Shared rule: densities, population and
+place counts stay internal (CLAUDE.md), so results are shown as ranks or indexes ("top 2% gym
+opportunity"), never raw counts.
+
+**Shared building block: catchment demand.** For each area, add up the population
+(`feature_store.pop_density_per_sq_mi` × cell land area) of every cell that can reach it within
+N minutes. Use the routed `cell_travel` / `cell_graph` times and each cell's `travel_mode`.
+Store the result in a new `area_catchments` table (new migration) during the monthly
+`scoring.area_run`. Every item below reuses it.
+
+- [ ] **(a) Amenity gap for vendors.** An area with high catchment population and good scores
+  on most factors, but a low score on one, is a gap for that missing factor. Gap =
+  catchment population ÷ places of that category reachable within the same minutes, kept only
+  where the area's other selected factors are above the metro median, which suggests spending
+  power. Vendor options: leave out their own brand's stores (`places.brand`), require
+  co-tenants (for example Whole Foods or Target already within 10 minutes) and choose a
+  catchment size. A "what if" mode puts a hypothetical place on a cell and rescores the areas
+  around it (`scoring/density.py` with one injected place), showing how many people gain
+  access and which area scores rise. Serve it from `GET /v1/gaps?category=&minutes=`, built
+  from a batch `area_gaps` table. A public "grocery desert" map, checked against the USDA Food
+  Access Research Atlas, is both a demo and a press hook. *Depends on:* catchments; Census ACS
+  income and car ownership (block group) to define deserts. "Improve this area" already does
+  the per-address version.
+- [ ] **(b) Growth areas for real estate.** Low population density but high factor scores means
+  the amenities are already there and the housing has not caught up. *Caveat:* commercial
+  districts, malls and office parks look the same (few residents, many amenities). Filter on
+  residential land use (OSM `landuse=residential`, county parcel data) and add supply-side signals:
+  building permits (NYC DOB, NJ and CT municipal open data), ACS population change, and
+  station-area rezonings. Output: a ranked "under-housed for its amenities" list.
+  *Fair housing:* phrase results by amenities and supply, never by who lives there.
+- [ ] **(c) Factor quality and depth.** A Whole Foods or ShopRite is not worth the same as a
+  corner store. Give each place a weight within its factor: store type (OSM
+  `shop=supermarket` vs `convenience`), brand tier (`brand:wikidata` mapped to a small hand-kept
+  table: full-line grocer, discount grocer, specialty, bodega), building footprint area from OSM
+  buildings as a size proxy, and opening hours. Gyms: big-box vs studio. Restaurants and cafes:
+  chain vs independent mix and variety (number of distinct cuisines). The density scoring then
+  sums weights instead of counts. Ratings and reviews need a paid Places API whose terms
+  usually forbid storing them, so start with open signals only. This replaces the "quality
+  ratings" item in the Data backlog.
+- [ ] **(d) Score history: growing or declining.** Snapshot `area_scores` every monthly run into an
+  `area_score_history` table (area, model version, month, per-factor scores). Compare only
+  within one model version; otherwise a model change shows up as fake growth. When the model
+  changes, rescore the stored monthly feature snapshots with the new model. **Backfill:** the
+  OSM full-history extracts (Geofabrik internal `.osh.pbf`, or the ohsome API) can rebuild
+  place counts for past years with today's model, so trends exist from day one instead of
+  after a year of snapshots. Outputs: a 1/3/5-year trend arrow per area and factor,
+  "fastest-improving neighborhoods" rankings, score-change alerts for saved places, and
+  a trend feature for appraisers and AVMs.
+- [ ] **(e) More uses beyond the core product.**
+  - **Office location for employers.** The optimizer in reverse: given employees' home
+    areas (uploaded in aggregate, no personal addresses stored), rank office sites by total or
+    worst-case commute. Return-to-office planning is a paying B2B need.
+  - **EV charging gaps.** Chargers (NREL AFDC API, free) against catchment population and
+    car-dependent areas. Charging networks and utilities buy siting data, and federal NEVI
+    funding drives demand.
+  - **Childcare and healthcare deserts.** Licensed childcare (state registries) and
+    urgent care, pharmacies and primary care (CMS / NPPES) as new factors and as gap layers.
+    Useful to families, seniors, insurers and public-health grants.
+  - **Late-night and weekend convenience.** Score from OSM `opening_hours`: what is open at
+    10 pm or on Sunday. Useful to shift workers and a clear point of difference from Walk Score.
+  - **Accessibility score.** Step-free stations (MTA elevator and escalator data), curb ramps
+    and `wheelchair=*` tags. For seniors, people with disabilities and parents with strollers.
+  - **"Can I skip the car?" verdict and time budget.** Turn scores into weekly errand minutes
+    and the yearly cost of owning a car versus not. Easier for consumers to grasp than a score
+    out of 100.
+  - **Resilience / single point of failure.** How much an area's convenience depends on one
+    store or one train line (redundancy across the reachable places). Interesting to
+    insurers and planners.
+  - **Life-stage presets.** New parents (daycare, pediatrician, playgrounds), retirees
+    (healthcare, pharmacy, step-free transit), dog owners (dog parks, vets), students. These
+    are new factors plus presets in the existing UI.
+  - **Distribution:** an embeddable score badge for landlords and listings (backlinks plus a
+    B2B entry point), a browser extension that shows the score on listing sites, and monthly
+    data-journalism rankings ("most convenient neighborhoods") for SEO and press.
+
 ## Data backlog
 
-- [ ] Quality ratings for gyms, restaurants, cafes, groceries (fills the v3 placeholders).
+- [ ] Quality ratings for gyms, restaurants, cafes, groceries (fills the v3 placeholders; see Wave 8 (c)).
 - [ ] School-level ratings from state report cards (NYSED, NJ, CT EdSight).
 - [ ] BTS National Transportation Noise Map.
 - [ ] NYC 311 noise complaints and DOB construction permits.
@@ -178,9 +257,12 @@ access, seasonal considerations.
 
 ## Expansion
 
+- [ ] **Data platform** (Dagster + dbt-duckdb on R2, ephemeral spot runner, data quality
+  gates): moves all pipeline compute off the owner's Mac. Plan and phases in
+  [DATA_PLATFORM.md](DATA_PLATFORM.md).
 - [ ] **~5 hour radius** (density-tiered grid, R2 offload; fits the free tier as modelled).
 - [ ] **US and territories** (estimated 2-4 GB of Postgres, 1.5-2 GB with R2 offload;
   needs Supabase Pro and national data sources in place of state ones).
 - [ ] **World** — separate project: storage is ~20-30 GB, but data sources (density,
   schools, transit, airports) are mostly US-only today.
-- [ ] Commute-aware scoring per user; rent overlay; score history and alerts.
+- [ ] Commute-aware scoring per user; rent overlay; score history and alerts (Wave 8 (d)).

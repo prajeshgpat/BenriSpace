@@ -130,8 +130,6 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         return json(route, { code: "area_not_found", message: "No area" }, 404);
       case "/score":
         return json(route, score);
-      case "/area/explanation":
-        return json(route, { explanation: "A well connected area.", source: "rules", areaId: null, priorities: [] });
       case "/map/scores":
         if (options.noScoreFile) return json(route, { code: "unavailable", message: "no" }, 503);
         return route.fulfill({

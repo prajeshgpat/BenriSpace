@@ -11,7 +11,6 @@
 - **Score out of 100** for any address or map click, built from the factors you choose: groceries, restaurants, cafes, bars, gym, shopping, public transit, airport, gas and convenience, traffic, schools, noise corridor and recreation. Scores measure what you can reach on foot (or by a short drive in car-dependent areas) on one scale for NY, NJ and CT. A missing measurement shows "No data", never 0.
 - **Neighborhood areas.** Clicking the map outlines the road-bounded area under it (35,943 areas, about 0.1 to 1 sq mi, smaller where it is denser) and names it ("Park Slope, Brooklyn"). It falls back to the grid cell when no area fits.
 - **Best areas** ranked for your factors, with numbered map markers (hover or focus one for its name and score), presets (Daily errands, Family, Commuter, Quiet) and importance sliders.
-- **AI summary** of a score (Claude Haiku 4.5, grounded in that area's data only, capped at about $5/month, with a rule-based fallback).
 - **Improve this area:** which nearby additions would lift weak factors, with named places.
 - **Similar areas** found by comparing per-metro z-scored factor profiles (in the browser from the area file, with the API as fallback).
 - **Multi-stop planning** (`/v1/optimize`): near work, Trader Joe's and Planet Fitness at once, ranked by weekly travel time (openrouteservice refinement).
@@ -21,7 +20,7 @@
 - **Compare** 2-4 pinned places side by side.
 - **Public API**, no key needed today: [docs/api.md](docs/api.md). **MCP connector** so Claude can use BenriSpace: `https://api.benrispace.com/mcp`.
 
-Pages: Home (`/`, the explainer), the app (`/app`, search and score panel beside the map), Data sources, API docs, Settings, and Pricing (Free $0, Pro $9/mo or $90/yr as a placeholder, Business contact us) and Login pages. Both are UI only: auth and payments are not wired yet.
+Pages: Home (`/`, the explainer, linked from the logo) and the header tabs Map (`/app`, search and score panel beside the map), For Business (`/business`), Developers (`/docs`: API and MCP connector sections, linking to Data sources at `/data`) and Pricing (Free $0, Pro $9/mo or $90/yr as a placeholder, Business contact us); plus Settings and Login. Pricing and Login are UI only: auth and payments are not wired yet.
 
 Known limits: scores are per road-bounded area, so every point in an area shares its score; school ratings are district-level; travel times are free-flow (no live traffic) and train times use weekday morning-peak schedules; buses count toward transit but are not routed.
 

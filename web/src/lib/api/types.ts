@@ -37,22 +37,6 @@ export type Score = Omit<Schemas["ScoreResponse"], "subScores"> & {
 
 export type SchoolInfo = NonNullable<Schemas["SchoolInfo"]>;
 
-export type ExplanationSource = "ai" | "rules";
-
-export type Explanation = Schemas["ExplanationResponse"] & {
-  /** Who wrote the text; absent from older API responses. */
-  source?: ExplanationSource;
-};
-
-/** The point-based explanation, which may be written by the LLM. */
-export interface AreaExplanation {
-  explanation: string;
-  source: ExplanationSource;
-  areaId: number | null;
-  /** The factors the text was written for; empty when the API did not say. */
-  priorities: FactorKey[];
-}
-
 export interface ImprovePlace {
   name: string;
   brand: string | null;

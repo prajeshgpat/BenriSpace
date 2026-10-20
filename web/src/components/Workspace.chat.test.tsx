@@ -7,7 +7,6 @@ import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { ChatReply } from "@/lib/api/types";
 import {
   jsonResponse,
-  liveExplanationBody,
   liveScoreBody,
   makeAreaScore,
 } from "@/test/fixtures";
@@ -63,11 +62,7 @@ function setup(
   overrides: Partial<ApiClient> = {},
 ) {
   navigation.search = search;
-  const fetchMock = vi.fn<typeof fetch>(async (input) =>
-    String(input).includes("/explanation")
-      ? jsonResponse(liveExplanationBody)
-      : jsonResponse(liveScoreBody),
-  );
+  const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse(liveScoreBody));
   const chat = vi.fn<ApiClient["chat"]>(async () => REPLY);
   const client: ApiClient = {
     ...createApiClient({ baseUrl: "http://api.test/v1", fetch: fetchMock }),

@@ -1,4 +1,3 @@
-import type { ExplanationState } from "@/hooks/useScoreLookup";
 import type { AreaInfo, Score } from "@/lib/api/types";
 import {
   SCORE_MAX,
@@ -10,8 +9,6 @@ import { scorePillColor } from "@/lib/score/pillColors";
 
 import { CompareButton } from "./CompareButton";
 import { CopyLinkButton } from "./CopyLinkButton";
-import { FeedbackThumbs } from "./Feedback";
-import type { ApiClient } from "@/lib/api/client";
 
 import styles from "./ScoreResult.module.css";
 
@@ -74,30 +71,6 @@ export function ScoreHeader({
   );
 }
 
-interface ScoreSummaryProps {
-  score: Score;
-  explanation: ExplanationState;
-  /** Where thumbs are sent; leave out to hide them. */
-  client?: Pick<ApiClient, "sendFeedback">;
-  /** The place, for the feedback record. */
-  target?: string;
-}
-
-/** The written explanation (AI or rule-based); sits under the filters. */
-export function ScoreSummary({ explanation, client, target }: ScoreSummaryProps) {
-  return (
-    <section className={styles.section} aria-labelledby="explanation-heading">
-      <h3 id="explanation-heading" className={styles.sectionHeading}>
-        Summary
-      </h3>
-      <ExplanationText explanation={explanation} />
-      {explanation.status === "ready" ? (
-        <FeedbackThumbs client={client} kind="summary" target={target ?? explanation.text} />
-      ) : null}
-    </section>
-  );
-}
-
 const RING_RADIUS = 52;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
@@ -132,34 +105,4 @@ function ScoreRing({ value, title }: { value: number; title?: string }) {
       </p>
     </div>
   );
-}
-
-function ExplanationText({ explanation }: { explanation: ExplanationState }) {
-  switch (explanation.status) {
-    case "loading":
-      return (
-        <p className={styles.explanationPending} aria-busy="true">
-          Writing the explanation…
-        </p>
-      );
-    case "ready":
-      return (
-        <>
-          <p className={styles.explanation} aria-busy={explanation.updating || undefined}>
-            {explanation.text}
-          </p>
-          {explanation.updating ? (
-            <p className={styles.updating} role="status" data-testid="explanation-updating">
-              Updating…
-            </p>
-          ) : null}
-        </>
-      );
-    case "unavailable":
-      return (
-        <p className={styles.explanationPending}>
-          An explanation isn&rsquo;t available for this score right now.
-        </p>
-      );
-  }
 }

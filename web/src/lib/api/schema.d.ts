@@ -200,8 +200,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Plain-language explanation for the area under a point (AI or rules).
-         * @description Separate from `/area` so that never waits on an LLM call. With `factors`, the text speaks to those priorities first.
+         * Plain-language explanation for the area under a point.
+         * @description Rule-based text from the area's factor scores. With `factors`, the text speaks to those priorities first.
          */
         get: operations["getAreaExplanation"];
         put?: never;
@@ -444,7 +444,10 @@ export interface components {
             nearestMi?: {
                 [key: string]: number | null;
             } | null;
-            /** @enum {string} */
+            /**
+             * @description Always `rules` today; `ai` is reserved for a possible return of LLM summaries.
+             * @enum {string}
+             */
             source?: "ai" | "rules";
             priorities?: components["schemas"]["Priorities"];
         };
@@ -714,7 +717,10 @@ export interface components {
         Priorities: components["schemas"]["FactorKey"][];
         AreaExplanationResponse: {
             explanation: string;
-            /** @enum {string} */
+            /**
+             * @description Always `rules` today; `ai` is reserved for a possible return of LLM summaries.
+             * @enum {string}
+             */
             source: "ai" | "rules";
             areaId: number | null;
             priorities?: components["schemas"]["Priorities"];

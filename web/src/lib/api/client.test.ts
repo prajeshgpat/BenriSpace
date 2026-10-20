@@ -4,7 +4,6 @@ import { ALL_FACTOR_KEYS } from "@/lib/score/factors";
 import {
   GEO_ENTITY_ID,
   jsonResponse,
-  liveExplanationBody,
   liveScoreBody,
   makeAreaBody,
 } from "@/test/fixtures";
@@ -206,55 +205,6 @@ describe("getScore", () => {
     const { client } = clientReturning(jsonResponse(body));
 
     expect((await rejection(client.getScore("zzzz"))).kind).toBe("invalid-response");
-  });
-});
-
-describe("getScoreExplanation", () => {
-  it("requests the explanation for a geo entity", async () => {
-    const { client, fetchMock } = clientReturning(jsonResponse(liveExplanationBody));
-
-    const explanation = await client.getScoreExplanation(GEO_ENTITY_ID);
-
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation`,
-    );
-    expect(explanation.explanation).toMatch(/airport drive time/);
-  });
-
-  it("maps a 404 to a not-found error", async () => {
-    const { client } = clientReturning(
-      jsonResponse({ code: "not_found", message: "No score on file." }, 404),
-    );
-
-    expect((await rejection(client.getScoreExplanation(GEO_ENTITY_ID))).kind).toBe(
-      "not-found",
-    );
-  });
-
-  it("rejects a body without explanation text", async () => {
-    const { client } = clientReturning(jsonResponse({ geoEntityId: GEO_ENTITY_ID }));
-
-    expect((await rejection(client.getScoreExplanation(GEO_ENTITY_ID))).kind).toBe(
-      "invalid-response",
-    );
-  });
-});
-
-describe("getAreaExplanation", () => {
-  it("requests the point explanation and parses it", async () => {
-    const { client, fetchMock } = clientReturning(
-      jsonResponse({ explanation: "Hi.", source: "ai", areaId: 3, priorities: ["grocery", "bogus"] }),
-    );
-    const result = await client.getAreaExplanation(40.7, -74);
-    expect(fetchMock.mock.calls[0][0]).toBe(`${BASE_URL}/area/explanation?lat=40.7&lon=-74`);
-    expect(result).toEqual({ explanation: "Hi.", source: "ai", areaId: 3, priorities: ["grocery"] });
-  });
-
-  it("accepts a null areaId and rejects an unknown source", async () => {
-    const ok = clientReturning(jsonResponse({ explanation: "x", source: "rules", areaId: null }));
-    expect((await ok.client.getAreaExplanation(1, 2)).areaId).toBeNull();
-    const bad = clientReturning(jsonResponse({ explanation: "x", source: "gpt", areaId: null }));
-    expect((await rejection(bad.client.getAreaExplanation(1, 2))).kind).toBe("invalid-response");
   });
 });
 
@@ -780,7 +730,6 @@ describe("getSimilar", () => {
 
 describe("priorities on the point endpoints", () => {
   const improveBody = { composite: 60, radiusMi: 1, suggestions: [], priorities: ["grocery"] };
-  const explanationBody = { explanation: "Hi.", source: "ai", areaId: 3 };
 
   it("getImprove omits factors unless given and sends weights", async () => {
     const plain = clientReturning(jsonResponse(improveBody));
@@ -798,28 +747,6 @@ describe("priorities on the point endpoints", () => {
     const url = new URL(String(narrowed.fetchMock.mock.calls[0][0]));
     expect(url.searchParams.get("factors")).toBe("grocery,transit");
     expect(url.searchParams.get("weights")).toBe("grocery:1.5");
-  });
-
-  it("getAreaExplanation sends factors and weights", async () => {
-    const { client, fetchMock } = clientReturning(jsonResponse(explanationBody));
-    await client.getAreaExplanation(40.7, -74, { factors: ["cafe"], weights: { cafe: 0.5 } });
-    expect(fetchMock.mock.calls[0][0]).toBe(
-      `${BASE_URL}/area/explanation?lat=40.7&lon=-74&factors=cafe&weights=cafe%3A0.5`,
-    );
-  });
-
-  it("getScoreExplanation adds a query string only when narrowed", async () => {
-    const plain = clientReturning(jsonResponse(liveExplanationBody));
-    await plain.client.getScoreExplanation(GEO_ENTITY_ID, {});
-    expect(plain.fetchMock.mock.calls[0][0]).toBe(
-      `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation`,
-    );
-
-    const narrowed = clientReturning(jsonResponse(liveExplanationBody));
-    await narrowed.client.getScoreExplanation(GEO_ENTITY_ID, { factors: ["transit"] });
-    expect(narrowed.fetchMock.mock.calls[0][0]).toBe(
-      `${BASE_URL}/score/${GEO_ENTITY_ID}/explanation?factors=transit`,
-    );
   });
 });
 

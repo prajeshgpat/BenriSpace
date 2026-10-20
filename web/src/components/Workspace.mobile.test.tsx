@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaGeometry } from "@/lib/api/types";
-import { jsonResponse, liveExplanationBody, liveScoreBody } from "@/test/fixtures";
+import { jsonResponse, liveScoreBody } from "@/test/fixtures";
 
 import { Workspace } from "./Workspace";
 
@@ -24,11 +24,7 @@ vi.mock("./map/MapCanvas", () => ({
 
 function setup(search: string, extra: Partial<ApiClient> = {}) {
   navigation.search = search;
-  const fetchMock = vi.fn<typeof fetch>(async (input) =>
-    String(input).includes("/explanation")
-      ? jsonResponse(liveExplanationBody)
-      : jsonResponse(liveScoreBody),
-  );
+  const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse(liveScoreBody));
   const client: ApiClient = {
     ...createApiClient({ baseUrl: "http://api.test/v1", fetch: fetchMock }),
     getMapCells: vi.fn(async () => ({
