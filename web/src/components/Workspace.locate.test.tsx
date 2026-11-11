@@ -260,7 +260,7 @@ describe("Workspace: use my current location", () => {
     await user.click(panelButton());
 
     expect(
-      await screen.findByText(/outside the area BenriSpace covers — the NYC metro/),
+      await screen.findByText(/outside the area BenriSpace covers today, the New York metro/),
     ).toBeInTheDocument();
     expect(pushState).not.toHaveBeenCalled();
     expect(map().flyRequest).toBeNull();

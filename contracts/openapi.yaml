@@ -250,6 +250,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: Land could not be checked (code `land_check_unavailable`); no results are returned rather than risk one in the water.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /optimize:
     post:
@@ -1179,11 +1185,23 @@ components:
           format: double
         maxTravelMinutes:
           type: integer
-          description: Isochrone time budget from this anchor. Defaults to a server-side default if omitted.
+          description: Isochrone time budget from this anchor. Defaults to a server-side default if omitted. Ignored when the request's `tune` is `auto`.
         mode:
           type: string
           enum: [drive, transit, walk]
           default: drive
+          description: >
+            How this place is reached. With `tune: auto` this is the fastest mode allowed:
+            walking is always considered as well, and each area uses whichever of the two
+            is better for that trip (a short walk beats a short train or drive).
+        tripsPerWeek:
+          type: integer
+          minimum: 1
+          maximum: 14
+          description: >
+            How often the user goes to this place (one-way trips per week). Used only with
+            `tune: auto` to rank places to live. Defaults: 5 for the first anchor (the main
+            address, e.g. work), 2 for the others.
 
     TriangulateRequest:
       type: object
@@ -1211,6 +1229,33 @@ components:
           type: string
           nullable: true
           description: Optional `factor:number` pairs (as on the map endpoints) weighting the selected factors.
+        tune:
+          type: string
+          enum: [fixed, auto]
+          default: fixed
+          description: >
+            `fixed` uses each anchor's `maxTravelMinutes` as given. `auto` finds the fewest
+            minutes (in 5-minute steps, up to walk 30, train 45, drive 60) at which every
+            anchor's travel-time area overlaps in at least a small neighborhood on land,
+            returns that as `tunedMinutes`, and ranks places to live inside that overlap by
+            how short the trips are (weighted by `tripsPerWeek`, so within the overlap the
+            side nearer the main address wins) and then by score. `combineMode` is ignored
+            (always intersect). In both modes every result lies inside the overlap and on
+            land, never in water; when land cannot be checked the request fails with 503
+            `land_check_unavailable` rather than risk a pin in the water.
+
+    AnchorTravel:
+      type: object
+      required: [label, mode, minutes]
+      description: One-way travel from a result to one anchor, by the mode that suits that trip best.
+      properties:
+        label:
+          type: string
+        mode:
+          type: string
+          enum: [drive, transit, walk]
+        minutes:
+          type: integer
 
     RankedAddress:
       type: object
@@ -1229,6 +1274,11 @@ components:
           format: double
         compositeScore:
           type: number
+        travel:
+          type: array
+          description: One-way travel to each anchor, in request order. Absent when routing data is missing.
+          items:
+            $ref: "#/components/schemas/AnchorTravel"
 
     IsochroneShape:
       type: object
@@ -1286,6 +1336,13 @@ components:
             $ref: "#/components/schemas/IsochroneShape"
         combined:
           $ref: "#/components/schemas/IsochroneShape"
+        tunedMinutes:
+          type: integer
+          nullable: true
+          description: >
+            With `tune: auto`, the minutes every anchor's area was drawn at (the fewest that
+            overlap). Null when the anchors are too far apart for any allowed mode; results
+            are then empty.
 
     OptimizeAnchor:
       type: object
@@ -1452,7 +1509,11 @@ components:
         latitude: {type: number}
         longitude: {type: number}
         score: {type: integer}
-        weeklyMinutes: {type: integer}
+        commuteMinutes:
+          type: integer
+          description: >
+            One-way minutes from this area to the main (work) address, copied from the
+            optimizer's per-stop minutes. Absent when the request had no address anchor.
         why: {type: string}
 
     ChatSource:
@@ -1502,6 +1563,11 @@ components:
         limited:
           type: boolean
           description: True when the reply is a deterministic fallback or chat is paused.
+        suggestions:
+          type: array
+          maxItems: 3
+          items: {type: string, maxLength: 60}
+          description: Follow-up questions to offer, chosen by code from the tools that ran.
 
     OptimizeResponse:
       type: object

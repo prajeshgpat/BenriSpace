@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { useTripPlanner, type TripPlace } from "@/hooks/useTripPlanner";
 import type { Triangulation } from "@/lib/api/types";
 
-import { NO_OVERLAP_MESSAGE, TripPlanner } from "./TripPlanner";
+import { NO_OVERLAP_MESSAGE, TOO_FAR_MESSAGE, TRY_DRIVE_HINT, TripPlanner } from "./TripPlanner";
 
 const PLACE: TripPlace = { label: "Home", lat: 40.7, lon: -74 };
 const PARK = { label: "Park Ave, NY", latitude: 40.75, longitude: -73.97 };
@@ -23,11 +23,12 @@ const iso = (method: "network" | "estimate" = "network", cellCount = 3) => ({
 function response(overrides: Partial<Triangulation> = {}): Triangulation {
   return {
     results: [
-      { lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" },
-      { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St" },
+      { lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St", travel: [] },
+      { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St", travel: [] },
     ],
     isochrones: [iso(), iso()],
     combined: iso(),
+    tunedMinutes: 20,
     ...overrides,
   };
 }
@@ -208,11 +209,11 @@ describe("TripPlanner", () => {
     const { user, onSelectResult, onNeedSpace } = setup();
     await user.click(addButton()!);
     await fillPoint(user, "Point of interest 1");
-    const heading = await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    const heading = await screen.findByRole("heading", { name: "Best places to live" });
     expect(heading).toBeInTheDocument();
-    expect(screen.getByRole("list", { name: "Best areas in the overlap" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Best places to live" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getAllByRole("status").some((s) => s.textContent === "2 areas found in the overlap")).toBe(true),
+      expect(screen.getAllByRole("status").some((s) => s.textContent === "2 places to live found")).toBe(true),
     );
     expect(onNeedSpace).toHaveBeenCalledWith("half");
     await user.click(screen.getByRole("button", { name: /1 Main St/ }));
@@ -245,7 +246,7 @@ describe("TripPlanner", () => {
     const { user, onNeedSpace } = setup(triangulate as never);
     await user.click(addButton()!);
     await fillPoint(user, "Point of interest 1");
-    await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    await screen.findByRole("heading", { name: "Best places to live" });
     const asks = onNeedSpace.mock.calls.length;
 
     await user.click(screen.getByRole("button", { name: /^Travel for Point of interest 1:/ }));
@@ -253,13 +254,13 @@ describe("TripPlanner", () => {
     await waitFor(() => expect(triangulate).toHaveBeenCalledTimes(2));
 
     // The previous answer stays: no "Working out" line, no empty panel to jump around.
-    const results = screen.getByRole("list", { name: "Best areas in the overlap" }).parentElement!;
+    const results = screen.getByRole("list", { name: "Best places to live" }).parentElement!;
     expect(results).toHaveAttribute("data-refreshing");
     expect(screen.getByRole("region", { name: "Overlap results" })).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByText(/Working out the overlap/)).toBeNull();
     expect(screen.getByRole("button", { name: /1 Main St/ })).toBeInTheDocument();
 
-    act(() => release(response({ results: [{ lat: 40.72, lon: -73.98, score: 90, address: "3 New St" }] })));
+    act(() => release(response({ results: [{ lat: 40.72, lon: -73.98, score: 90, address: "3 New St", travel: [] }] })));
     expect(await screen.findByRole("button", { name: /3 New St/ })).toBeInTheDocument();
     expect(results).not.toHaveAttribute("data-refreshing");
     // The phone sheet is not asked to snap again for a refresh of the same overlap.
@@ -285,7 +286,77 @@ describe("TripPlanner", () => {
     await user.click(addButton()!);
     await fillPoint(user, "Point of interest 1");
     expect((await screen.findAllByText(NO_OVERLAP_MESSAGE)).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("heading", { name: "Best areas in the overlap" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Best places to live" })).toBeNull();
+  });
+
+  it("shows each result's daily one-way trips", async () => {
+    const { user } = setup(
+      vi.fn(async () =>
+        response({
+          results: [
+            {
+              lat: 40.71,
+              lon: -73.99,
+              score: 81.4,
+              address: "1 Main St",
+              travel: [
+                { label: "350 5th Ave, New York", mode: "walk", minutes: 5 },
+                { label: "Gym", mode: "transit", minutes: 15 },
+              ],
+            },
+            { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St", travel: [] },
+          ],
+        }),
+      ),
+    );
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    const first = await screen.findByRole("button", { name: /1 Main St/ });
+    expect(first).toHaveTextContent("350 5th Ave 5 min walk · Gym 15 min train");
+  });
+
+  it("says the places are too far apart when automatic fitting finds nothing", async () => {
+    const { user } = setup(
+      vi.fn(async () => response({ results: [], combined: null, tunedMinutes: null })),
+    );
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    // The main place is a train, so driving is suggested.
+    expect(
+      (await screen.findAllByText(`${TOO_FAR_MESSAGE} ${TRY_DRIVE_HINT}`)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Fit automatically" })).toBeNull();
+  });
+
+  it("offers How often per point, 2 a week by default", async () => {
+    const { user, triangulate } = setup();
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    await user.click(screen.getByRole("button", { name: /^Travel for Point of interest 1/ }));
+    const frequency = screen.getByRole("combobox", { name: "How often you go to Park Ave, NY" });
+    expect(frequency).toHaveValue("2");
+    expect(Array.from((frequency as HTMLSelectElement).options).map((o) => o.text)).toEqual([
+      "Daily",
+      "Few times a week",
+      "Weekly",
+    ]);
+    await user.selectOptions(frequency, "Weekly");
+    await waitFor(() => {
+      const anchors = (triangulate.mock.calls.at(-1) as unknown as unknown[])[0] as { tripsPerWeek: number }[];
+      expect(anchors.map((a) => a.tripsPerWeek)).toEqual([5, 1]);
+    });
+  });
+
+  it("goes fixed when minutes are stepped, then Fit automatically brings automatic back", async () => {
+    const { user } = setup();
+    await user.click(addButton()!);
+    await fillPoint(user, "Point of interest 1");
+    await screen.findByRole("heading", { name: "Best places to live" });
+    expect(screen.queryByRole("button", { name: "Fit automatically" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^Travel for Point of interest 1/ }));
+    await user.click(screen.getByRole("button", { name: "More minutes for Point of interest 1" }));
+    await user.click(await screen.findByRole("button", { name: "Fit automatically" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Fit automatically" })).toBeNull());
   });
 
   it("shows an error with a working retry", async () => {
@@ -298,7 +369,7 @@ describe("TripPlanner", () => {
     await fillPoint(user, "Point of interest 1");
     expect(await screen.findByText("Couldn’t work out the overlap.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("heading", { name: "Best areas in the overlap" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Best places to live" })).toBeInTheDocument();
   });
 
   it("notes straight-line estimates", async () => {

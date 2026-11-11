@@ -89,6 +89,8 @@ export interface MockOptions {
   noScoreFile?: boolean;
   /** Collects POST /feedback bodies. */
   feedback?: unknown[];
+  /** Collects POST /triangulate bodies. */
+  triangulate?: unknown[];
 }
 
 /** Answers every API and basemap request in the browser; nothing hits the network. */
@@ -168,17 +170,36 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         const ring = [
           [-73.99, 40.74], [-73.97, 40.74], [-73.97, 40.76], [-73.99, 40.76], [-73.99, 40.74],
         ];
+        const body = request.postDataJSON() as { tune?: string };
+        options.triangulate?.push(body);
+        // Automatic fitting settles on 15 min; a fixed request is drawn at what was sent.
+        const auto = body.tune === "auto";
         const shape = {
-          mode: "transit", minutes: 20, method: "network", cellCount: 6, areaSqMi: 2.4,
+          mode: "transit", minutes: auto ? 15 : 20, method: "network", cellCount: 6, areaSqMi: 2.4,
           geometry: { type: "MultiPolygon", coordinates: [[ring]] },
         };
         return json(route, {
           results: [
-            { geoEntityId: "11111111-2222-3333-4444-555555555556", address: "40.7500,-73.9800", latitude: 40.75, longitude: -73.98, compositeScore: 74 },
-            { geoEntityId: "11111111-2222-3333-4444-555555555557", address: "40.7450,-73.9750", latitude: 40.745, longitude: -73.975, compositeScore: 68 },
+            {
+              geoEntityId: "11111111-2222-3333-4444-555555555556", address: "40.7500,-73.9800",
+              latitude: 40.75, longitude: -73.98, compositeScore: 74,
+              travel: [
+                { label: "350 5th Ave", mode: "walk", minutes: 5 },
+                { label: "Grand Central", mode: "transit", minutes: 10 },
+              ],
+            },
+            {
+              geoEntityId: "11111111-2222-3333-4444-555555555557", address: "40.7450,-73.9750",
+              latitude: 40.745, longitude: -73.975, compositeScore: 68,
+              travel: [
+                { label: "350 5th Ave", mode: "walk", minutes: 4 },
+                { label: "Grand Central", mode: "transit", minutes: 20 },
+              ],
+            },
           ],
           isochrones: [shape, shape],
           combined: shape,
+          ...(auto ? { tunedMinutes: 15 } : {}),
         });
       }
       case "/chat":

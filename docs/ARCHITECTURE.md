@@ -166,18 +166,33 @@ Pages: `/` (Home), `/app` (the workspace), `/map`, `/data` (sources), `/docs` (A
   pink line ("Within 10 min by car") whenever it is drawn. The two POI boxes sit in one
   non-wrapping row at any width; their place names ellipsize.
 - **Travel-time overlap.** Points of interest (work, a gym, family) each get a travel-time area
-  from `POST /triangulate`, and the best areas are ranked inside the overlap. Once per new set of
-  places, `tuneTravel` (`lib/travel.ts`) tunes travel per place: the searched place keeps its mode
-  and minutes (it is the place visited most), each point of interest starts there and gets the
-  fewest extra minutes to overlap it (and the other point of interest), moving to the next faster
-  mode (`widerTravel`) only past its mode's maximum. If the overlap is empty and the user has not
-  changed anything, `widenPlan` widens the point of interest farthest from the searched place,
-  up to two steps. While a new travel time loads for the same places, the previous overlap stays
-  on screen (dimmed, `refreshing`) so the panel does not collapse and jump.
-- **Pins stay on land.** `POST /triangulate` over-fetches ranked cells and moves each onto the
-  nearest road-bounded area (`slim_areas.snap_to_land`, one KNN query on the `areas_slim` GiST
-  index), dropping cells more than 0.35 mi from any area (open water). The map redraws basemap
-  piers above its water layer (`lib/map/waterMask.ts`) so places on a pier show on land.
+  from `POST /triangulate`, and the best places to live are ranked from it. By default the
+  server fits the minutes (`tune: "auto"`): the web app sends each place's mode and how often it
+  is gone to (`tripsPerWeek`: the searched place daily, each point of interest "Daily" 5, "Few
+  times a week" 2 (default) or "Weekly" 1) and no minutes. The server uses routed times and
+  also considers walking, finds the fewest minutes at which all areas overlap in a small
+  neighborhood, and returns it as `tunedMinutes`, which every travel badge then shows and the
+  legend reads ("Shaded: everywhere all your places are within 15 min"). Results are ranked as
+  places to live: short trips weighted by how often they are made, then score, so a place near
+  the searched address can beat the exact middle, though every result stays inside the shaded
+  overlap and on land.
+  Each result shows its one-way trips per place ("Work 5 min walk · Gym 15 min train"). Changing
+  a mode keeps auto fitting; stepping minutes on any badge switches to `tune: "fixed"`: every
+  place freezes at the minutes then shown and the stepped one takes its new value. "Fit
+  automatically" returns to auto. When auto finds nothing (`tunedMinutes: null`) the panel says
+  the places are too far apart and suggests driving. The request is built by
+  `lib/tripTune.ts`; the state is in `hooks/useTripPlanner.ts`. While a new answer loads for the
+  same places, the previous overlap stays on screen (dimmed, `refreshing`) so the panel does not
+  collapse and jump.
+- **Pins stay on land.** `POST /triangulate` checks every result cell (and, in auto, every
+  cell that could count toward the overlap) with one batched query per step against the
+  `areas_slim` GiST index (`slim_areas.land_points`). A cell is land when a road-bounded area
+  lies within 0.15 mi of its centre; the pin sits at the closest point on that area, always
+  inside the same cell, so it never leaves the overlap. Water cells are dropped and never count
+  toward the overlap size. If the check cannot run, the route returns 503
+  `land_check_unavailable` rather than unchecked pins. (`/map` top places still use the older
+  0.35 mi `snap_to_land`.) The map redraws basemap piers above its water layer
+  (`lib/map/waterMask.ts`) so places on a pier show on land.
 - **Map focus.** The map flies to a single pin, or fits all pins, when a pin is clicked, an
   address is scored, a point of interest is added, or an overlap, best or similar area is picked.
   With an overlap pick open, a map tap clears the pick instead of moving the searched place.
@@ -603,6 +618,11 @@ the cap" (walk 30 min, drive 45 min, hubs 120 min). Layout is recorded in `routi
 - **Train trips** = walk to a station within 1.5 mi + `rail_matrix` ride + walk from a station
   near the destination, best of up to 6 stations at each end.
 - **Triangulate** intersects or unions the anchors' reached cell sets and ranks the scores inside.
+  With `tune: auto` it reaches each anchor by its mode and by walking (caps walk 30, train 45, drive
+  60 min), takes the better mode per cell (rides carry a small perceived-time penalty), finds the
+  smallest 5-minute step with at least four shared land cells (water cells never count), and
+  ranks places to live, only from that overlap, by trips-per-week-weighted travel inside a cost
+  band, then by score (`api/triangulate.py`). Every result is on land (`slim_areas.land_points`).
 - **Optimize** (`api/optimize.py`): Weiszfeld geometric-median seed, exact lower-bound pruning,
   stored times in place of estimates, then openrouteservice refinement (walk and drive).
   Estimates are the fallback: straight line x 1.3 / mode speed (walk 3 mph, drive 25 mph + 2 min

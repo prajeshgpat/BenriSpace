@@ -405,9 +405,11 @@ Request body (JSON):
 | `anchors[].label` | string | yes | Your name for the anchor |
 | `anchors[].address` | string | one of address / lat+lon | Geocoded server-side |
 | `anchors[].latitude`, `anchors[].longitude` | number | one of address / lat+lon | Coordinates |
-| `anchors[].maxTravelMinutes` | integer | no | Default 20 |
-| `anchors[].mode` | `drive` \| `transit` \| `walk` | no | Default `drive` |
-| `combineMode` | `intersect` \| `union` | no | Default `intersect` |
+| `anchors[].maxTravelMinutes` | integer | no | Default 20; ignored with `tune: "auto"` |
+| `anchors[].mode` | `drive` \| `transit` \| `walk` | no | Default `drive`. With `tune: "auto"` it is the fastest mode allowed; walking is always considered too |
+| `anchors[].tripsPerWeek` | integer 1-14 | no | One-way trips per week, used only with `tune: "auto"`. Default 5 for the first anchor (the main address, e.g. work), 2 for the others |
+| `combineMode` | `intersect` \| `union` | no | Default `intersect`; ignored with `tune: "auto"` |
+| `tune` | `fixed` \| `auto` | no | Default `fixed` (each anchor's `maxTravelMinutes` as given) |
 | `limit` | integer | no | Results returned, default 50 |
 
 ```bash
@@ -457,6 +459,45 @@ curl -X POST "https://api.benrispace.com/v1/triangulate" \
 ```
 
 `isochrones` is in request order; `combined` is the intersection (or union) polygon (its `mode` and `minutes` are the first anchor's mode and the smallest budget; use `cellCount` / `areaSqMi` for size).
+
+Each result also carries `travel` (one-way trip to each anchor in request order: `label`, `mode`, whole `minutes`; left out when an anchor used the straight-line estimate).
+
+Results are always on land. Each result's cell is checked against the road-bounded areas: it counts as land when an area lies within 0.15 mi of the cell centre, and the result's `latitude` / `longitude` is the closest point on that area. Cells in the water are dropped, so a request can return fewer than `limit` results. If land cannot be checked the request fails with `503` and code `land_check_unavailable`; unchecked places are never returned.
+
+### Auto-tuned overlap (`tune: "auto"`)
+
+Instead of a fixed budget per anchor, the server finds the fewest minutes at which every anchor's area overlaps in a neighborhood, and ranks places to live by how short the trips are.
+
+1. For each anchor it computes the cells reachable by the anchor's `mode` (up to 45 minutes by train, 60 by car) and by walking (up to 30 minutes). Per cell it keeps the better of the two, where a ride counts as longer than its clock time (train +5 minutes for transfers, reliability and fare, car +3 for reaching and parking it), so a short walk beats an equally short ride. The mode and minutes shown in `travel` are the real ones.
+2. Cells reachable from every anchor are candidates, and only cells on land count (cells in rivers or the harbor are skipped). `tunedMinutes` is the smallest multiple of 5 minutes at which at least four land cells (about 1 sq mi) are within that time of every anchor. If there is none, `tunedMinutes` is `null`, `results` is empty and each anchor's area is returned at its longest allowed time.
+3. Each anchor's `isochrones` entry is drawn at `tunedMinutes`. `combined` is the overlap: the land cells within `tunedMinutes` of every anchor.
+4. Places to live come only from the overlap, so every result lies inside the drawn `combined` area and on land. They are ranked by `tripsPerWeek` x perceived minutes summed over anchors. Overlap cells within a band of the cheapest (cost up to 1.25 x cheapest + 10) are scored and sorted by composite score, with the lower weekly travel cost breaking ties. Because a place near the main address (visited most often) costs less, it wins among equally scored places inside the overlap. Each result's `latitude` / `longitude` is its land point (see above), and a cell appears at most once. A land check failure returns `503` `land_check_unavailable`.
+
+```json
+{
+  "results": [
+    {
+      "geoEntityId": "4605d6c0-f67a-4d02-b944-e024a34469ec",
+      "address": "40.73300,-73.98500",
+      "latitude": 40.733,
+      "longitude": -73.985,
+      "compositeScore": 77.4,
+      "travel": [
+        { "label": "Work", "mode": "walk", "minutes": 5 },
+        { "label": "Gym", "mode": "transit", "minutes": 10 }
+      ]
+    }
+  ],
+  "isochrones": [
+    { "label": "Work", "mode": "transit", "minutes": 10, "method": "network", "cellCount": 12, "areaSqMi": 2.6, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } },
+    { "label": "Gym", "mode": "walk", "minutes": 10, "method": "network", "cellCount": 6, "areaSqMi": 1.3, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } }
+  ],
+  "combined": { "mode": "transit", "minutes": 10, "method": "network", "cellCount": 5, "areaSqMi": 1.1, "geometry": { "type": "MultiPolygon", "coordinates": ["..."] } },
+  "tunedMinutes": 10
+}
+```
+
+An anchor without routing data falls back to a straight-line circle for that mode (`method: "estimate"`, minutes = distance / an assumed speed); `travel` is still filled from those estimates.
 
 Errors:
 
@@ -566,8 +607,9 @@ Response:
 | Field | Type | Description |
 | --- | --- | --- |
 | `reply` | string | Plain text, at most about 120 words. Numbers and capitalised names are checked against the tool results; if the check fails the reply is replaced by a short deterministic summary and `limited` is `true` |
-| `results` | array, at most 3 | Built from the last ranking tool (`optimize_location`, `search_areas` or `similar`), never by the model: `label` (neighborhood or area label), `latitude`, `longitude`, `score?`, `weeklyMinutes?`, `why` |
+| `results` | array, at most 3 | Built from the last ranking tool (`optimize_location`, `search_areas` or `similar`), never by the model: `label` (neighborhood or area label), `latitude`, `longitude`, `score?`, `commuteMinutes?` (one-way minutes to the main address, for `optimize_location` results), `why` |
 | `plan` | object | Present only when `optimize_location` ran and found results. Built from the best result's resolved anchors, never by the model: `place?` (`{label, latitude, longitude}`, the first address anchor, e.g. work; absent keeps the user's current place) and `points` (up to 2 `{label, latitude, longitude}`, the first brand or category stops, e.g. Planet Fitness, Whole Foods). The web app makes `place` the searched place and `points` its points of interest, then draws the travel-area overlap |
+| `suggestions` | array of strings, at most 3 | Short follow-up questions chosen in code from the last tool that ran, never by the model |
 | `sources` | array | `{tool, summary}` for each tool the assistant used |
 | `limited` | boolean | Present and `true` when the reply is a fallback or chat is paused |
 

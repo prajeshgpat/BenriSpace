@@ -32,7 +32,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api import area_cache, area_scores, point_score, scorefile, slim_areas, sources
+from api import area_cache, area_scores, point_score, reach, scorefile, slim_areas, sources
+from api import triangulate as tri
 from api.areas import (
     area_explanation,
     build_area_response,
@@ -74,6 +75,7 @@ from api.reverse import ReverseUnavailable
 from api.reverse import reverse as reverse_geocode
 from api.schemas import (
     AnchorPoint,
+    AnchorTravel,
     AreaExplanationResponse,
     AreaScoreResponse,
     Error,
@@ -96,8 +98,17 @@ from api.schemas import (
 from api.similar import build_similar, fetch_neighbours, fetch_target, overfetch_limit
 from api.suggest import MIN_QUERY_LENGTH, SuggestUnavailable, in_coverage, normalize_query
 from api.suggest import suggest as suggest_addresses
-from api.triangulate import anchor_cells, cells_box, rank_in_cells, shape_for
+from api.triangulate import (
+    anchor_cells,
+    anchor_reach,
+    anchor_to_circle,
+    cells_box,
+    fixed_travel,
+    rank_in_cells,
+    shape_for,
+)
 from api.triangulate_sql import get_scored_candidates_in_box
+from common.cellgrid import cell_center, cell_index
 from common.config import CORS_ALLOWED_ORIGINS, SCORING_WEIGHTS_VERSION
 
 # Requests reuse one pooled connection per process (common.db.api_connection); the name
@@ -305,11 +316,9 @@ def mcp_no_stream():
 @app.post(
     "/v1/triangulate",
     response_model=TriangulateResponse,
-    responses={400: {"model": Error}},
+    responses={400: {"model": Error}, 503: {"model": Error}},
 )
 def triangulate(body: TriangulateRequest):
-    from api import isochrone
-
     spec = None
     if body.factors is not None or body.weights is not None:
         try:
@@ -328,47 +337,49 @@ def triangulate(body: TriangulateRequest):
             )
         points.append((anchor, *latlon))
 
+    run = _auto_triangulate if body.tune == "auto" else _fixed_triangulate
     with get_connection() as conn:
-        per_anchor = []
-        for anchor, lat, lon in points:
-            cells, mins, method = anchor_cells(
-                conn, lat, lon, anchor.mode, anchor.max_travel_minutes
+        try:
+            return run(conn, points, body, spec)
+        except slim_areas.LandCheckUnavailable as exc:
+            log.warning("triangulate: land check unavailable: %s", exc, exc_info=True)
+            return _error(
+                503,
+                "land_check_unavailable",
+                "Land could not be checked, so no places are returned. Try again shortly.",
             )
-            per_anchor.append((anchor, lat, lon, cells, mins, method))
-        combined = isochrone.combine([p[3] for p in per_anchor], body.combine_mode)
-        box = cells_box(combined)
-        candidates = (
-            get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
+
+
+def _fixed_triangulate(conn, points, body: TriangulateRequest, spec) -> TriangulateResponse:
+    from api import isochrone
+
+    per_anchor = []
+    for anchor, lat, lon in points:
+        timed, mins, method = anchor_reach(conn, lat, lon, anchor.mode, anchor.max_travel_minutes)
+        if timed is not None:
+            cells = set(timed)
+        else:
+            circle = anchor_to_circle(lat, lon, mins, anchor.mode)
+            cells = isochrone.disc_cells(lat, lon, circle.radius_m)
+        per_anchor.append((anchor, lat, lon, cells, timed, mins, method))
+    combined = isochrone.combine([p[3] for p in per_anchor], body.combine_mode)
+    box = cells_box(combined)
+    candidates = get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
+
+    # Over-fetch so cells dropped as water are replaced.
+    ranked = rank_in_cells(candidates, combined, body.limit * 3, spec)
+    for r in ranked:
+        r["_travel"] = fixed_travel(
+            [p[4] for p in per_anchor],
+            [p[0].label for p in per_anchor],
+            [p[0].mode for p in per_anchor],
+            cell_index(r["latitude"], r["longitude"]),
         )
+    ranked = _land_only(conn, ranked, body.limit)
 
-        # A cell's centre can lie in a river (Pier 26 is the Hudson cell next to it): move each
-        # result onto land, and drop open water. Over-fetch so dropped ones are replaced.
-        ranked = rank_in_cells(candidates, combined, body.limit * 3, spec)
-        landed = slim_areas.snap_to_land(conn, [(r["latitude"], r["longitude"]) for r in ranked])
-
-    if landed is not None:
-        ranked = [
-            {**r, "latitude": point[0], "longitude": point[1]}
-            for r, point in zip(ranked, landed, strict=True)
-            if point is not None
-        ]
-    ranked = ranked[: body.limit]
-    for c in ranked:
-        c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
-
-    results = [
-        RankedAddress(
-            geo_entity_id=r["geo_entity_id"],
-            address=r["address"],
-            latitude=r["latitude"],
-            longitude=r["longitude"],
-            composite_score=r["composite_score"],
-        )
-        for r in ranked
-    ]
     shapes = [
         IsochroneShape(**shape_for(cells, a.label, a.mode, mins, method, lat))
-        for a, lat, lon, cells, mins, method in per_anchor
+        for a, lat, lon, cells, _timed, mins, method in per_anchor
     ]
     mid_lat = sum(p[1] for p in points) / len(points)
     combined_shape = IsochroneShape(
@@ -381,7 +392,124 @@ def triangulate(body: TriangulateRequest):
             mid_lat,
         )
     )
-    return TriangulateResponse(results=results, isochrones=shapes, combined=combined_shape)
+    return TriangulateResponse(
+        results=[_ranked_address(r) for r in ranked], isochrones=shapes, combined=combined_shape
+    )
+
+
+def _cell_land_points(conn, keys: list) -> dict:
+    """Cell key -> land point (None for water), one batched query. Raises LandCheckUnavailable."""
+    centres = [cell_center(*k) for k in keys]
+    return dict(zip(keys, slim_areas.land_points(conn, centres), strict=True))
+
+
+def _with_address(ranked: list[dict]) -> list[dict]:
+    for c in ranked:
+        c["address"] = c.get("formatted_address") or f"{c['latitude']:.5f},{c['longitude']:.5f}"
+    return ranked
+
+
+def _land_only(conn, ranked: list[dict], limit: int) -> list[dict]:
+    """Keep only ranked cells on land, placed at their land point, cut to `limit`."""
+    keys = [cell_index(r["latitude"], r["longitude"]) for r in ranked]
+    land = _cell_land_points(conn, list(dict.fromkeys(keys)))
+    kept = [
+        {**r, "latitude": land[k][0], "longitude": land[k][1]}
+        for r, k in zip(ranked, keys, strict=True)
+        if land[k] is not None
+    ]
+    return _with_address(kept[:limit])
+
+
+def _ranked_address(r: dict) -> RankedAddress:
+    travel = r.get("_travel")
+    return RankedAddress(
+        geo_entity_id=r["geo_entity_id"],
+        address=r["address"],
+        latitude=r["latitude"],
+        longitude=r["longitude"],
+        composite_score=r["composite_score"],
+        travel=[AnchorTravel(**t) for t in travel] if travel else None,
+    )
+
+
+def _auto_merged(conn, lat: float, lon: float, mode: str) -> tuple[tri.Merged, str]:
+    """One anchor's cells merged over its modes (reach once per mode at its cap) and the
+    method: "estimate" when any mode had no routing data and fell back to a circle."""
+    per_mode, method = {}, "network"
+    for m in tri.auto_modes(mode):
+        got = reach.reach(conn, lat, lon, m, tri.auto_cap(m))
+        if got is None:
+            per_mode[m] = tri.estimate_cells(lat, lon, m, tri.auto_cap(m))
+            method = "estimate"
+        else:
+            per_mode[m] = got.cells
+    return tri.merge_modes(per_mode), method
+
+
+def _auto_ranked(conn, points, merged, land: dict, body, spec) -> list[dict]:
+    """Places to live: only overlap cells (all on land), cost-banded, best score first, each
+    placed at its land point with its per-anchor travel."""
+    trips = [a.trips_per_week or tri.default_trips(i) for i, (a, _, _) in enumerate(points)]
+    band = tri.cost_band(tri.cell_costs(merged, set(land), trips))
+    box = cells_box(set(band))
+    candidates = get_scored_candidates_in_box(conn, box, SCORING_WEIGHTS_VERSION) if box else []
+    ranked = tri.rank_by_score_then_cost(candidates, band, body.limit, spec)
+    for r in ranked:
+        key = cell_index(r["latitude"], r["longitude"])
+        r["latitude"], r["longitude"] = land[key]
+        r["_travel"] = [
+            {"label": a.label, "mode": mode, "minutes": minutes}
+            for (a, _, _), (mode, minutes) in zip(points, tri.cell_travel(merged, key), strict=True)
+        ]
+    return _with_address(ranked)
+
+
+def _auto_triangulate(conn, points, body: TriangulateRequest, spec) -> TriangulateResponse:
+    """tune="auto": the fewest minutes at which every anchor overlaps on land, then places to
+    live inside that overlap ranked by weekly-trip-weighted travel, so living near the main
+    address can win. Results are always inside the drawn overlap and on land."""
+
+    modes = [a.mode for a, _, _ in points]
+    merged, methods = [], []
+    for a, lat, lon in points:
+        m, method = _auto_merged(conn, lat, lon, a.mode)
+        merged.append(m)
+        methods.append(method)
+    feasible = tri.feasible_cells(merged)
+    ceiling = max(tri.auto_cap(m) for m in modes)
+    tuned, land = tri.tuned_land_minutes(
+        merged, feasible, ceiling, lambda keys: _cell_land_points(conn, keys)
+    )
+    mid_lat = sum(p[1] for p in points) / len(points)
+
+    def shape(cells, anchor, minutes, method, lat):
+        label, mode = (anchor.label, anchor.mode) if anchor else (None, modes[0])
+        return IsochroneShape(**shape_for(cells, label, mode, minutes, method, lat))
+
+    if tuned is None:
+        shapes = [
+            shape(set(m), a, tri.auto_cap(a.mode), method, lat)
+            for (a, lat, _), m, method in zip(points, merged, methods, strict=True)
+        ]
+        empty = shape(set(), None, tri.auto_cap(modes[0]), "estimate", mid_lat)
+        return TriangulateResponse(
+            results=[], isochrones=shapes, combined=empty, tuned_minutes=None
+        )
+
+    drawn = [tri.cells_within(m, tuned) for m in merged]
+    ranked = _auto_ranked(conn, points, merged, land, body, spec)
+    shapes = [
+        shape(cells, a, tuned, method, lat)
+        for (a, lat, _), cells, method in zip(points, drawn, methods, strict=True)
+    ]
+    overall = "network" if all(x == "network" for x in methods) else "estimate"
+    return TriangulateResponse(
+        results=[_ranked_address(r) for r in ranked],
+        isochrones=shapes,
+        combined=shape(set(land), None, tuned, overall, mid_lat),
+        tuned_minutes=tuned,
+    )
 
 
 @app.get(

@@ -24,15 +24,15 @@ import styles from "./HomePage.module.css";
 const STEPS = [
   {
     title: "Search",
-    text: "Type an address in the New York metro area, or click the map.",
+    text: "Type an address, or click the map. Coverage today is the New York metro.",
   },
   {
     title: "See the score",
-    text: "One score out of 100, with a sub-score for every factor, in feet and miles.",
+    text: "One score out of 100, with a sub-score for each factor, in feet and miles.",
   },
   {
     title: "Make it yours",
-    text: "Weight what matters, find similar areas or plan several stops at once.",
+    text: "Weight what matters, find similar areas, or add the places you go and see where the commute is shortest.",
   },
 ] as const;
 
@@ -48,13 +48,13 @@ const FEATURES = [
     art: <NeighborhoodsIllustration />,
   },
   {
-    title: "Plan several stops",
-    text: "Work, groceries, the gym: the optimizer ranks areas by total weekly travel.",
+    title: "Plan around your stops",
+    text: "Add work, groceries and the gym. The optimizer finds areas with a shorter commute and closer everyday stops.",
     art: <StopsIllustration />,
   },
   {
     title: "See how far you can get",
-    text: "Walking, train or car: a travel-time area drawn right on the map.",
+    text: "Walking, train or car: the area you can reach in a set number of minutes, drawn on the map.",
     art: <ReachIllustration />,
   },
 ] as const;
@@ -75,25 +75,25 @@ const DIAGRAMS = [
   {
     key: "score",
     title: "How the score is built",
-    text: "Each neighborhood counts what is inside it and what you can walk to nearby, with farther places counting less, all on one scale for the whole region. Groceries, gyms and gas count mostly by the nearest one; transit by the walk (or short drive) to a train station. 13 weighted factors become one score out of 100.",
+    text: "Each neighborhood counts what is inside it and what you can reach nearby, with farther places counting less, all on one scale. Groceries, gyms and gas count mostly by the nearest one; transit by the walk (or short drive) to a station. 13 weighted factors become one score out of 100.",
     label:
-      "Rings around a neighborhood fade with distance, and thirteen weighted factors flow into a dial reading 78 out of 100.",
+      "Rings around a place fade with distance, and thirteen weighted factors feed a dial reading 78 out of 100.",
     diagram: (label: string) => <ScoreDiagram label={label} />,
   },
   {
     key: "triangulate",
     title: "Triangulate between places",
-    text: "Mark two or three places that matter, such as work, family and the gym. Each gets a travel-time area, and the best-scoring neighborhoods sit where they overlap. The app picks a travel mode and the fewest minutes that make the areas overlap, and you can change both. Times use real road and rail travel, not straight lines.",
+    text: "Mark two or three places that matter, such as work, family and the gym. Each gets a travel-time area, and the best-scoring neighborhoods sit where the areas overlap. The app picks a travel mode and the fewest minutes that make them overlap, and you can change both. Times use real road and rail travel, not straight lines.",
     label:
-      "Three travel-time areas for Work, Family and Gym overlap in the middle, where the best-scoring neighborhoods are marked.",
+      "Three travel-time areas for Work, Family and Gym overlap in the middle, where the best areas are marked.",
     diagram: (label: string) => <TriangulationDiagram label={label} />,
   },
   {
     key: "optimize",
-    title: "Optimize your week",
-    text: "Say how often you go to each place. Lines are weighted by trips per week, and the area with the lowest total weekly travel time that also scores well comes out on top.",
+    title: "A shorter commute, closer errands",
+    text: "Add the places you go and the optimizer shows the commute in minutes for each area, then favors short trips to everything else. Trips you make most count most, so the daily commute outweighs an occasional errand. Times shown are an example.",
     label:
-      "Work five times a week, groceries twice and the gym once connect to three candidate areas with lines weighted by trips; the most central area has the least weekly travel and wins.",
+      "Three candidate home areas connect to Work, Groceries and Gym. The best area has the shortest commute, 18 minutes, plus 7 minutes to groceries and 8 to the gym; the others have commutes of 31 and 27 minutes. Thicker lines mean trips made more often.",
     diagram: (label: string) => <OptimizationDiagram label={label} />,
   },
 ] as const;
@@ -157,7 +157,10 @@ export function HomePage() {
           <h1 className={styles.title}>
             Your 10-minute radius shapes your life.
           </h1>
-          <p className={styles.lead}>Find your neighborhood.</p>
+          <p className={styles.lead}>
+            A convenience score out of 100 for any address, and a way to find
+            where to live given where you need to be.
+          </p>
           <HeroSearch />
         </header>
 
@@ -251,11 +254,21 @@ export function HomePage() {
             Coverage and data
           </h2>
           <div className={styles.notes}>
-            <p className={styles.noteText}>
-              <strong>New York metro.</strong> New York City and the surrounding
-              parts of New York, New Jersey and Connecticut, within about two
-              hours of the city.
-            </p>
+            <div className={styles.noteText}>
+              <ul className={styles.coverage} aria-label="Coverage">
+                <li className={styles.coverageRow}>
+                  <span className={`${styles.status} ${styles.statusLive}`}>Live now</span>
+                  <span>The New York metro area (parts of NY, NJ and CT)</span>
+                </li>
+                <li className={styles.coverageRow}>
+                  <span className={styles.status}>Coming</span>
+                  <span>More US metros are on the way</span>
+                </li>
+              </ul>
+              <p className={styles.coverageNote}>
+                Scores for places outside live coverage are not available yet.
+              </p>
+            </div>
             <p className={styles.noteText}>
               <strong>Open data.</strong> Built from {DATA_SOURCES}. Scores are
               estimates, so check anything important in person.{" "}

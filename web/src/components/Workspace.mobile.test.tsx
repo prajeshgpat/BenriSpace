@@ -99,12 +99,13 @@ describe("Workspace on a phone", () => {
     };
     setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", {
       triangulate: vi.fn<ApiClient["triangulate"]>(async () => ({
-        results: [{ lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" }],
+        results: [{ lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St", travel: [] }],
         isochrones: [iso, iso],
         combined: iso,
+        tunedMinutes: 20,
       })),
     });
-    await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    await screen.findByRole("heading", { name: "Best places to live" });
     await userEvent.click(screen.getByRole("button", { name: "Resize results panel" }));
     expect(sheet()).not.toHaveAttribute("data-snap", "half");
     await userEvent.click(screen.getByRole("button", { name: /1 Main St/ }));

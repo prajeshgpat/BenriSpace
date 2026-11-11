@@ -1,14 +1,27 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { preconnect } from "react-dom";
 
 import { Workspace, WorkspaceFallback } from "@/components/Workspace";
+import { API_BASE_URL, BASEMAP_ORIGIN, PMTILES_URL, STATIC_URL } from "@/lib/config";
 
 export const metadata: Metadata = {
   title: "App · BenriSpace",
-  description: "Score an address or explore the map of convenience scores across the New York metro area.",
+  description: "Score an address or explore the map of convenience scores. Live now in the New York metro area.",
 };
 
+/**
+ * Origins the map talks to as soon as it loads. Opening their connections while
+ * the page's scripts download takes the TLS handshakes off the critical path.
+ * Only /app does this, so the home page does not pay for connections it never uses.
+ */
+const MAP_ORIGINS = [API_BASE_URL, STATIC_URL, PMTILES_URL, BASEMAP_ORIGIN].flatMap(
+  (value) => (value ? [new URL(value).origin] : []),
+);
+
 export default function AppPage() {
+  // fetch() from the page is CORS-mode, so the connection must be too.
+  for (const origin of new Set(MAP_ORIGINS)) preconnect(origin, { crossOrigin: "anonymous" });
   return (
     <main
       id="main"

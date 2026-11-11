@@ -3,32 +3,32 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
 } from "react";
 
 import type { ApiClient } from "@/lib/api/client";
-import { isApiError } from "@/lib/api/errors";
 import type { ChatContext, ChatPlan, ChatResult } from "@/lib/api/types";
 
 import { FeedbackThumbs } from "../Feedback";
+import { Composer } from "./Composer";
+import { ResultCard } from "./ResultCard";
+import {
+  CHAT_INPUT_LIMIT,
+  CHAT_STORAGE_KEY,
+  failureFor,
+  loadMessages,
+  nextId,
+  saveMessages,
+  type ChatMessageView,
+  type Failure,
+} from "./chatSession";
 import { starterQuestions } from "./starterQuestions";
 import styles from "./ChatPanel.module.css";
 
-export const CHAT_INPUT_LIMIT = 500;
-export const CHAT_STORAGE_KEY = "benrispace.chat.v1";
-const MAX_STORED_MESSAGES = 40;
-
-export interface ChatMessageView {
-  id: string;
-  /** "note" is a client-side system line (the place changed); never sent or stored. */
-  role: "user" | "assistant" | "note";
-  content: string;
-  results?: ChatResult[];
-}
+export { CHAT_INPUT_LIMIT, CHAT_STORAGE_KEY };
+export type { ChatMessageView };
 
 export interface ChatPanelProps {
   client: ApiClient;
@@ -46,90 +46,7 @@ export interface ChatPanelProps {
   place?: { key: string | null; label: string | null };
 }
 
-type Failure = { text: string; retryable: boolean };
-
-function failureFor(cause: unknown): Failure {
-  if (isApiError(cause)) {
-    if (cause.kind === "rate-limited") {
-      return {
-        text: "You’ve used today’s 15 chat questions. Come back tomorrow; the map and scores still work.",
-        retryable: false,
-      };
-    }
-    if (cause.kind === "network" || cause.kind === "timeout") {
-      return {
-        text: "Couldn’t reach BenriSpace. Check your connection and try again.",
-        retryable: true,
-      };
-    }
-    if (cause.status === 503 || cause.kind === "server") {
-      return {
-        text: "Chat is unavailable right now. Please try again later.",
-        retryable: true,
-      };
-    }
-    if (cause.kind === "invalid-request") {
-      return { text: cause.message, retryable: false };
-    }
-  }
-  return {
-    text: "Something went wrong with that question. Please try again.",
-    retryable: true,
-  };
-}
-
-function isStoredMessage(value: unknown): value is ChatMessageView {
-  if (typeof value !== "object" || value === null) return false;
-  const m = value as Record<string, unknown>;
-  return (
-    typeof m.id === "string" &&
-    (m.role === "user" || m.role === "assistant") &&
-    typeof m.content === "string"
-  );
-}
-
-function loadMessages(): ChatMessageView[] {
-  try {
-    const raw = window.sessionStorage.getItem(CHAT_STORAGE_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed)
-      ? parsed.filter(isStoredMessage).slice(-MAX_STORED_MESSAGES)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveMessages(messages: ChatMessageView[]) {
-  try {
-    if (messages.length === 0)
-      window.sessionStorage.removeItem(CHAT_STORAGE_KEY);
-    else {
-      window.sessionStorage.setItem(
-        CHAT_STORAGE_KEY,
-        JSON.stringify(messages.slice(-MAX_STORED_MESSAGES)),
-      );
-    }
-  } catch {
-    // Private mode or a full quota: the chat still works, it just is not kept.
-  }
-}
-
-function resultFacts(result: ChatResult): string {
-  const facts: string[] = [];
-  if (result.score !== undefined)
-    facts.push(`Score ${Math.round(result.score)}`);
-  if (result.weeklyMinutes !== undefined) {
-    facts.push(`${Math.round(result.weeklyMinutes)} min a week`);
-  }
-  return facts.join(" · ");
-}
-
-let counter = 0;
-function nextId(): string {
-  counter += 1;
-  return `m${Date.now().toString(36)}${counter}`;
-}
+const MAX_SUGGESTIONS = 3;
 
 export function ChatPanel({
   client,
@@ -152,8 +69,6 @@ export function ChatPanel({
   const abortRef = useRef<AbortController | null>(null);
   const onPlanRef = useRef(onPlan);
   onPlanRef.current = onPlan;
-  const inputId = useId();
-  const counterId = useId();
   const seenPlace = useRef<{ key: string | null; noteId: string | null }>({
     key: place?.key ?? null,
     noteId: null,
@@ -247,6 +162,7 @@ export function ChatPanel({
         );
         if (controller.signal.aborted) return;
         if (reply.plan) onPlanRef.current?.(reply.plan);
+        const suggestions = (reply.suggestions ?? []).slice(0, MAX_SUGGESTIONS);
         setMessages((current) => [
           ...current,
           {
@@ -254,6 +170,7 @@ export function ChatPanel({
             role: "assistant",
             content: reply.reply,
             ...(reply.results.length > 0 ? { results: reply.results } : {}),
+            ...(suggestions.length > 0 ? { suggestions } : {}),
           },
         ]);
       } catch (cause) {
@@ -296,15 +213,18 @@ export function ChatPanel({
     inputRef.current?.focus({ preventScroll: true });
   }
 
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
-    ) {
-      event.preventDefault();
-      send(input);
-    }
+  // Stop: abort the request but keep the question in the log, with a note.
+  function stop() {
+    if (!abortRef.current) return;
+    abortRef.current.abort();
+    abortRef.current = null;
+    setPending(false);
+    setStatus(null);
+    setMessages((current) => [
+      ...current,
+      { id: nextId(), role: "note", content: "Stopped. Ask again whenever you like." },
+    ]);
+    inputRef.current?.focus({ preventScroll: true });
   }
 
   const empty = hydrated && !messages.some((m) => m.role !== "note");
@@ -314,199 +234,188 @@ export function ChatPanel({
     () => starterQuestions(context?.factors, hasPlace, hasTrip),
     [context?.factors, hasPlace, hasTrip],
   );
-  const nearLimit = input.length >= CHAT_INPUT_LIMIT - 100;
+  const lastMessage = messages[messages.length - 1];
+  const followUps =
+    !pending && !failure && lastMessage?.role === "assistant"
+      ? (lastMessage.suggestions ?? [])
+      : [];
 
   return (
     <div className={styles.enter}>
       <div className={styles.enterInner}>
-    <section className={styles.chat} aria-label="Ask Benri">
-      <header className={styles.header}>
-        <h2 className={styles.title}>Ask Benri</h2>
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.textButton}
-            onClick={newChat}
-            disabled={
-              !messages.some((m) => m.role !== "note") && !pending && !failure
-            }
-          >
-            New chat
-          </button>
-          {onClose ? (
-            <button
-              type="button"
-              className={styles.closeButton}
-              onClick={onClose}
-              aria-label="Close chat"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
-          ) : null}
-        </div>
-      </header>
-
-      <div
-        ref={logRef}
-        className={styles.log}
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions"
-        aria-label="Conversation"
-        tabIndex={0}
-      >
-        {empty ? (
-          <div className={styles.intro}>
-            <p className={styles.introText}>
-              Ask about neighborhoods in the New York metro. I only use
-              BenriSpace data, so I can compare scores, find places near an
-              address and weigh trips to work, cafes, gyms, etc.
-            </p>
-            <ul className={styles.chips} aria-label="Suggested questions">
-              {starters.map((question) => (
-                <li key={question}>
-                  <button
-                    type="button"
-                    className={styles.chip}
-                    onClick={() => send(question)}
-                    disabled={pending}
-                  >
-                    {question}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {messages.map((message) =>
-          message.role === "note" ? (
-            <p key={message.id} className={styles.note}>
-              {message.content}
-            </p>
-          ) : (
-            <div
-              key={message.id}
-              className={styles.message}
-              data-role={message.role}
-            >
-              <p className={styles.bubble}>
-                <span className="sr-only">
-                  {message.role === "user" ? "You: " : "BenriSpace: "}
-                </span>
-                {message.content}
-              </p>
-              {message.results ? (
-                <ul className={styles.results} aria-label="Areas found">
-                  {message.results.map((result, index) => (
-                    <li
-                      key={`${result.latitude},${result.longitude},${index}`}
-                      className={styles.card}
-                    >
-                      <p className={styles.cardTitle}>{result.label}</p>
-                      {resultFacts(result) ? (
-                        <p className={styles.cardFacts}>
-                          {resultFacts(result)}
-                        </p>
-                      ) : null}
-                      <p className={styles.cardWhy}>{result.why}</p>
-                      <div className={styles.cardActions}>
-                        <button
-                          type="button"
-                          className={styles.action}
-                          onClick={() => onShowOnMap(result)}
-                          aria-label={`Show ${result.label} on map`}
-                        >
-                          Show on map
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.action}
-                          onClick={() => onScoreArea(result)}
-                          aria-label={`Score ${result.label}`}
-                        >
-                          Score this area
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {message.role === "assistant" ? (
-                <FeedbackThumbs
-                  client={client}
-                  kind="chat"
-                  target={message.content}
-                />
+        <section className={styles.chat} aria-label="Ask Benri">
+          <header className={styles.header}>
+            <h2 className={styles.title}>Ask Benri</h2>
+            <div className={styles.headerActions}>
+              <button
+                type="button"
+                className={styles.textButton}
+                onClick={newChat}
+                disabled={
+                  !messages.some((m) => m.role !== "note") && !pending && !failure
+                }
+              >
+                New chat
+              </button>
+              {onClose ? (
+                <button
+                  type="button"
+                  className={styles.closeButton}
+                  onClick={onClose}
+                  aria-label="Close chat"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
               ) : null}
             </div>
-          ),
-        )}
+          </header>
 
-        {pending ? (
           <div
-            className={styles.typing}
-            role="status"
-            aria-label="BenriSpace is typing"
+            ref={logRef}
+            className={styles.log}
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+            aria-label="Conversation"
+            tabIndex={0}
           >
-            <span className={styles.dot} aria-hidden="true" />
-            <span className={styles.dot} aria-hidden="true" />
-            <span className={styles.dot} aria-hidden="true" />
-            {status ? <span className={styles.status}>{status}&hellip;</span> : null}
-          </div>
-        ) : null}
+            {empty ? (
+              <div className={styles.intro}>
+                <p className={styles.introText}>
+                  Find areas by commute and everyday stops, compare scores, or
+                  have a place explained. I only use BenriSpace data, so I
+                  can weigh your daily trip to work, groceries, gyms, cafes and
+                  more.
+                </p>
+                <Chips
+                  label="Suggested questions"
+                  questions={starters}
+                  onPick={send}
+                  disabled={pending}
+                />
+              </div>
+            ) : null}
 
-        {failure ? (
-          <div className={styles.failure} role="alert">
-            <p>{failure.text}</p>
-            {failure.retryable ? (
-              <button type="button" className={styles.action} onClick={retry}>
-                Try again
-              </button>
+            {messages.map((message) =>
+              message.role === "note" ? (
+                <p key={message.id} className={styles.note}>
+                  {message.content}
+                </p>
+              ) : (
+                <div
+                  key={message.id}
+                  className={styles.message}
+                  data-role={message.role}
+                >
+                  <div className={styles.bubble}>
+                    {message.content
+                      .split(/\n{2,}/)
+                      .filter((part) => part.trim() !== "")
+                      .map((part, index) => (
+                        <p key={index} className={styles.paragraph}>
+                          {index === 0 ? (
+                            <span className="sr-only">
+                              {message.role === "user" ? "You: " : "BenriSpace: "}
+                            </span>
+                          ) : null}
+                          {part.trim()}
+                        </p>
+                      ))}
+                  </div>
+                  {message.results ? (
+                    <ul className={styles.results} aria-label="Areas found">
+                      {message.results.map((result, index) => (
+                        <ResultCard
+                          key={`${result.latitude},${result.longitude},${index}`}
+                          result={result}
+                          rank={index + 1}
+                          onShowOnMap={onShowOnMap}
+                          onScoreArea={onScoreArea}
+                        />
+                      ))}
+                    </ul>
+                  ) : null}
+                  {message.role === "assistant" ? (
+                    <FeedbackThumbs
+                      client={client}
+                      kind="chat"
+                      target={message.content}
+                    />
+                  ) : null}
+                </div>
+              ),
+            )}
+
+            {followUps.length > 0 ? (
+              <Chips label="Follow-up questions" questions={followUps} onPick={send} />
+            ) : null}
+
+            {pending ? (
+              <div
+                className={styles.typing}
+                role="status"
+                aria-label="BenriSpace is typing"
+              >
+                <span className={styles.dot} aria-hidden="true" />
+                <span className={styles.dot} aria-hidden="true" />
+                <span className={styles.dot} aria-hidden="true" />
+                {status ? <span className={styles.status}>{status}&hellip;</span> : null}
+              </div>
+            ) : null}
+
+            {failure ? (
+              <div className={styles.failure} role="alert">
+                <p>{failure.text}</p>
+                {failure.retryable ? (
+                  <button type="button" className={styles.action} onClick={retry}>
+                    Try again
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
-        ) : null}
-      </div>
 
-      <form
-        className={styles.form}
-        onSubmit={(event) => {
-          event.preventDefault();
-          send(input);
-        }}
-      >
-        <label htmlFor={inputId} className="sr-only">
-          Your question
-        </label>
-        <textarea
-          id={inputId}
-          ref={inputRef}
-          className={styles.input}
-          rows={2}
-          value={input}
-          maxLength={CHAT_INPUT_LIMIT}
-          placeholder="Ask about a place or a search"
-          aria-describedby={nearLimit ? counterId : undefined}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={onKeyDown}
-        />
-        <div className={styles.formRow}>
-          <span id={counterId} className={styles.counter} hidden={!nearLimit}>
-            {input.length}/{CHAT_INPUT_LIMIT}
-          </span>
-          <button
-            type="submit"
-            className={styles.send}
-            disabled={pending || input.trim() === ""}
-          >
-            Send
-          </button>
-        </div>
-      </form>
-    </section>
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSend={() => send(input)}
+            onStop={stop}
+            pending={pending}
+            inputRef={inputRef}
+          />
+        </section>
       </div>
     </div>
+  );
+}
+
+function Chips({
+  label,
+  questions,
+  onPick,
+  disabled = false,
+}: {
+  label: string;
+  questions: readonly string[];
+  onPick: (question: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <ul className={styles.chips} aria-label={label}>
+      {questions.map((question) => (
+        <li key={question}>
+          <button
+            type="button"
+            className={styles.chip}
+            onClick={() => onPick(question)}
+            disabled={disabled}
+          >
+            {question}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

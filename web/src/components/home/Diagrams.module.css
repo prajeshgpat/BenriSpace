@@ -5,15 +5,16 @@
   font-family: inherit;
 }
 
+/* Text is 20 units in a 480-unit viewBox: about 11px at a 264px-wide figure. */
 .label {
   fill: var(--text);
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 600;
 }
 
 .labelSub {
   fill: var(--text-secondary);
-  font-size: 17px;
+  font-size: 20px;
 }
 
 .halo {
@@ -209,12 +210,12 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .arc {
-    animation: draw 1.6s 0.2s ease-out backwards;
+    animation: fadeIn 1.2s 0.2s ease-out backwards;
   }
 }
 
-@keyframes draw {
+@keyframes fadeIn {
   from {
-    stroke-dasharray: 0 400;
+    opacity: 0;
   }
 }

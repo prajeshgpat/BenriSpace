@@ -72,14 +72,14 @@ describe("HomePage", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: /10-minute radius/ }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Find your neighborhood.")).toBeInTheDocument();
+    expect(screen.getByText(/A convenience score out of 100 for any address/)).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "What you get" }),
     ).toBeInTheDocument();
     for (const name of [
       "One score out of 100",
       "Real neighborhoods",
-      "Plan several stops",
+      "Plan around your stops",
       "See how far you can get",
       "Compare places",
       "Similar neighborhoods",
@@ -103,12 +103,14 @@ describe("HomePage", () => {
       expect(figure.querySelector("figcaption")).not.toBeNull();
     }
     expect(screen.getByText(/real road and rail travel/)).toBeInTheDocument();
-    expect(screen.getByText(/lowest total weekly travel/)).toBeInTheDocument();
+    expect(screen.getByText(/Trips you make most count most/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/weekly/i);
   });
 
   it("explains coverage and data", () => {
     render(<HomePage />);
-    expect(screen.getByText(/New York, New Jersey and Connecticut/)).toBeInTheDocument();
+    expect(screen.getByText(/New York metro area \(parts of NY, NJ and CT\)/)).toBeInTheDocument();
+    expect(screen.getByText(/More US metros are on the way/)).toBeInTheDocument();
     expect(screen.getByText(/Built from OpenStreetMap/)).toBeInTheDocument();
   });
 

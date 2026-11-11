@@ -6,17 +6,26 @@ import { formatLatLon } from "@/lib/address";
 import type { ApiClient } from "@/lib/api/client";
 import { FACTOR_KEY_LIST } from "@/lib/api/types";
 import type {
+  AnchorTravel,
   AreaGeometry,
   FactorKey,
   Isochrone,
   PriorityQuery,
   ReachMode,
   Suggestion,
-  TriangulateAnchor,
+  TriangulateTune,
 } from "@/lib/api/types";
 import type { UrlPoint } from "@/lib/map/url";
 import { selectionScore } from "@/lib/scores/matrix";
-import { distanceMi } from "@/lib/travel";
+import { travelOption, distanceMi } from "@/lib/travel";
+import {
+  DEFAULT_POI_TRIPS_PER_WEEK,
+  MAIN_TRIPS_PER_WEEK,
+  buildTriangulateRequest,
+  clampMinutes,
+  freezeMinutes,
+  shownMinutes,
+} from "@/lib/tripTune";
 
 export { distanceMi };
 
@@ -44,6 +53,8 @@ export interface TripRow {
   mode?: ReachMode;
   /** This point's own minutes; undefined follows the main Travel time row. */
   minutes?: number;
+  /** One-way trips per week (1, 2 or 5); undefined is the few-times-a-week default. */
+  tripsPerWeek?: number;
 }
 
 /** The place being scored: the first anchor. */
@@ -73,12 +84,18 @@ export interface TripResult {
    */
   score: number;
   label: string;
+  /** One-way travel to each place, in order; empty when the server had none. */
+  travel: AnchorTravel[];
 }
 
 export interface TripData {
   results: TripResult[];
   isochrones: Isochrone[];
   combined: Isochrone | null;
+  /** How this answer was asked for. */
+  tune: TriangulateTune;
+  /** Auto only: the minutes every area was drawn at; null when too far apart (or fixed). */
+  tunedMinutes: number | null;
   /** Some area is a straight-line estimate rather than road routing. */
   estimate: boolean;
 }
@@ -120,12 +137,17 @@ function priorityRequest(priorities: TripPriorities | undefined): PriorityQuery 
   };
 }
 
-/** Best first, at most `MAX_TRIP_RESULTS`, none within 0.25 mi of a better one. */
+/**
+ * At most `MAX_TRIP_RESULTS`, none within 0.25 mi of one ahead of it. Best score first, or
+ * with `keepOrder` in the order given (the server's places-to-live ranking).
+ */
 export function pickSpreadResults<T extends { lat: number; lon: number; score: number }>(
   results: readonly T[],
+  { keepOrder = false }: { keepOrder?: boolean } = {},
 ): T[] {
   const picked: T[] = [];
-  for (const candidate of [...results].sort((a, b) => b.score - a.score)) {
+  const ordered = keepOrder ? results : [...results].sort((a, b) => b.score - a.score);
+  for (const candidate of ordered) {
     if (picked.every((p) => distanceMi(p, candidate) >= MIN_RESULT_SEPARATION_MI)) {
       picked.push(candidate);
       if (picked.length === MAX_TRIP_RESULTS) break;
@@ -165,6 +187,27 @@ export interface TripPlannerState {
   hasPlaces: boolean;
   /** The main Travel time, which points of interest follow unless set apart. */
   travel: TripTravel | null;
+  /** `auto`: the server fits the minutes. `fixed`: the user set them. */
+  tune: TriangulateTune;
+  /** The minutes the places were fitted to, while auto and answered; else null. */
+  tunedMinutes: number | null;
+  /**
+   * Minutes to show for a place travelling by `mode` with `ownMinutes`: the fitted minutes
+   * while automatic (within what the mode's stepper allows), else its own.
+   */
+  badgeMinutes: (mode: ReachMode, ownMinutes: number) => number;
+  /** Back to fitting the minutes automatically. */
+  fitAutomatically: () => void;
+  /** A point of interest's own mode; keeps automatic fitting. */
+  setMode: (id: string, mode: ReachMode) => void;
+  /** A point of interest's minutes stepped by hand: every place freezes at what is shown. */
+  setMinutes: (id: string, mode: ReachMode, minutes: number) => void;
+  /** The searched place's mode; keeps automatic fitting. */
+  setMainMode: (mode: ReachMode) => void;
+  /** The searched place's minutes stepped by hand: every place freezes at what is shown. */
+  setMainMinutes: (mode: ReachMode, minutes: number) => void;
+  /** How often a point of interest is gone to, in one-way trips per week. */
+  setTripsPerWeek: (id: string, tripsPerWeek: number) => void;
   /** The box that is waiting for a pin dropped on the map (or for typing), if any. */
   armedId: string | null;
   arm: (id: string | null) => void;
@@ -194,8 +237,6 @@ export interface TripPlannerState {
   submitText: (id: string, text: string) => void;
   /** Every keystroke in the row's box, so unconfirmed text can be resolved later. */
   setText: (id: string, text: string) => void;
-  /** Give one point its own travel mode and minutes. */
-  setTravel: (id: string, mode: ReachMode, minutes: number) => void;
   /** Forget the row's place. */
   clearPlace: (id: string) => void;
   /** Resolve every box whose text was never confirmed; settles when all are done. */
@@ -219,20 +260,28 @@ export function useTripPlanner(
   place: TripPlace | null,
   travel: TripTravel | null,
   priorities?: TripPriorities,
+  /** Sets the searched place's own mode and minutes (the Travel time in the search box). */
+  setMainTravel?: (mode: ReachMode, minutes: number) => void,
 ): TripPlannerState {
   const [rows, setRows] = useState<TripRow[]>([]);
   const [lastAddedId, setLastAddedId] = useState<string | null>(null);
   const [armedId, setArmedId] = useState<string | null>(null);
   const [settled, setSettled] = useState<Settled | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [tune, setTune] = useState<TriangulateTune>("auto");
   const counter = useRef(0);
   const resolving = useRef(new Map<string, number>());
   const labels = useRef(new Map<string, string | null>());
   const clientRef = useRef(client);
   const rowsRef = useRef(rows);
+  const travelRef = useRef(travel);
+  const tunedRef = useRef<number | null>(null);
+  const setMainTravelRef = useRef(setMainTravel);
   useEffect(() => {
     clientRef.current = client;
     rowsRef.current = rows;
+    travelRef.current = travel;
+    setMainTravelRef.current = setMainTravel;
   });
 
   // What the score card shows for each area, by the same call and arithmetic; undefined
@@ -278,8 +327,55 @@ export function useTripPlanner(
     setRows((current) => current.filter((r) => r.id !== id));
   }, []);
 
-  const setTravel = useCallback(
-    (id: string, mode: ReachMode, minutes: number) => patchRow(id, { mode, minutes }),
+  // A mode is a preference, so it keeps automatic fitting; its minutes only matter once fixed.
+  const setMode = useCallback(
+    (id: string, mode: ReachMode) =>
+      patchRow(id, { mode, minutes: travelOption(mode).initial }),
+    [patchRow],
+  );
+
+  // Stepping any minutes by hand takes over: every place freezes at the minutes on show
+  // (what the server fitted), and the stepped one then takes its new value.
+  const freezeAll = useCallback((edit: { id: string | null; mode: ReachMode; minutes: number }) => {
+    const tuned = tunedRef.current;
+    const main = travelRef.current;
+    if (main) {
+      const own = edit.id === null ? edit.minutes : freezeMinutes(main.mode, tuned, main.minutes);
+      setMainTravelRef.current?.(edit.id === null ? edit.mode : main.mode, own);
+    }
+    setRows((current) =>
+      current.map((row) => {
+        if (row.id === edit.id) return { ...row, mode: edit.mode, minutes: edit.minutes };
+        const rowMode = row.mode ?? main?.mode ?? edit.mode;
+        const rowOwn = row.minutes ?? main?.minutes ?? edit.minutes;
+        // Only the minutes freeze: a point still follows the main mode unless it has its own.
+        return { ...row, minutes: freezeMinutes(rowMode, tuned, rowOwn) };
+      }),
+    );
+    setTune("fixed");
+  }, []);
+
+  const setMinutes = useCallback(
+    (id: string, mode: ReachMode, minutes: number) => {
+      if (tune === "fixed") patchRow(id, { mode, minutes });
+      else freezeAll({ id, mode, minutes });
+    },
+    [tune, patchRow, freezeAll],
+  );
+  const setMainMinutes = useCallback(
+    (mode: ReachMode, minutes: number) => {
+      if (tune === "fixed") setMainTravelRef.current?.(mode, minutes);
+      else freezeAll({ id: null, mode, minutes });
+    },
+    [tune, freezeAll],
+  );
+  const setMainMode = useCallback(
+    (mode: ReachMode) => setMainTravelRef.current?.(mode, travelOption(mode).initial),
+    [],
+  );
+  const fitAutomatically = useCallback(() => setTune("auto"), []);
+  const setTripsPerWeek = useCallback(
+    (id: string, tripsPerWeek: number) => patchRow(id, { tripsPerWeek }),
     [patchRow],
   );
 
@@ -426,9 +522,16 @@ export function useTripPlanner(
       lon: number;
       mode?: ReachMode;
       minutes?: number;
+      tripsPerWeek: number;
     }[] = [];
     if (place) {
-      list.push({ index: 0, label: place.label || anchorName(0), lat: place.lat, lon: place.lon });
+      list.push({
+        index: 0,
+        label: place.label || anchorName(0),
+        lat: place.lat,
+        lon: place.lon,
+        tripsPerWeek: MAIN_TRIPS_PER_WEEK,
+      });
     }
     rows.forEach((row, i) => {
       if (hasCoordinates(row)) {
@@ -439,6 +542,7 @@ export function useTripPlanner(
           lon: row.lon,
           mode: row.mode,
           minutes: row.minutes,
+          tripsPerWeek: row.tripsPerWeek ?? DEFAULT_POI_TRIPS_PER_WEEK,
         });
       }
     });
@@ -447,19 +551,23 @@ export function useTripPlanner(
 
   const mode = travel?.mode;
   const minutes = travel?.minutes;
-  const anchors = useMemo<TriangulateAnchor[]>(
+  const request = useMemo(
     () =>
       mode === undefined || minutes === undefined
-        ? []
-        : placed.map((p) => ({
-            label: p.label,
-            lat: p.lat,
-            lon: p.lon,
-            // The searched place always uses the main Travel time.
-            mode: p.index === 0 ? mode : (p.mode ?? mode),
-            minutes: p.index === 0 ? minutes : (p.minutes ?? minutes),
-          })),
-    [placed, mode, minutes],
+        ? null
+        : buildTriangulateRequest(
+            placed.map((p) => ({
+              label: p.label,
+              lat: p.lat,
+              lon: p.lon,
+              // The searched place always uses the main Travel time.
+              mode: p.index === 0 ? mode : (p.mode ?? mode),
+              minutes: p.index === 0 ? minutes : (p.minutes ?? minutes),
+              tripsPerWeek: p.tripsPerWeek,
+            })),
+            tune,
+          ),
+    [placed, mode, minutes, tune],
   );
   const hasPoi = placed.some((p) => p.index > 0);
   const query = useMemo(() => priorityRequest(priorities), [priorities]);
@@ -469,19 +577,24 @@ export function useTripPlanner(
   ]);
   const placesKey = JSON.stringify(placed.map((p) => [p.lat, p.lon]));
   const anchorKey =
-    place && hasPoi && anchors.length >= 2
-      ? `${JSON.stringify(anchors)}|${queryKey}#${nonce}`
+    place && hasPoi && request && request.anchors.length >= 2
+      ? `${JSON.stringify(request)}|${queryKey}#${nonce}`
       : null;
 
   useEffect(() => {
-    if (anchorKey === null) return;
+    if (anchorKey === null || request === null) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       clientRef.current
-        .triangulate(anchors, { ...query, signal: controller.signal })
+        .triangulate(request.anchors, {
+          ...query,
+          tune: request.tune,
+          signal: controller.signal,
+        })
         .then(async (response) => {
           if (controller.signal.aborted) return;
-          const picked = pickSpreadResults(response.results);
+          const auto = request.tune === "auto";
+          const picked = pickSpreadResults(response.results, { keepOrder: auto });
           const scores = await selectionScores(picked, priorities, controller.signal);
           if (controller.signal.aborted) return;
           const spread = picked
@@ -491,9 +604,13 @@ export function useTripPlanner(
               score: scores[i] ?? r.score,
               label:
                 COORDINATE_TEXT.test(r.address) || r.address === "" ? formatLatLon(r) : r.address,
-            }))
-            .sort((a, b) => b.score - a.score);
+              travel: r.travel,
+            }));
+          // Fixed lists best score first; auto keeps the server's places-to-live order.
+          if (!auto) spread.sort((a, b) => b.score - a.score);
+          const tunedMinutes = auto ? response.tunedMinutes : null;
           const empty =
+            (auto && tunedMinutes === null) ||
             response.combined === null ||
             response.combined.cellCount === 0 ||
             spread.length === 0;
@@ -501,6 +618,8 @@ export function useTripPlanner(
             results: spread,
             isochrones: response.isochrones,
             combined: response.combined,
+            tune: request.tune,
+            tunedMinutes,
             estimate: [...response.isochrones, response.combined].some(
               (iso) => iso?.method === "estimate",
             ),
@@ -547,7 +666,7 @@ export function useTripPlanner(
       clearTimeout(timer);
       controller.abort();
     };
-    // `anchors` is captured by `anchorKey`.
+    // `request` is captured by `anchorKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchorKey]);
 
@@ -562,6 +681,15 @@ export function useTripPlanner(
   const shownStatus = shown ? shown.status : null;
   const data = shown ? shown.data : null;
   const refreshing = shown !== null && status === "loading";
+  const tunedMinutes = tune === "auto" ? (data?.tunedMinutes ?? null) : null;
+  useEffect(() => {
+    tunedRef.current = tunedMinutes;
+  });
+  const badgeMinutes = useCallback(
+    (travelMode: ReachMode, ownMinutes: number) =>
+      clampMinutes(travelMode, shownMinutes(tune, tunedMinutes, ownMinutes)),
+    [tune, tunedMinutes],
+  );
 
   const overlay = useMemo<TripOverlay>(() => {
     const iso = data?.isochrones ?? [];
@@ -590,6 +718,15 @@ export function useTripPlanner(
     active: rows.length > 0,
     hasPlaces: urlPoints.length > 0,
     travel,
+    tune,
+    tunedMinutes,
+    badgeMinutes,
+    fitAutomatically,
+    setMode,
+    setMinutes,
+    setMainMode,
+    setMainMinutes,
+    setTripsPerWeek,
     armedId,
     arm: setArmedId,
     canAdd: rows.length < MAX_POIS,
@@ -605,7 +742,6 @@ export function useTripPlanner(
     selectSuggestion,
     submitText,
     setText,
-    setTravel,
     clearPlace,
     resolvePending,
     setPlaceFromMap,

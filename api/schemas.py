@@ -108,6 +108,8 @@ class AnchorPoint(CamelModel):
     longitude: float | None = None
     max_travel_minutes: int | None = None
     mode: Literal["drive", "transit", "walk"] = "drive"
+    # One-way trips per week; used only with tune="auto" (default 5 for the first anchor, 2 after).
+    trips_per_week: int | None = Field(default=None, ge=1, le=14)
 
 
 class TriangulateRequest(CamelModel):
@@ -118,6 +120,13 @@ class TriangulateRequest(CamelModel):
     # these factors instead of the all-factor composite.
     factors: str | None = None
     weights: str | None = None
+    tune: Literal["fixed", "auto"] = "fixed"
+
+
+class AnchorTravel(CamelModel):
+    label: str
+    mode: Literal["drive", "transit", "walk"]
+    minutes: int
 
 
 class RankedAddress(CamelModel):
@@ -126,6 +135,7 @@ class RankedAddress(CamelModel):
     latitude: float
     longitude: float
     composite_score: float
+    travel: list[AnchorTravel] | None = None
 
 
 class IsochroneShape(CamelModel):
@@ -151,6 +161,7 @@ class TriangulateResponse(CamelModel):
     results: list[RankedAddress]
     isochrones: list[IsochroneShape] = []
     combined: IsochroneShape | None = None
+    tuned_minutes: int | None = None
 
 
 class Suggestion(CamelModel):

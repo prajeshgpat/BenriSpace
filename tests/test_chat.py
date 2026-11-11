@@ -115,11 +115,21 @@ OPT_PAYLOAD = {
             "areaLabel": None,
             "latitude": 41.07,
             "longitude": -73.47,
-            "weeklyMinutes": 140,
+            "commuteMinutes": 35,
             "overallScore": 61,
             "stops": [
                 {
+                    "for": "1 Stamford Forum",
+                    "kind": "address",
+                    "name": "1 Stamford Forum",
+                    "minutes": 35,
+                    "distance": "14.0 mi",
+                    "mode": "drive",
+                    "estimated": False,
+                },
+                {
                     "for": "Trader Joe's",
+                    "kind": "brand",
                     "name": "Trader Joe's",
                     "minutes": 8,
                     "distance": "2.1 mi",
@@ -156,7 +166,7 @@ def test_tool_loop_dispatches_and_builds_results_deterministically(db, optimize_
             resp(
                 [text("Let me check."), tool("optimize_location", {"anchors": anchors})], "tool_use"
             ),
-            resp([text("Darien, Connecticut looks best: about 140 minutes of travel a week.")]),
+            resp([text("Darien, Connecticut looks best: a 35 min commute.")]),
         ]
     )
     out = chat.run_chat(body("Find a place near my work"), lambda timeout: client)
@@ -165,8 +175,9 @@ def test_tool_loop_dispatches_and_builds_results_deterministically(db, optimize_
     assert out.limited is None
     assert [s.tool for s in out.sources] == ["optimize_location"]
     r = out.results[0]
-    assert (r.label, r.score, r.weekly_minutes) == ("Darien, Connecticut", 61, 140)
-    assert "Trader Joe's: 8 min" in r.why and "2.1 mi" in r.why
+    assert (r.label, r.score, r.commute_minutes) == ("Darien, Connecticut", 61, 35)
+    assert r.why == "35 min to work by car. Trader Joe's: 8 min, 2.1 mi."
+    assert "week" not in r.why
     # The second call carries the assistant blocks as-is and ONE user message of tool results.
     second = client.calls[1]["messages"]
     assert second[-2]["role"] == "assistant" and second[-1]["role"] == "user"
@@ -375,14 +386,14 @@ def test_ungrounded_reply_is_replaced_by_deterministic_summary(db, optimize_tool
     out = chat.run_chat(body("work near x"), lambda timeout: client)
     assert out.limited is True
     assert "Westport" not in out.reply and "Darien, Connecticut (score 61)" in out.reply
-    assert "140 min" in out.reply and "Assumed 5 work trips/week by car." in out.reply
+    assert "35 min commute" in out.reply and "Assumed 5 work trips/week by car." in out.reply
 
 
 @pytest.mark.parametrize(
     ("reply", "ok"),
     [
-        ("Darien, Connecticut is about 140 minutes a week away.", True),
-        ("Darien, Connecticut is about 141 minutes a week away.", False),
+        ("Darien, Connecticut is a 35 minute commute away.", True),
+        ("Darien, Connecticut is a 777 minute commute away.", False),
         ("Try Westport for groceries.", False),
         ("It is 3 km away in Darien.", False),
         ("I can't rank by crime: BenriSpace has no crime data, but I can compare grocery access.", True),
@@ -504,7 +515,7 @@ def test_stream_emits_status_then_the_same_reply(db, optimize_tool, monkeypatch)
     client = FakeAnthropic(
         [
             resp([tool("optimize_location", {"anchors": anchors})], "tool_use"),
-            resp([text("Darien, Connecticut looks best: about 140 minutes of travel a week.")]),
+            resp([text("Darien, Connecticut looks best: a 35 min commute.")]),
         ]
     )
     monkeypatch.setattr(chat, "make_client", lambda t: client)
@@ -560,7 +571,10 @@ def test_optimize_tool_wraps_engine(monkeypatch):
                         "weeklyMinutes": 90, "score": 70,
                         "anchors": [{"query": "gym", "kind": "category", "name": "Gym", "latitude": 1.0,
                                      "longitude": 2.0, "minutes": 5, "distanceLabel": "0.4 mi",
-                                     "mode": "walk", "approx": False}],
+                                     "mode": "walk", "approx": False},
+                                    {"query": "w", "kind": "address", "name": "W", "latitude": 1.0,
+                                     "longitude": 2.0, "minutes": 35, "distanceLabel": "9 mi",
+                                     "mode": "drive", "approx": False}],
                     }
                 ],
                 "assumptions": ["a"],
@@ -578,6 +592,61 @@ def test_optimize_tool_wraps_engine(monkeypatch):
     assert out["results"][0]["stops"][0]["distance"] == "0.4 mi"
     assert out["unresolved"] == [{"query": "z", "reason": "r"}]
     assert "km" not in str(out).lower()
+    assert "weeklyMinutes" not in out["results"][0]
+    assert out["results"][0]["commuteMinutes"] == 35  # the address anchor's one-way minutes
+    assert out["results"][0]["stops"][1]["kind"] == "address"
+
+
+def test_commute_minutes_absent_without_an_address_anchor():
+    anchors = [{"kind": "category", "minutes": 5}, {"kind": "brand", "minutes": 9}]
+
+    assert chat._commute_field(anchors) == {}
+
+
+def test_optimize_why_without_work_lists_stops_only():
+    stops = [{"kind": "category", "name": "Gym", "minutes": 5, "distance": "0.4 mi"}]
+
+    assert chat._optimize_why(stops) == "Gym: 5 min, 0.4 mi."
+
+
+def test_optimize_why_names_work_commute_mode_then_other_stops():
+    stops = [
+        {"kind": "address", "name": "Office", "minutes": 20, "distance": "3 mi", "mode": "transit"},
+        {"kind": "category", "name": "Gym", "minutes": 5, "distance": None, "mode": "walk"},
+    ]
+
+    assert chat._optimize_why(stops) == "20 min to work by transit. Gym: 5 min."
+
+
+def test_suggestions_follow_the_last_tool_and_are_capped_and_short():
+    two = [chat.ChatResult(label=str(i), latitude=1, longitude=2, why="") for i in range(2)]
+
+    for tool in chat.TOOL_IMPL:
+        got = chat.build_suggestions(tool, two)
+        assert len(got) <= 3 and all(len(g) < 60 for g in got)
+    assert "Compare the top two" in chat.build_suggestions("optimize_location", two)
+    assert "Compare the top two" not in chat.build_suggestions("optimize_location", two[:1])
+    assert chat.build_suggestions(None, []) == []
+
+
+def test_run_chat_response_carries_suggestions_after_optimize(db, optimize_tool):
+    client = FakeAnthropic(
+        [
+            resp([tool("optimize_location", {"anchors": [{"kind": "address", "query": "w"}]})], "tool_use"),
+            resp([text("Darien, Connecticut has a 35 min commute.")]),
+        ]
+    )
+
+    out = chat.run_chat(body("Find a place near my work"), lambda timeout: client)
+
+    assert out.suggestions[0] == "What if I take the train?"
+    assert out.model_dump(by_alias=True)["suggestions"] == out.suggestions
+
+
+def test_system_prompt_uses_coverage_constant_and_daily_assumption_wording():
+    assert chat.COVERAGE_AREA in chat.SYSTEM
+    assert "New York City metro area" not in chat.SYSTEM
+    assert "never as a weekly total" in chat.SYSTEM
 
 
 def test_migration_0010_is_additive_and_mirrored():
@@ -738,7 +807,9 @@ def test_plan_tool_payload_uses_best_results_anchors(monkeypatch):
         ],
     }
     # The model-facing stops stay lean.
-    assert set(out["results"][0]["stops"][0]) == {"for", "name", "minutes", "distance", "mode", "estimated"}
+    assert set(out["results"][0]["stops"][0]) == {
+        "for", "kind", "name", "minutes", "distance", "mode", "estimated",
+    }
 
 
 def test_plan_is_built_from_optimize_and_hidden_from_the_model(db, monkeypatch):

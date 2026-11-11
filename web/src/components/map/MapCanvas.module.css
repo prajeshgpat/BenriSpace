@@ -95,3 +95,18 @@
 .map :global(.maplibregl-ctrl-attrib) {
   font-size: 0.6875rem;
 }
+
+/* Touch: grow the pin's hit area to 44px; the marker is positioned by MapLibre. */
+@media (pointer: coarse) {
+  .marker::after {
+    content: "";
+    position: absolute;
+    inset: -0.625rem;
+  }
+
+  /* MapLibre's zoom buttons are 29px; make them thumb-sized. */
+  .map :global(.maplibregl-ctrl-group button) {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}

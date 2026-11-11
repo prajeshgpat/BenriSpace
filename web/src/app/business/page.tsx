@@ -10,12 +10,12 @@ const SEGMENTS = [
   {
     id: "listings",
     title: "Listing platforms and brokerages",
-    text: "Show a convenience score and its 13 factors on every listing, and give clients an area report for any address in the New York metro.",
+    text: "Show a convenience score and its 13 factors on every listing, and give clients an area report for any address we cover. Live now in the New York metro, with more US metros on the way.",
   },
   {
     id: "relocation",
     title: "Relocation and HR",
-    text: "Given where an employee works, where the kids go to school and the places they visit weekly, rank the areas that fit best by total travel time.",
+    text: "Given where an employee works, where the kids go to school and the places the family goes most, rank the areas with the shortest commute and the closest everyday stops.",
   },
   {
     id: "multifamily",
@@ -33,7 +33,7 @@ export default function BusinessPage() {
   return (
     <InfoPage
       title="For Business"
-      lead="Convenience and travel-time scores for every road-bounded area in NY, NJ and CT, on one scale, ready to use in your product."
+      lead="Convenience and travel-time scores for every road-bounded area we cover, on one scale, ready to use in your product. Live now in parts of NY, NJ and CT."
     >
       {SEGMENTS.map(({ id, title, text }) => (
         <section key={id} id={id} className={styles.card} aria-labelledby={`${id}-heading`}>

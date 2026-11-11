@@ -134,6 +134,16 @@ export interface TriangulateAnchor {
   lat: number;
   lon: number;
   mode: ReachMode;
+  /** Travel budget for `tune: "fixed"`; left out when the server tunes it. */
+  minutes?: number;
+  /** One-way trips per week (1-14): how much this place weighs when ranking places to live. */
+  tripsPerWeek?: number;
+}
+
+/** One-way travel from a result to one place, by the mode that suits that trip. */
+export interface AnchorTravel {
+  label: string;
+  mode: ReachMode;
   minutes: number;
 }
 
@@ -145,10 +155,24 @@ export interface Isochrone extends Reach {
 
 /** POST /triangulate: where the travel areas of several places overlap. */
 export interface Triangulation {
-  results: { lat: number; lon: number; score: number; address: string }[];
+  results: TriangulationResult[];
   isochrones: Isochrone[];
   combined: Isochrone | null;
+  /** With `tune: "auto"`, the minutes every area was drawn at; null when too far apart. */
+  tunedMinutes: number | null;
 }
+
+export interface TriangulationResult {
+  lat: number;
+  lon: number;
+  score: number;
+  address: string;
+  /** One-way travel to each place, in request order; empty when the server had none. */
+  travel: AnchorTravel[];
+}
+
+/** `fixed` uses the given minutes; `auto` lets the server find the fewest that overlap. */
+export type TriangulateTune = "fixed" | "auto";
 
 export interface Similar {
   minSeparationMi: number;
@@ -271,7 +295,8 @@ export interface ChatResult {
   latitude: number;
   longitude: number;
   score?: number;
-  weeklyMinutes?: number;
+  /** One-way minutes from this area to the main (work) address: the daily commute. */
+  commuteMinutes?: number;
   why: string;
 }
 
@@ -299,6 +324,8 @@ export interface ChatReply {
   results: ChatResult[];
   plan?: ChatPlan;
   sources: ChatSource[];
+  /** Up to 3 short follow-up questions chosen by the API (not the model). */
+  suggestions?: string[];
   /** True when the reply is a fallback summary or chat is paused. */
   limited: boolean;
 }

@@ -27,4 +27,12 @@ describe("legacy app redirects", () => {
     expect(entry.source).toBe("/:path*");
     expect(entry.headers.map((h) => h.key)).toContain("X-Frame-Options");
   });
+
+  it("caches the MapLibre worker for a day, not forever (fixed file names)", async () => {
+    const entries = await nextConfig.headers!();
+    const entry = entries.find((rule) => rule.source === "/maplibre/:path*");
+    const value = entry?.headers.find((h) => h.key === "Cache-Control")?.value ?? "";
+    expect(value).toContain("max-age=86400");
+    expect(value).not.toContain("immutable");
+  });
 });

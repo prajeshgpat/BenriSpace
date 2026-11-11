@@ -137,3 +137,10 @@
     border: 1px solid CanvasText;
   }
 }
+
+@media (pointer: coarse) {
+  .summary,
+  .action {
+    min-height: 2.75rem;
+  }
+}

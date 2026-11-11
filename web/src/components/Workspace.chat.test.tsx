@@ -51,7 +51,7 @@ const map = () => canvas.props as CanvasProps;
 const REPLY: ChatReply = {
   reply: "Darien looks best.",
   results: [
-    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, weeklyMinutes: 274, why: "Short trips." },
+    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, commuteMinutes: 42, why: "Short trips." },
   ],
   sources: [],
   limited: false,
@@ -150,12 +150,13 @@ describe("Workspace: Ask Benri", () => {
     };
     const { chat } = setup("address=350+5th+Ave&lat=40.7484&lon=-73.9857&pt=40.75%2C-73.97", {
       triangulate: vi.fn(async () => ({
-        results: [{ lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" }],
+        results: [{ lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St", travel: [] }],
         isochrones: [iso, iso],
         combined: iso,
+        tunedMinutes: 20,
       })),
     });
-    await screen.findByRole("heading", { name: "Best areas in the overlap" });
+    await screen.findByRole("heading", { name: "Best places to live" });
     await user.click(screen.getByRole("button", { name: "Ask Benri" }));
     expect(
       await screen.findByRole("button", { name: "What are the pros and cons of the areas in the overlap?" }),

@@ -95,7 +95,21 @@ const nextConfig: NextConfig = {
     return legacyAppRedirects();
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      {
+        // The MapLibre worker is copied from node_modules under a fixed name, so it
+        // cannot be immutable; a day of caching (with background refresh) still
+        // saves a revalidation round trip on every map load.
+        source: "/maplibre/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, stale-while-revalidate=604800",
+          },
+        ],
+      },
+    ];
   },
 };
 

@@ -36,7 +36,7 @@ const PER_FACTOR: Record<FactorKey, { here: string; metro: string }> = {
 };
 
 const TRIP_PROS_CONS = "What are the pros and cons of the areas in the overlap?";
-const MULTI_STOP = "Find a neighborhood near my work, a Trader Joe's and a Planet Fitness";
+const MULTI_STOP = "Find areas within a 30 minute commute of my work, close to a gym";
 
 /**
  * Exactly three suggested questions that follow the selected factors
