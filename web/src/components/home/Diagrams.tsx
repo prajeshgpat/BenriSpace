@@ -41,7 +41,7 @@ export function ScoreDiagram({ label }: { label: string }) {
         Nearby counts
       </text>
       <text className={styles.labelSub} x="105" y="248" textAnchor="middle">
-        fading with distance
+        fade with distance
       </text>
 
       <path className={styles.flow} d="M 195 110 C 230 110 250 110 290 110" />
@@ -66,7 +66,7 @@ export function ScoreDiagram({ label }: { label: string }) {
         />
       ))}
       <path className={styles.flow} d="M 300 262 C 330 240 360 230 370 212" />
-      <text className={styles.labelSub} x="22" y="278">
+      <text className={styles.labelSub} x="22" y="266">
         13 factors, weighted
       </text>
     </svg>
@@ -118,6 +118,9 @@ export function TriangulationDiagram({ label }: { label: string }) {
       ].map(([x, y]) => (
         <circle key={`${x}-${y}`} className={styles.best} cx={x} cy={y} r="10" />
       ))}
+      <text className={`${styles.labelSub} ${styles.halo}`} x="241" y="224" textAnchor="middle">
+        Best areas
+      </text>
       {[
         { x: 105, y: 112, t: "Work" },
         { x: 375, y: 112, t: "Family" },
@@ -139,18 +142,29 @@ export function TriangulationDiagram({ label }: { label: string }) {
   );
 }
 
+/** Trips per week set the line weight only; the numbers shown are minutes. */
 const ANCHORS = [
-  { t: "Work 5x", x: 82, y: 56, w: 5 },
-  { t: "Grocery 2x", x: 82, y: 284, w: 2 },
-  { t: "Gym 1x", x: 396, y: 300, w: 1 },
+  { t: "Work", x: 400, y: 52, w: 5 },
+  { t: "Groceries", x: 108, y: 296, w: 2 },
+  { t: "Gym", x: 400, y: 296, w: 1 },
 ] as const;
 const CANDIDATES = [
-  { id: "a", x: 380, y: 72, win: false },
-  { id: "b", x: 225, y: 170, win: true },
-  { id: "c", x: 405, y: 190, win: false },
+  { id: "a", x: 60, y: 150, win: false, commute: "31 min", labelX: 60, labelY: 192 },
+  { id: "b", x: 235, y: 175, win: true, commute: "", labelX: 0, labelY: 0 },
+  { id: "c", x: 375, y: 200, win: false, commute: "27 min", labelX: 428, labelY: 206 },
 ] as const;
+/** Minutes from the winning area to each stop, placed on the line midpoint. */
+const WIN_MINUTES: Record<string, { text: string; x: number; y: number }> = {
+  Work: { text: "18 min", x: 317, y: 120 },
+  Groceries: { text: "7 min", x: 172, y: 240 },
+  Gym: { text: "8 min", x: 317, y: 240 },
+};
+const PILL_W = 124;
 
-/** Optimization: anchors with trips per week, candidate areas, the lowest total travel wins. */
+/**
+ * Optimization: candidate home areas, the commute in minutes to Work, and the
+ * winner's short trips to everyday stops. Line weight is how often a trip is made.
+ */
 export function OptimizationDiagram({ label }: { label: string }) {
   return (
     <svg className={styles.svg} viewBox="0 0 480 340" role="img" aria-label={label}>
@@ -172,28 +186,51 @@ export function OptimizationDiagram({ label }: { label: string }) {
         <g key={c.id}>
           {c.win && <circle className={styles.winRing} cx={c.x} cy={c.y} r="26" />}
           <circle className={c.win ? styles.win : styles.cand} cx={c.x} cy={c.y} r="14" />
+          {!c.win && (
+            <text
+              className={`${styles.labelSub} ${styles.halo}`}
+              x={c.labelX}
+              y={c.labelY}
+              textAnchor="middle"
+            >
+              {c.commute}
+            </text>
+          )}
         </g>
       ))}
-      <text className={`${styles.label} ${styles.halo}`} x="225" y="222" textAnchor="middle">
-        Least travel
-      </text>
-      <text className={`${styles.labelSub} ${styles.halo}`} x="225" y="244" textAnchor="middle">
-        per week
+      {ANCHORS.map((a) => (
+        <text
+          key={`m-${a.t}`}
+          className={`${styles.label} ${styles.halo}`}
+          x={WIN_MINUTES[a.t].x}
+          y={WIN_MINUTES[a.t].y}
+          textAnchor="middle"
+        >
+          {WIN_MINUTES[a.t].text}
+        </text>
+      ))}
+      <text className={`${styles.label} ${styles.halo}`} x="235" y="136" textAnchor="middle">
+        Best fit
       </text>
       {ANCHORS.map((a) => (
         <g key={a.t}>
-          <rect className={styles.pill} x={a.x - 62} y={a.y - 17} width="124" height="34" rx="17" />
-          <text
-            className={styles.label}
-            x={a.x}
-            y={a.y + 6}
-            textAnchor="middle"
-            style={{ fontSize: 17 }}
-          >
+          <rect
+            className={styles.pill}
+            x={a.x - PILL_W / 2}
+            y={a.y - 18}
+            width={PILL_W}
+            height="36"
+            rx="18"
+          />
+          <text className={styles.label} x={a.x} y={a.y + 7} textAnchor="middle">
             {a.t}
           </text>
         </g>
       ))}
+      <line className={styles.lineWin} x1="20" y1="30" x2="52" y2="30" strokeWidth="9" />
+      <text className={styles.labelSub} x="62" y="37">
+        Thicker = more often
+      </text>
     </svg>
   );
 }

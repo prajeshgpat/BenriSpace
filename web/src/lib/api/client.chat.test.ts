@@ -15,11 +15,12 @@ function clientReturning(response: Response) {
 const REPLY = {
   reply: "Darien looks best.",
   results: [
-    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, weeklyMinutes: 274, why: "Short trips." },
+    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, commuteMinutes: 35, why: "Short trips." },
     { label: "", latitude: 1, longitude: 2, why: "dropped: no label" },
     { label: "No coordinates", why: "dropped" },
   ],
   sources: [{ tool: "optimize_location", summary: "3 areas" }, { tool: 5 }],
+  suggestions: ["Compare the top two", "", 7, "What if I take the train?", "Third", "Fourth dropped"],
   limited: true,
 };
 
@@ -44,6 +45,7 @@ describe("chat", () => {
       reply: "Darien looks best.",
       results: [REPLY.results[0]],
       sources: [REPLY.sources[0]],
+      suggestions: ["Compare the top two", "What if I take the train?", "Third"],
       limited: true,
     });
   });
@@ -55,6 +57,7 @@ describe("chat", () => {
       messages: [{ role: "user", content: "hi" }],
     });
     expect(result.limited).toBe(false);
+    expect(result.suggestions).toBeUndefined();
   });
 
   it("uses the longer chat timeout", async () => {

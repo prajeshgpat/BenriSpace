@@ -17,8 +17,8 @@ import {
 const REPLY: ChatReply = {
   reply: "Shippan Point looks best.",
   results: [
-    { label: "Shippan Point, Stamford", latitude: 41.01, longitude: -73.52, score: 85, weeklyMinutes: 243, why: "Short trips to all three." },
-    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, weeklyMinutes: 274, why: "Higher score." },
+    { label: "Shippan Point, Stamford", latitude: 41.01, longitude: -73.52, score: 85, commuteMinutes: 35, why: "Short trips to all three." },
+    { label: "Darien, CT", latitude: 41.07, longitude: -73.47, score: 87, commuteMinutes: 42, why: "Higher score." },
   ],
   sources: [],
   limited: false,
@@ -56,6 +56,61 @@ describe("ChatPanel", () => {
     expect(onPlan).toHaveBeenCalledTimes(1);
   });
 
+  it("never shows weekly totals, only the daily commute", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.type(screen.getByRole("textbox"), "find{Enter}");
+    await screen.findByText("Score 87 · 42 min commute");
+    expect(screen.queryByText(/a week|weekly/i)).not.toBeInTheDocument();
+  });
+
+  it("offers server follow-ups under the latest reply only, and tapping one sends it", async () => {
+    const user = userEvent.setup();
+    const chat = vi
+      .fn<ApiClient["chat"]>()
+      .mockResolvedValueOnce({ ...REPLY, suggestions: ["Which has better cafes?", "What about transit?"] })
+      .mockResolvedValueOnce({ ...REPLY, reply: "Second answer.", suggestions: ["Another?"] });
+    setup(chat);
+    await user.type(screen.getByRole("textbox"), "find{Enter}");
+    const chips = await screen.findByRole("list", { name: "Follow-up questions" });
+    expect(within(chips).getAllByRole("button")).toHaveLength(2);
+
+    await user.click(within(chips).getByRole("button", { name: "Which has better cafes?" }));
+    await screen.findByText("Second answer.");
+    expect(chat.mock.calls[1][0].at(-1)).toEqual({ role: "user", content: "Which has better cafes?" });
+    const latest = screen.getByRole("list", { name: "Follow-up questions" });
+    expect(within(latest).getAllByRole("button").map((b) => b.textContent)).toEqual(["Another?"]);
+  });
+
+  it("Stop aborts the request, keeps the question in the log and re-enables Send", async () => {
+    const user = userEvent.setup();
+    let signal!: AbortSignal;
+    const chat = vi.fn<ApiClient["chat"]>(
+      (_m, _c, options) =>
+        new Promise((_resolve, reject) => {
+          signal = options!.signal!;
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    setup(chat);
+    await user.type(screen.getByRole("textbox"), "slow question{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Stop" }));
+
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByText("slow question")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "BenriSpace is typing" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("keeps paragraph breaks in a reply as separate paragraphs", async () => {
+    const user = userEvent.setup();
+    setup(vi.fn(async () => ({ ...REPLY, reply: "First part.\n\nSecond part.\nSame paragraph." })));
+    await user.type(screen.getByRole("textbox"), "hi{Enter}");
+    expect(await screen.findByText("First part.")).toBeInTheDocument();
+    expect(screen.getByText(/Second part\./).tagName).toBe("P");
+  });
+
   it("offers the three starter questions, which send immediately", async () => {
     const user = userEvent.setup();
     const { chat } = setup();
@@ -73,13 +128,10 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("list", { name: "Suggested questions" })).not.toBeInTheDocument();
   });
 
-  it("shows the owner's intro and chips that follow the selected factors", () => {
+  it("frames the intro around commutes and everyday stops, with chips that follow the factors", () => {
     setup(undefined, { context: { address: "5 Main St", factors: ["transit" as const, "gym" as const] } });
-    expect(
-      screen.getByText(
-        "Ask about neighborhoods in the New York metro. I only use BenriSpace data, so I can compare scores, find places near an address and weigh trips to work, cafes, gyms, etc.",
-      ),
-    ).toBeInTheDocument();
+    const intro = screen.getByText(/Find areas by commute and everyday stops/);
+    expect(intro.textContent).not.toMatch(/New York/);
     const chips = within(screen.getByRole("list", { name: "Suggested questions" })).getAllByRole("button");
     expect(chips.map((c) => c.textContent)).toEqual(starterQuestions(["transit", "gym"], true));
   });
@@ -119,7 +171,8 @@ describe("ChatPanel", () => {
 
     await user.type(screen.getByRole("textbox"), "hello{Enter}");
     expect(await screen.findByRole("status", { name: "BenriSpace is typing" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
 
     resolve(REPLY);
     await screen.findByText("Shippan Point looks best.");
@@ -133,7 +186,7 @@ describe("ChatPanel", () => {
 
     const cards = await screen.findAllByRole("listitem", {}, { timeout: 2000 });
     const first = cards.find((c) => within(c).queryByText("Shippan Point, Stamford"))!;
-    expect(within(first).getByText("Score 85 · 243 min a week")).toBeInTheDocument();
+    expect(within(first).getByText("Score 85 · 35 min commute")).toBeInTheDocument();
 
     await user.click(within(first).getByRole("button", { name: "Show Shippan Point, Stamford on map" }));
     expect(onShowOnMap).toHaveBeenCalledWith(REPLY.results[0]);

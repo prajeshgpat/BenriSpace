@@ -7,7 +7,6 @@ import { ApiError } from "@/lib/api/errors";
 import { createApiClient, type ApiClient } from "@/lib/api/client";
 import type { AreaGeometry, Bbox, MapCells, MapTop, MapTopResult } from "@/lib/api/types";
 import { DEFAULT_SELECTION } from "@/lib/map/selection";
-import { defaultTravel, tuneTravel, widenPlan } from "@/lib/travel";
 import { AREA_RING, emptySubScores, jsonResponse, makeAreaBody, makeAreaScore, liveScoreBody } from "@/test/fixtures";
 
 import type { MapCanvas as MapCanvasType } from "./map/MapCanvas";
@@ -1281,11 +1280,12 @@ describe("Workspace: points of interest", () => {
     };
     const triangulate = vi.fn<ApiClient["triangulate"]>(async () => ({
       results: [
-        { lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St" },
-        { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St" },
+        { lat: 40.71, lon: -73.99, score: 81.4, address: "1 Main St", travel: [] },
+        { lat: 40.8, lon: -73.9, score: 70, address: "2 Side St", travel: [] },
       ],
       isochrones: [iso, iso],
       combined: iso,
+      tunedMinutes: 20,
     }));
     const withPoint = () =>
       setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate });
@@ -1293,8 +1293,8 @@ describe("Workspace: points of interest", () => {
     it("sends the selected factors and scores the overlap areas as the score card does", async () => {
       const user = userEvent.setup();
       const base = makeAreaScore();
-      // Every factor scores 40 at Main St and 90 at Side St, so the selected-factor score
-      // reverses the API's all-factor order (81.4 and 70).
+      // Every factor scores 40 at Main St and 90 at Side St. The shown score is the
+      // selected-factor one, while the server's places-to-live order (Main St first) stays.
       const flat = (value: number) =>
         Object.fromEntries(Object.keys(emptySubScores).map((k) => [k, value])) as typeof emptySubScores;
       const getAreaByCoordinates = vi.fn<ApiClient["getAreaByCoordinates"]>(async ({ lat }) => ({
@@ -1306,11 +1306,11 @@ describe("Workspace: points of interest", () => {
         triangulate: tri,
         getAreaByCoordinates,
       });
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       expect(tri.mock.calls[0][1]).toMatchObject({ factors: DEFAULT_SELECTION.factors });
       expect(map().markers.map((m) => [m.id, m.rank, m.tooltip])).toEqual([
-        ["overlap:40.8,-73.9", 1, "2 Side St \u00b7 90"],
-        ["overlap:40.71,-73.99", 2, "1 Main St \u00b7 40"],
+        ["overlap:40.71,-73.99", 1, "1 Main St \u00b7 40"],
+        ["overlap:40.8,-73.9", 2, "2 Side St \u00b7 90"],
       ]);
       await user.click(screen.getByRole("button", { name: /1 Main St/ }));
       const card = await screen.findByRole("region", { name: "Area in the overlap" });
@@ -1319,7 +1319,7 @@ describe("Workspace: points of interest", () => {
 
     it("hides the score card and suggestions, keeping the overlap results", async () => {
       withPoint();
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       expect(screen.queryByRole("region", { name: "Selected location" })).toBeNull();
       expect(screen.queryByTestId("composite-score")).toBeNull();
       expect(screen.queryByRole("heading", { name: "Best areas" })).toBeNull();
@@ -1332,7 +1332,7 @@ describe("Workspace: points of interest", () => {
 
     it("draws the overlap best areas as the map's ranked markers", async () => {
       withPoint();
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       expect(map().areaGeometry).toBeNull();
       expect(map().highlightGeohash).toBeNull();
       expect(map().markers.map((m) => [m.id, m.rank, m.tooltip])).toEqual([
@@ -1341,11 +1341,11 @@ describe("Workspace: points of interest", () => {
       ]);
     });
 
-    it("labels the legend POI Overlap with no numbered point rows", async () => {
+    it("explains the shaded overlap in the legend, with no numbered point rows", async () => {
       withPoint();
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       const legend = screen.getByRole("group", { name: "Travel areas legend" });
-      expect(legend).toHaveTextContent("POI Overlap");
+      expect(legend).toHaveTextContent("Shaded: everywhere all your places are within 20 min");
       expect(legend).not.toHaveTextContent("Point of interest");
     });
 
@@ -1406,7 +1406,7 @@ describe("Workspace: points of interest", () => {
           triangulate,
           getReach,
         });
-        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        await screen.findByRole("heading", { name: "Best places to live" });
         // Drawn briefly while the overlap loads, then hidden once it is on the map.
         await waitFor(() => expect(map().reachGeometry).toBeNull());
         await user.click(screen.getByRole("button", { name: /^Travel time:/ }));
@@ -1416,7 +1416,7 @@ describe("Workspace: points of interest", () => {
         await waitFor(() => expect(map().reachGeometry).toEqual(reachGeometry));
         const legend = screen.getByRole("group", { name: "Travel areas legend" });
         expect(legend).toHaveTextContent("Searched place");
-        expect(legend).toHaveTextContent("POI Overlap");
+        expect(legend).toHaveTextContent("Shaded: everywhere all your places are within 20 min");
       });
     });
 
@@ -1458,7 +1458,7 @@ describe("Workspace: points of interest", () => {
       it("opens a score card above the results when a row is clicked", async () => {
         const user = userEvent.setup();
         withPick();
-        const heading = await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        const heading = await screen.findByRole("heading", { name: "Best places to live" });
         const search = window.location.search;
         pushState.mockClear();
         await user.click(screen.getByRole("button", { name: /1 Main St/ }));
@@ -1480,7 +1480,7 @@ describe("Workspace: points of interest", () => {
 
       it("does the same from the map marker, and Factors show the area's sub-scores", async () => {
         withPick();
-        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        await screen.findByRole("heading", { name: "Best places to live" });
         const search = window.location.search;
         const mainGrocery = screen.getByRole("checkbox", { name: /^Groceries, on, no data/ });
         expect(mainGrocery).toBeInTheDocument();
@@ -1502,77 +1502,98 @@ describe("Workspace: points of interest", () => {
     });
 
     describe("main travel in the search box", () => {
+      type Sent = { mode: string; minutes?: number; tripsPerWeek?: number };
       const sentAnchors = (mock: typeof triangulate, call = -1) =>
-        (mock.mock.calls.at(call)?.[0] ?? []) as readonly { mode: string; minutes: number }[];
-      // Where the mocked score API places "350 5th Ave".
-      const here = { lat: liveScoreBody.latitude, lon: liveScoreBody.longitude };
-      const poi = { lat: 40.75, lon: -73.97 };
+        (mock.mock.calls.at(call)?.[0] ?? []) as readonly Sent[];
+      const sentTune = (mock: typeof triangulate, call = -1) => mock.mock.calls.at(call)?.[1]?.tune;
+      const badges = () => screen.getAllByTestId("travel-badge").map((b) => b.textContent);
 
-      it("changes the searched place's mode and minutes in the triangulate anchors", async () => {
+      it("fits the minutes automatically by default: modes and frequency sent, no minutes, tuned minutes shown", async () => {
+        const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
+        await screen.findByRole("heading", { name: "Best places to live" });
+
+        for (let i = 0; i < tri.mock.calls.length; i += 1) {
+          expect(sentTune(tri, i)).toBe("auto");
+          expect(sentAnchors(tri, i).every((a) => a.minutes === undefined)).toBe(true);
+        }
+        // The fixture place has no density, so it drives; the searched place is always daily.
+        expect(sentAnchors(tri).map((a) => [a.mode, a.tripsPerWeek])).toEqual([
+          ["drive", 5],
+          ["drive", 2],
+        ]);
+        // The mocked server tuned to 20 min: the badges of the main place and the point say so.
+        expect(badges()).toEqual(["20", "20"]);
+      });
+
+      it("keeps automatic fitting when a mode changes, and sends the new mode", async () => {
         const user = userEvent.setup();
         const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
         setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
-        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        await screen.findByRole("heading", { name: "Best places to live" });
 
         await user.click(screen.getByRole("button", { name: /^Travel time:/ }));
         await user.click(screen.getByRole("button", { name: "Walk" }));
-        await user.click(screen.getByRole("button", { name: "More minutes" }));
 
-        await waitFor(() => {
-          const [main] = sentAnchors(tri);
-          expect([main.mode, main.minutes]).toEqual(["walk", 15]);
-        });
-        expect(
-          screen.getByRole("button", { name: "Travel time: Walk, 15 minutes" }),
-        ).toBeInTheDocument();
-        // The user's choice stands: the tuner does not run again for the same places.
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        expect(sentAnchors(tri)[0]).toMatchObject({ mode: "walk", minutes: 15 });
+        await waitFor(() => expect(sentAnchors(tri)[0].mode).toBe("walk"));
+        expect(sentTune(tri)).toBe("auto");
+        expect(screen.queryByRole("button", { name: "Fit automatically" })).toBeNull();
       });
 
-      it("tunes the points of interest around the searched place, once per set of places", async () => {
+      it("freezes every place at the shown minutes when one stepper changes, and offers Fit automatically", async () => {
+        const user = userEvent.setup();
         const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
         setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
-        await screen.findByRole("heading", { name: "Best areas in the overlap" });
+        await screen.findByRole("heading", { name: "Best places to live" });
 
-        // The fixture place has no density, so it drives; it keeps its 10 min drive.
-        const expected = tuneTravel({ ...here, ...defaultTravel(null) }, [poi], null);
-        expect(expected?.main).toEqual({ mode: "drive", minutes: 10 });
-        const anchors = sentAnchors(tri);
-        expect(anchors).toHaveLength(2);
-        expect(anchors[0]).toMatchObject(expected!.main);
-        expect(anchors[1]).toMatchObject(expected!.pois[0]);
-        // Every request carried the tuned travel, none the untuned default first.
-        for (let i = 0; i < tri.mock.calls.length; i += 1) {
-          expect(sentAnchors(tri, i)[1]).toMatchObject(expected!.pois[0]);
-        }
+        await user.click(screen.getByRole("button", { name: /^Travel time:/ }));
+        await user.click(screen.getByRole("button", { name: "More minutes" }));
+
+        await waitFor(() => expect(sentTune(tri)).toBe("fixed"));
+        // Shown 20: the searched place steps to 25, the point stays at what was shown.
+        expect(sentAnchors(tri).map((a) => [a.mode, a.minutes])).toEqual([
+          ["drive", 25],
+          ["drive", 20],
+        ]);
+        expect(
+          screen.getByRole("button", { name: "Travel time: Drive, 25 minutes" }),
+        ).toBeInTheDocument();
+
+        await user.click(await screen.findByRole("button", { name: "Fit automatically" }));
+        await waitFor(() => expect(sentTune(tri)).toBe("auto"));
+        expect(screen.queryByRole("button", { name: "Fit automatically" })).toBeNull();
       });
 
-      it("widens the point of interest up to two steps when the overlap is empty and nothing was changed", async () => {
-        const empty = vi.fn<ApiClient["triangulate"]>(async () => ({
+      it("sends how often a point of interest is gone to", async () => {
+        const user = userEvent.setup();
+        const tri = vi.fn<ApiClient["triangulate"]>(triangulate.getMockImplementation()!);
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: tri });
+        await screen.findByRole("heading", { name: "Best places to live" });
+
+        await user.click(screen.getByRole("button", { name: /^Travel for Point of interest 1/ }));
+        await user.selectOptions(screen.getByRole("combobox", { name: /^How often you go to/ }), "Daily");
+
+        await waitFor(() => expect(sentAnchors(tri)[1].tripsPerWeek).toBe(5));
+        expect(sentTune(tri)).toBe("auto");
+      });
+
+      it("says the places are too far apart, and suggests driving, when automatic fitting finds nothing", async () => {
+        const user = userEvent.setup();
+        const far = vi.fn<ApiClient["triangulate"]>(async () => ({
           results: [],
-          isochrones: [iso, iso],
-          combined: { ...iso, cellCount: 0 },
+          isochrones: [],
+          combined: null,
+          tunedMinutes: null,
         }));
-        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: empty });
-        const tuned = tuneTravel({ ...here, ...defaultTravel(null) }, [poi], null)!;
-        const first = widenPlan(tuned, here, [poi], null)!;
-        const second = widenPlan(first, here, [poi], null)!;
-        await waitFor(
-          () => {
-            const last = sentAnchors(empty);
-            expect(last[1]).toMatchObject(second.pois[0]);
-          },
-          { timeout: 5000 },
-        );
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const steps = new Set(empty.mock.calls.map((c) => `${c[0][1].mode}:${c[0][1].minutes}`));
-        expect(steps.size).toBeLessThanOrEqual(3);
-        // Only the point of interest widened; the searched place kept its travel.
-        expect(sentAnchors(empty)[0]).toMatchObject(second.main);
-        expect(second.main).toEqual(tuned.main);
-        expect(sentAnchors(empty)[1]).toMatchObject(second.pois[0]);
-      }, 15000);
+        setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: far });
+        // The fixture place drives already: no suggestion to drive.
+        expect((await screen.findAllByText(/too far apart to share one neighborhood\.$/)).length).toBeGreaterThan(0);
+        await user.click(screen.getByRole("button", { name: /^Travel time:/ }));
+        await user.click(screen.getByRole("button", { name: "Train" }));
+        expect(
+          (await screen.findAllByText(/too far apart to share one neighborhood\. Try switching a place to drive\./)).length,
+        ).toBeGreaterThan(0);
+      });
     });
 
     it("fits the searched place and a newly entered point of interest on the map", async () => {
@@ -1603,7 +1624,7 @@ describe("Workspace: points of interest", () => {
     it("a map click with an overlap area picked clears the pick and does not move the searched place", async () => {
       const user = userEvent.setup();
       setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate });
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       await user.click(screen.getByRole("button", { name: /1 Main St/ }));
       await screen.findByRole("region", { name: "Area in the overlap" });
       pushState.mockClear();
@@ -1623,7 +1644,7 @@ describe("Workspace: points of interest", () => {
     it("brings the score card back once the last point is removed", async () => {
       const user = userEvent.setup();
       withPoint();
-      await screen.findByRole("heading", { name: "Best areas in the overlap" });
+      await screen.findByRole("heading", { name: "Best places to live" });
       await user.click(screen.getByRole("button", { name: "Remove point of interest 1" }));
       expect(await screen.findByRole("region", { name: "Selected location" })).toBeInTheDocument();
       expect(screen.queryByRole("group", { name: "Travel areas legend" })).toBeNull();
@@ -1634,11 +1655,12 @@ describe("Workspace: points of interest", () => {
         results: [],
         isochrones: [iso, iso],
         combined: { ...iso, cellCount: 0 },
+        tunedMinutes: 20,
       }));
       setup("address=350+5th+Ave%2C+New+York%2C+NY&pt=40.75%2C-73.97", liveApi, { triangulate: empty });
-      expect((await screen.findAllByText(/travel areas don't overlap/)).length).toBeGreaterThan(0);
+      expect((await screen.findAllByText(/travel areas don't overlap|too far apart/)).length).toBeGreaterThan(0);
       expect(screen.getByRole("region", { name: "Selected location" })).toBeInTheDocument();
-      // The widening retries settle first; the searched place's area is drawn once they do.
+      // The searched place's area is drawn once the empty answer is in.
       await waitFor(() =>
         expect(map().triangulation?.anchors.find((a) => a.index === 0)?.geometry).not.toBeNull(),
       );

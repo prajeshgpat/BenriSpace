@@ -7,6 +7,7 @@ import {
 
 import { ApiError, isApiError } from "./errors";
 import type {
+  AnchorTravel,
   AreaGeometry,
   AreaInfo,
   AreaScore,
@@ -42,6 +43,7 @@ import type {
   SubScores,
   Triangulation,
   TriangulateAnchor,
+  TriangulateTune,
   Isochrone,
   SchoolInfo,
 } from "./types";
@@ -136,7 +138,7 @@ export interface ApiClient {
   /** Where the travel areas of 2 or more places overlap, and the best addresses in it. */
   triangulate(
     anchors: readonly TriangulateAnchor[],
-    options?: RequestOptions & PriorityQuery,
+    options?: RequestOptions & PriorityQuery & { tune?: TriangulateTune },
   ): Promise<Triangulation>;
   /** The compact all-cells score file (see `lib/scores/matrix.ts`). */
   getMapScores(options?: RequestOptions): Promise<ArrayBuffer>;
@@ -337,6 +339,7 @@ export function parseTriangulate(body: unknown): Triangulation {
       lon: row.longitude,
       score: row.compositeScore,
       address: typeof row.address === "string" ? row.address : "",
+      travel: parseAnchorTravel(row.travel),
     };
   });
   const isochrones = Array.isArray(body.isochrones)
@@ -346,7 +349,29 @@ export function parseTriangulate(body: unknown): Triangulation {
     results,
     isochrones,
     combined: body.combined ? parseIsochrone(body.combined) : null,
+    tunedMinutes: isFiniteNumber(body.tunedMinutes) ? body.tunedMinutes : null,
   };
+}
+
+/** Per-place one-way travel; entries with an unknown mode or bad minutes are dropped. */
+function parseAnchorTravel(raw: unknown): AnchorTravel[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item: unknown) => {
+    if (
+      !isObject(item) ||
+      !isFiniteNumber(item.minutes) ||
+      (item.mode !== "walk" && item.mode !== "drive" && item.mode !== "transit")
+    ) {
+      return [];
+    }
+    return [
+      {
+        label: typeof item.label === "string" ? item.label : "",
+        mode: item.mode,
+        minutes: item.minutes,
+      },
+    ];
+  });
 }
 
 export function parseAreaScore(body: unknown): AreaScore {
@@ -558,6 +583,8 @@ function parseChatPlan(raw: unknown): ChatPlan | undefined {
   return { ...(place ? { place } : {}), points };
 }
 
+const MAX_CHAT_SUGGESTIONS = 3;
+
 export function parseChatReply(body: unknown): ChatReply {
   if (!isObject(body) || !isNonEmptyString(body.reply)) {
     throw invalidResponse("chat");
@@ -576,8 +603,8 @@ export function parseChatReply(body: unknown): ChatReply {
                 longitude: item.longitude,
                 why: item.why,
                 ...(isFiniteNumber(item.score) ? { score: item.score } : {}),
-                ...(isFiniteNumber(item.weeklyMinutes)
-                  ? { weeklyMinutes: item.weeklyMinutes }
+                ...(isFiniteNumber(item.commuteMinutes)
+                  ? { commuteMinutes: item.commuteMinutes }
                   : {}),
               },
             ]
@@ -592,11 +619,17 @@ export function parseChatReply(body: unknown): ChatReply {
       )
     : [];
   const plan = parseChatPlan(body.plan);
+  const suggestions = Array.isArray(body.suggestions)
+    ? body.suggestions
+        .filter((item): item is string => isNonEmptyString(item))
+        .slice(0, MAX_CHAT_SUGGESTIONS)
+    : [];
   return {
     reply: body.reply,
     results: results.slice(0, 3),
     ...(plan ? { plan } : {}),
     sources,
+    ...(suggestions.length > 0 ? { suggestions } : {}),
     limited: body.limited === true,
   };
 }
@@ -1018,7 +1051,7 @@ export function createApiClient({
       return parseReach(await getJson(`/isochrone?${params}`, options));
     },
 
-    async triangulate(anchors, { factors, weights, ...options } = {}) {
+    async triangulate(anchors, { factors, weights, tune = "fixed", ...options } = {}) {
       const priorities = priorityParams({ factors, weights }, new URLSearchParams());
       const body = {
         anchors: anchors.map((a) => ({
@@ -1026,8 +1059,10 @@ export function createApiClient({
           latitude: a.lat,
           longitude: a.lon,
           mode: a.mode,
-          maxTravelMinutes: a.minutes,
+          ...(a.minutes !== undefined ? { maxTravelMinutes: a.minutes } : {}),
+          ...(a.tripsPerWeek !== undefined ? { tripsPerWeek: a.tripsPerWeek } : {}),
         })),
+        tune,
         combineMode: "intersect",
         limit: 50,
         // The same CSV formats as the map endpoints' query strings.

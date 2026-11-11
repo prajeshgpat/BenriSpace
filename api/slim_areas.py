@@ -12,6 +12,7 @@ import json
 import os
 
 from api.areas import SNAP_M, SQ_M_PER_SQ_MI
+from common.cellgrid import cell_index
 from common.db import api_connection
 
 AREAS_TABLE_ENV = "AREAS_TABLE"
@@ -93,7 +94,9 @@ LAND_SNAP_SQL = """
 """
 
 
-def _snap(conn, points: list[tuple[float, float]]) -> list[tuple[float, float] | None]:
+def _snap(
+    conn, points: list[tuple[float, float]], max_mi: float = LAND_SNAP_MAX_MI
+) -> list[tuple[float, float] | None]:
     with conn.transaction(), conn.cursor() as cur:
         cur.execute(
             LAND_SNAP_SQL,
@@ -104,7 +107,7 @@ def _snap(conn, points: list[tuple[float, float]]) -> list[tuple[float, float] |
     out: list[tuple[float, float] | None] = []
     for i in range(1, len(points) + 1):
         row = by_ord.get(i)
-        if row is None or float(row["dist_m"]) > LAND_SNAP_MAX_MI * _M_PER_MI:
+        if row is None or float(row["dist_m"]) > max_mi * _M_PER_MI:
             out.append(None)
         else:
             out.append((float(row["lat"]), float(row["lon"])))
@@ -126,3 +129,39 @@ def snap_to_land(conn, points: list[tuple[float, float]]) -> list[tuple[float, f
         return _snap(conn, points)
     except Exception:  # noqa: BLE001 -- a missing table or index must not fail the request
         return None
+
+
+# A grid cell counts as land when a road-bounded area lies within this distance of its centre.
+# It is below half a cell's height (0.38 mi / 2), so the point returned always stays in the
+# same cell.
+LAND_CELL_MAX_MI = 0.15
+
+
+class LandCheckUnavailable(Exception):
+    """The areas table could not be queried, so land cannot be checked."""
+
+
+def _same_cell(centre: tuple[float, float], point: tuple[float, float]) -> bool:
+    return cell_index(*centre) == cell_index(*point)
+
+
+def land_points(conn, points: list[tuple[float, float]]) -> list[tuple[float, float] | None]:
+    """For each grid-cell centre, the closest point on a road-bounded area (the centre itself
+    when it is inside one) or None when the nearest area is farther than LAND_CELL_MAX_MI
+    (water). A point that would leave its cell also counts as water. One batched query.
+    Raises LandCheckUnavailable when the query fails; callers must not return unchecked pins."""
+    if not points:
+        return []
+    try:
+        url = os.environ.get(AREAS_DATABASE_URL_ENV, "").strip()
+        if url:
+            with api_connection(url) as aconn:
+                snapped = _snap(aconn, points, LAND_CELL_MAX_MI)
+        else:
+            snapped = _snap(conn, points, LAND_CELL_MAX_MI)
+    except Exception as exc:
+        raise LandCheckUnavailable(str(exc)) from exc
+    return [
+        None if point is None or not _same_cell(centre, point) else point
+        for centre, point in zip(points, snapped, strict=True)
+    ]

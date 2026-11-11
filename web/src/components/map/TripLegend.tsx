@@ -16,6 +16,8 @@ interface TripLegendProps {
   overlay: TripOverlay | null;
   /** What the triangulation shows: an overlap, the news that there is none, or nothing. */
   status: "ready" | "empty" | null;
+  /** While the minutes are fitted automatically: what the overlap was drawn at. */
+  tunedMinutes?: number | null;
   /** The searched place's own travel boundary ("Show on map"), while it is drawn. */
   reach: { mode: ReachMode; minutes: number; estimate: boolean } | null;
 }
@@ -24,7 +26,7 @@ interface TripLegendProps {
  * What the travel-area lines on the map mean: the searched place's boundary (pink) and the
  * overlap of all the places' areas.
  */
-function TripLegendImpl({ overlay, status, reach }: TripLegendProps) {
+function TripLegendImpl({ overlay, status, tunedMinutes = null, reach }: TripLegendProps) {
   const overlapDrawn = status === "ready";
   // The triangulation draws the searched place's boundary only while there is no overlap.
   const plannerSearched =
@@ -62,7 +64,9 @@ function TripLegendImpl({ overlay, status, reach }: TripLegendProps) {
         {overlapDrawn ? (
           <li className={styles.item}>
             <span className={styles.overlapSwatch} aria-hidden="true" />
-            POI Overlap
+            {tunedMinutes !== null
+              ? `Shaded: everywhere all your places are within ${tunedMinutes} min`
+              : "POI Overlap"}
           </li>
         ) : null}
       </ul>

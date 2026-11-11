@@ -110,3 +110,20 @@
   line-height: 0.9375rem;
   text-align: center;
 }
+
+/* Touch: grow the hit area to 44px without changing the layout. */
+@media (pointer: coarse) {
+  .mode,
+  .modeOn,
+  .step {
+    position: relative;
+  }
+
+  .mode::after,
+  .modeOn::after,
+  .step::after {
+    content: "";
+    position: absolute;
+    inset: -0.375rem -0.25rem;
+  }
+}

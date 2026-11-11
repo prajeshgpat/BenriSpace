@@ -76,9 +76,9 @@ import { AddressSearch } from "./AddressSearch";
 import { MainTravel } from "./MainTravel";
 import { useMainReach } from "@/hooks/useMainReach";
 import { useMainTravel } from "@/hooks/useMainTravel";
-import { distanceMi, tuneTravel, widenPlan, type Travel, type TravelPlan } from "@/lib/travel";
+import { distanceMi } from "@/lib/travel";
 import { resultKey, TripPlannerPills, TripResults } from "./TripPlanner";
-import { effectiveTravel, anchorName, hasCoordinates, useTripPlanner } from "@/hooks/useTripPlanner";
+import { effectiveTravel, anchorName, useTripPlanner } from "@/hooks/useTripPlanner";
 import { BottomSheet } from "./BottomSheet";
 import { PreviewCard } from "./PreviewCard";
 import { ImproveCard } from "./ImproveCard";
@@ -265,10 +265,6 @@ function Layout({
 }
 
 /** What the server renders before the URL is known: the search box and an empty map. */
-function sameTravel(a: Travel, b: Travel): boolean {
-  return a.mode === b.mode && a.minutes === b.minutes;
-}
-
 export function WorkspaceFallback() {
   return (
     <Layout
@@ -463,7 +459,17 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     () => ({ factors: selection.factors, weights }),
     [selection.factors, weights],
   );
-  const planner = useTripPlanner(client, tripPlace, travel, tripPriorities);
+  const planner = useTripPlanner(client, tripPlace, travel, tripPriorities, mainTravel.set);
+  // While points of interest are entered the searched place shows (and its boundary and the
+  // chat use) the minutes the overlap was fitted to, not the box's own.
+  const { badgeMinutes } = planner;
+  const shownMinutes = planner.hasPlaces
+    ? badgeMinutes(travel.mode, travel.minutes)
+    : travel.minutes;
+  const shownTravel = useMemo(
+    () => ({ mode: travel.mode, minutes: shownMinutes }),
+    [travel.mode, shownMinutes],
+  );
   // A box that is armed ("Drop a pin") is waiting for a place: the next tap on the map (a
   // cell or a marker) fills it instead of scoring the tapped place.
   const armedPoi = planner.armedId;
@@ -477,67 +483,6 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
     },
     [setPoiPlace, poiRows, armedPoi],
   );
-  // Once per new set of places (the searched place and at least one point of interest), tune
-  // the travel so their areas overlap, without the user stepping every box by hand. The
-  // searched place is the one gone to most, so it keeps its mode and minutes; each point of
-  // interest gets only the extra time it needs (lib/travel.ts tuneTravel). If the overlap still
-  // comes back empty, widen the farthest point of interest a step (twice at most) while the
-  // user has not changed anything since.
-  const tunePois = useMemo(
-    () => planner.rows.flatMap((row) => (hasCoordinates(row) ? [{ id: row.id, lat: row.lat, lon: row.lon }] : [])),
-    [planner.rows],
-  );
-  const tuneKey =
-    tripPlace && tunePois.length > 0
-      ? JSON.stringify([
-          [tripPlace.lat, tripPlace.lon],
-          tunePois.map((p) => [p.lat, p.lon]),
-        ])
-      : null;
-  const tuned = useRef<{ key: string; plan: TravelPlan; steps: number } | null>(null);
-  const placeTravelMode = state.status === "success" ? state.score.travelMode : null;
-  const setMainTravel = mainTravel.set;
-  const setPoiTravel = planner.setTravel;
-  const applyPlan = useCallback(
-    (plan: TravelPlan) => {
-      if (plan.main.mode !== travel.mode || plan.main.minutes !== travel.minutes) {
-        setMainTravel(plan.main.mode, plan.main.minutes);
-      }
-      tunePois.forEach((poi, i) => {
-        const own = plan.pois[i];
-        if (own) setPoiTravel(poi.id, own.mode, own.minutes);
-      });
-    },
-    [setMainTravel, setPoiTravel, tunePois, travel],
-  );
-  useEffect(() => {
-    if (!tuneKey || !tripPlace || tuned.current?.key === tuneKey) return;
-    const plan = tuneTravel({ ...tripPlace, ...travel }, tunePois, placeTravelMode);
-    tuned.current = plan
-      ? { key: tuneKey, plan, steps: 0 }
-      : { key: tuneKey, plan: { main: travel, pois: tunePois.map(() => travel) }, steps: 2 };
-    if (plan) applyPlan(plan);
-    // Only for a new set of places.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tuneKey]);
-  const untouched =
-    tuned.current !== null &&
-    tuned.current.key === tuneKey &&
-    sameTravel(travel, tuned.current.plan.main) &&
-    tunePois.every((poi, i) => {
-      const row = planner.rows.find((r) => r.id === poi.id);
-      const want = tuned.current?.plan.pois[i];
-      return row !== undefined && want !== undefined && sameTravel(effectiveTravel(row, travel), want);
-    });
-  useEffect(() => {
-    const current = tuned.current;
-    if (planner.status !== "empty" || !untouched || !current || !tripPlace || current.steps >= 2) return;
-    const wider = widenPlan(current.plan, tripPlace, tunePois, placeTravelMode);
-    if (!wider) return;
-    tuned.current = { ...current, plan: wider, steps: current.steps + 1 };
-    applyPlan(wider);
-  }, [planner.status, untouched, applyPlan, tripPlace, tunePois, placeTravelMode]);
-
   // Bring every pin into view: one is centred, several are fitted together.
   const focusPoints = useCallback((points: readonly { lat: number; lon: number }[]) => {
     if (points.length === 0) return;
@@ -984,8 +929,8 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
   const mainReach = useMainReach(
     client,
     state.status === "success" ? { lat: state.score.latitude, lon: state.score.longitude } : null,
-    travel.mode,
-    travel.minutes,
+    shownTravel.mode,
+    shownTravel.minutes,
     reachVisible,
   );
   const reachGeometry = mainReach.status === "ready" ? mainReach.geometry : null;
@@ -1052,19 +997,19 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         label: tripPlace.label,
         latitude: tripPlace.lat,
         longitude: tripPlace.lon,
-        mode: travel.mode,
-        minutes: travel.minutes,
+        mode: shownTravel.mode,
+        minutes: shownTravel.minutes,
       });
     }
     planner.rows.forEach((row, index) => {
       if (row.lat === undefined || row.lon === undefined) return;
-      const { mode, minutes } = effectiveTravel(row, travel);
+      const own = effectiveTravel(row, travel);
       places.push({
         label: row.label || anchorName(index + 1),
         latitude: row.lat,
         longitude: row.lon,
-        mode,
-        minutes,
+        mode: own.mode,
+        minutes: badgeMinutes(own.mode, own.minutes),
       });
     });
     return {
@@ -1075,7 +1020,7 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
       // "No overlap" only once the planner has said so; while it is working nothing is claimed.
       overlap: planner.status !== "empty",
     };
-  }, [entered, travel, tripPlace, planner.rows, planner.status, planner.data]);
+  }, [entered, shownTravel, travel, tripPlace, planner.rows, planner.status, planner.data, badgeMinutes]);
 
   const chatProps = {
     client,
@@ -1110,8 +1055,9 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
           startAdornment={
             <MainTravel
               mode={travel.mode}
-              minutes={travel.minutes}
-              onChange={mainTravel.set}
+              minutes={shownTravel.minutes}
+              onChange={planner.setMainMinutes}
+              onModeChange={planner.setMainMode}
               showOnMap={reachSwitch}
               onShowOnMap={setReachSwitch}
             />
@@ -1410,11 +1356,12 @@ export function Workspace({ client = defaultClient }: WorkspaceProps) {
         <TripLegend
           overlay={entered ? planner.overlay : null}
           status={entered ? planner.shownStatus : null}
+          tunedMinutes={entered && planner.tune === "auto" ? (planner.data?.tunedMinutes ?? null) : null}
           reach={
             reachGeometry
               ? {
-                  mode: travel.mode,
-                  minutes: travel.minutes,
+                  mode: shownTravel.mode,
+                  minutes: shownTravel.minutes,
                   estimate: mainReach.status === "ready" && mainReach.estimate,
                 }
               : null

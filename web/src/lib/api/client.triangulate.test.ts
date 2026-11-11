@@ -30,13 +30,55 @@ describe("parseTriangulate", () => {
       isochrones: [shape],
       combined: { ...shape, label: null, geometry: null, cellCount: 0 },
     });
-    expect(parsed.results).toEqual([{ lat: 40.1, lon: -73.9, score: 71, address: "40.1,-73.9" }]);
+    expect(parsed.results).toEqual([
+      { lat: 40.1, lon: -73.9, score: 71, address: "40.1,-73.9", travel: [] },
+    ]);
+    expect(parsed.tunedMinutes).toBeNull();
     expect(parsed.isochrones[0]).toMatchObject({ label: "Work", mode: "transit", cellCount: 12 });
     expect(parsed.combined?.geometry).toBeNull();
   });
 
   it("treats a missing combined area as null", () => {
-    expect(parseTriangulate({ results: [] })).toEqual({ results: [], isochrones: [], combined: null });
+    expect(parseTriangulate({ results: [] })).toEqual({
+      results: [],
+      isochrones: [],
+      combined: null,
+      tunedMinutes: null,
+    });
+  });
+
+  it("reads tunedMinutes and per-place travel, dropping what it cannot use", () => {
+    const parsed = parseTriangulate({
+      results: [
+        {
+          address: "Here",
+          latitude: 40.1,
+          longitude: -73.9,
+          compositeScore: 70,
+          travel: [
+            { label: "Work", mode: "walk", minutes: 5 },
+            { label: "Gym", mode: "hovercraft", minutes: 9 },
+            { label: "Gym", mode: "transit", minutes: "soon" },
+            { label: "Gym", mode: "transit", minutes: 15 },
+          ],
+        },
+      ],
+      tunedMinutes: 15,
+    });
+    expect(parsed.tunedMinutes).toBe(15);
+    expect(parsed.results[0].travel).toEqual([
+      { label: "Work", mode: "walk", minutes: 5 },
+      { label: "Gym", mode: "transit", minutes: 15 },
+    ]);
+  });
+
+  it("tolerates missing travel and a null tunedMinutes", () => {
+    const parsed = parseTriangulate({
+      results: [{ latitude: 40.1, longitude: -73.9, compositeScore: 70, travel: "nope" }],
+      tunedMinutes: null,
+    });
+    expect(parsed.results[0].travel).toEqual([]);
+    expect(parsed.tunedMinutes).toBeNull();
   });
 
   it("rejects a malformed body", () => {
@@ -69,7 +111,31 @@ describe("triangulate", () => {
       ],
       combineMode: "intersect",
       limit: 50,
+      tune: "fixed",
     });
+  });
+
+  it("sends tune auto with each place's mode and trips per week, and no minutes", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => jsonResponse({ results: [] }));
+    const client = createApiClient({ baseUrl: BASE_URL, fetch: fetchMock });
+
+    await client.triangulate(
+      [
+        { label: "Work", lat: 40.7, lon: -74, mode: "transit", tripsPerWeek: 5 },
+        { label: "Gym", lat: 40.8, lon: -73.9, mode: "walk", tripsPerWeek: 2 },
+      ],
+      { tune: "auto" },
+    );
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toMatchObject({
+      anchors: [
+        { label: "Work", mode: "transit", tripsPerWeek: 5 },
+        { label: "Gym", mode: "walk", tripsPerWeek: 2 },
+      ],
+      tune: "auto",
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(body.anchors[0]).not.toHaveProperty("maxTravelMinutes");
   });
 
   it("rejects an invalid response with invalid-response", async () => {

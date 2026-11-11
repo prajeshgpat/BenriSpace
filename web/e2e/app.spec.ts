@@ -50,9 +50,9 @@ test("points of interest: add two, see the overlap list, remove them", async ({ 
   await first.fill("grand central");
   await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
 
-  await expect(page.getByRole("heading", { name: "Best areas in the overlap" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Best places to live" })).toBeVisible();
   await expect(
-    page.getByRole("list", { name: "Best areas in the overlap" }).getByRole("button"),
+    page.getByRole("list", { name: "Best places to live" }).getByRole("button"),
   ).toHaveCount(2);
 
   // Two points of interest is the most: the pill goes away after the second box opens.
@@ -70,6 +70,42 @@ test("points of interest: add two, see the overlap list, remove them", async ({ 
   await expect(add).toBeVisible();
 });
 
+test("points of interest: fit automatically, show daily trips, then take over the minutes", async ({ page }) => {
+  const triangulate: unknown[] = [];
+  await mockApi(page, { triangulate });
+  await page.goto("/app");
+  await page.getByRole("combobox").first().fill("350 5th");
+  await page.getByRole("listbox", { name: "Address suggestions" }).getByRole("option").first().click();
+  await expect(page.getByTestId("composite-score")).toBeVisible();
+  await page.getByRole("button", { name: "Point of interest", exact: true }).click();
+  await page.getByRole("combobox", { name: "Point of interest 1 address" }).fill("grand central");
+  await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
+
+  const results = page.getByRole("list", { name: "Best places to live" }).getByRole("button");
+  await expect(results).toHaveCount(2);
+  await expect(results.first()).toContainText("350 5th Ave 5 min walk · Grand Central 10 min train");
+  await expect(page.getByRole("group", { name: "Travel areas legend" })).toContainText(
+    "Shaded: everywhere all your places are within 15 min",
+  );
+  const lastBody = () => triangulate.at(-1) as { tune: string; anchors: { tripsPerWeek?: number; maxTravelMinutes?: number }[] };
+  expect(lastBody().tune).toBe("auto");
+  expect(lastBody().anchors.map((a) => [a.tripsPerWeek, a.maxTravelMinutes])).toEqual([[5, undefined], [2, undefined]]);
+
+  // Frequency is per point of interest.
+  await page.getByRole("button", { name: /^Travel for Point of interest 1/ }).click();
+  await page.getByRole("combobox", { name: /^How often you go to/ }).selectOption({ label: "Weekly" });
+  await expect.poll(() => lastBody().anchors[1].tripsPerWeek).toBe(1);
+
+  // Stepping minutes takes over; Fit automatically returns.
+  await page.getByRole("button", { name: "More minutes for Point of interest 1" }).click();
+  await expect.poll(() => lastBody().tune).toBe("fixed");
+  // Close the minutes dropdown first: its layout shift would otherwise move the button
+  // between the press and the release.
+  await page.getByRole("heading", { name: "Best places to live" }).click();
+  await page.getByRole("button", { name: "Fit automatically" }).click();
+  await expect.poll(() => lastBody().tune).toBe("auto");
+});
+
 test("points of interest stay side by side and the overlap list is numbered on a 320px phone", async ({
   page,
 }) => {
@@ -85,7 +121,7 @@ test("points of interest stay side by side and the overlap list is numbered on a
   const first = page.getByRole("combobox", { name: "Point of interest 1 address" });
   await first.fill("grand central");
   await page.getByRole("listbox", { name: "Address suggestions" }).last().getByRole("option").first().click();
-  await expect(page.getByRole("heading", { name: "Best areas in the overlap" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Best places to live" })).toBeVisible();
   await add.click();
 
   const second = page.getByRole("combobox", { name: "Point of interest 2 address" });
@@ -97,7 +133,7 @@ test("points of interest stay side by side and the overlap list is numbered on a
   expect(two!.x).toBeGreaterThan(one!.x + one!.width - 1);
   expect(two!.x + two!.width).toBeLessThanOrEqual(320);
 
-  const results = page.getByRole("list", { name: "Best areas in the overlap" }).getByRole("button");
+  const results = page.getByRole("list", { name: "Best places to live" }).getByRole("button");
   await expect(results.nth(0)).toContainText(/^\s*1/);
   await expect(results.nth(1)).toContainText(/^\s*2/);
 });

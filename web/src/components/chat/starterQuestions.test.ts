@@ -4,7 +4,7 @@ import { FACTOR_KEYS } from "@/lib/score/factors";
 
 import { starterQuestions } from "./starterQuestions";
 
-const MULTI = "Find a neighborhood near my work, a Trader Joe's and a Planet Fitness";
+const MULTI = "Find areas within a 30 minute commute of my work, close to a gym";
 
 describe("starterQuestions", () => {
   it("uses the first three factors when everything is on", () => {

@@ -1,7 +1,7 @@
 export const SITE_NAME = "BenriSpace";
-export const SITE_TITLE = `${SITE_NAME} · Convenience scores for NYC metro addresses`;
+export const SITE_TITLE = `${SITE_NAME} · Neighborhood convenience scores, live in the New York metro`;
 export const SITE_DESCRIPTION =
-  "Score any New York metro address on everyday convenience: groceries, transit, schools, trails and more.";
+  "Get a convenience score out of 100 for an address, and find where to live given where you need to be. Live now in the New York metro (parts of NY, NJ and CT), with more US metros on the way.";
 
 export function resultTitle(address: string): string {
   return `${address} · ${SITE_NAME}`;

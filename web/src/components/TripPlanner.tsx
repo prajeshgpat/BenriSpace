@@ -5,12 +5,17 @@ import { useEffect, useId, useRef, useState, type Ref } from "react";
 import {
   effectiveTravel,
   type TripPlannerState,
+  type TripResult,
   type TripRow,
   type TripTravel,
 } from "@/hooks/useTripPlanner";
 import type { ApiClient } from "@/lib/api/client";
-import type { ReachMode } from "@/lib/api/types";
 import { TRAVEL_OPTIONS, travelOption } from "@/lib/travel";
+import {
+  DEFAULT_POI_TRIPS_PER_WEEK,
+  TRIPS_PER_WEEK_OPTIONS,
+  formatTravelLine,
+} from "@/lib/tripTune";
 
 import { AddressSearch } from "./AddressSearch";
 import { MinutesStepper, TravelBadge, TravelModeIcon } from "./TravelModePicker";
@@ -18,6 +23,10 @@ import styles from "./TripPlanner.module.css";
 
 export const NO_OVERLAP_MESSAGE =
   "These travel areas don't overlap. Try more minutes or a faster mode for one of the places.";
+
+export const TOO_FAR_MESSAGE = "These places are too far apart to share one neighborhood.";
+export const TRY_DRIVE_HINT = "Try switching a place to drive.";
+export const FIT_AUTOMATICALLY_LABEL = "Fit automatically";
 
 /** Shown in a box that is waiting for a place to be tapped on the map. */
 export const ARMED_PLACEHOLDER = "Drop a pin";
@@ -88,13 +97,15 @@ function PointBox({
   const name = `Point of interest ${number}`;
   const panelId = useId();
   const armed = planner.armedId === row.id;
-  const { mode, minutes } = effectiveTravel(row, planner.travel ?? FALLBACK_TRAVEL);
+  const own = effectiveTravel(row, planner.travel ?? FALLBACK_TRAVEL);
+  const mode = own.mode;
+  // Automatic fitting shows the minutes the server settled on, for every place.
+  const minutes = planner.badgeMinutes(mode, own.minutes);
   const current = travelOption(mode);
   const others = TRAVEL_OPTIONS.filter((o) => o.mode !== mode);
   const inputElement = useRef<HTMLInputElement | null>(null);
 
-  const choose = (next: ReachMode, nextMinutes: number) =>
-    planner.setTravel(row.id, next, nextMinutes);
+  const placeName = row.label || name;
 
   return (
     <div
@@ -154,7 +165,7 @@ function PointBox({
                   aria-pressed={false}
                   aria-label={o.label}
                   title={o.label}
-                  onClick={() => choose(o.mode, o.initial)}
+                  onClick={() => planner.setMode(row.id, o.mode)}
                 >
                   <TravelModeIcon mode={o.mode} />
                 </button>
@@ -227,11 +238,28 @@ function PointBox({
               className={styles.minutes}
               mode={mode}
               minutes={minutes}
-              onChange={choose}
+              onChange={(next, nextMinutes) => planner.setMinutes(row.id, next, nextMinutes)}
               label={`Minutes for ${name}`}
               fewerLabel={`Fewer minutes for ${name}`}
               moreLabel={`More minutes for ${name}`}
             />
+          ) : null}
+          {open ? (
+            <label className={styles.frequency}>
+              <span>How often</span>
+              <select
+                className={styles.frequencySelect}
+                aria-label={`How often you go to ${placeName}`}
+                value={row.tripsPerWeek ?? DEFAULT_POI_TRIPS_PER_WEEK}
+                onChange={(event) => planner.setTripsPerWeek(row.id, Number(event.target.value))}
+              >
+                {TRIPS_PER_WEEK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
         </div>
       </div>
@@ -244,8 +272,8 @@ function PointBox({
   );
 }
 
-function areasFound(count: number): string {
-  return `${count} ${count === 1 ? "area" : "areas"} found in the overlap`;
+function placesFound(count: number): string {
+  return `${count} ${count === 1 ? "place" : "places"} to live found`;
 }
 
 /**
@@ -332,7 +360,7 @@ export function TripPlannerPills({ planner, client, onNeedSpace }: TripPlannerPi
   );
 }
 
-/** Status, errors and "Best areas in the overlap" for the planner's places. */
+/** Status, errors and "Best places to live" for the planner's places. */
 export function TripResults({
   planner,
   onSelectResult,
@@ -354,11 +382,25 @@ export function TripResults({
 
   if (status === "idle") return null;
 
+  // Automatic fitting found no neighborhood at all: the places are too far apart.
+  const tooFar = shownStatus === "empty" && planner.tune === "auto" && data?.tunedMinutes === null;
+  const canTryDrive = [
+    planner.travel?.mode ?? FALLBACK_TRAVEL.mode,
+    ...planner.rows.filter((row) => row.lat !== undefined).map(
+      (row) => effectiveTravel(row, planner.travel ?? FALLBACK_TRAVEL).mode,
+    ),
+  ].some((mode) => mode !== "drive");
+  const emptyMessage = tooFar
+    ? canTryDrive
+      ? `${TOO_FAR_MESSAGE} ${TRY_DRIVE_HINT}`
+      : TOO_FAR_MESSAGE
+    : NO_OVERLAP_MESSAGE;
+
   const live =
     status === "ready" && data
-      ? areasFound(data.results.length)
+      ? placesFound(data.results.length)
       : status === "empty"
-        ? NO_OVERLAP_MESSAGE
+        ? emptyMessage
         : "";
 
   return (
@@ -389,8 +431,10 @@ export function TripResults({
         </div>
       ) : null}
 
-      {shownStatus === "empty" ? (
-        <p className={styles.meta}>{NO_OVERLAP_MESSAGE}</p>
+      {shownStatus === "empty" ? <p className={styles.meta}>{emptyMessage}</p> : null}
+
+      {shownStatus === "empty" && planner.tune === "fixed" ? (
+        <FitAutomatically onClick={planner.fitAutomatically} />
       ) : null}
 
       {shownStatus === "ready" && data ? (
@@ -400,7 +444,7 @@ export function TripResults({
           data-refreshing={refreshing || undefined}
         >
           <h3 id={`${rootId}-results`} className={styles.heading}>
-            Best areas in the overlap
+            Best places to live
           </h3>
           <ol className={styles.list} aria-labelledby={`${rootId}-results`}>
             {data.results.map((result, index) => {
@@ -428,6 +472,7 @@ export function TripResults({
                     <span className={styles.resultLabel}>
                       <span className="sr-only">Rank {index + 1}: </span>
                       {result.label}
+                      <ResultTravel result={result} />
                     </span>
                     <span className={styles.resultScore}>
                       {Math.round(result.score)}
@@ -437,6 +482,7 @@ export function TripResults({
               );
             })}
           </ol>
+          {planner.tune === "fixed" ? <FitAutomatically onClick={planner.fitAutomatically} /> : null}
           {data.estimate ? (
             <p className={styles.meta}>
               At least one travel area is a straight-line estimate, not road
@@ -446,6 +492,25 @@ export function TripResults({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function FitAutomatically({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" className={styles.fit} onClick={onClick}>
+      {FIT_AUTOMATICALLY_LABEL}
+    </button>
+  );
+}
+
+/** One result's daily one-way trips. */
+function ResultTravel({ result }: { result: TripResult }) {
+  const line = formatTravelLine(result.travel);
+  if (line === "") return null;
+  return (
+    <span className={styles.resultTravel}>
+      <span>{line}</span>
+    </span>
   );
 }
 

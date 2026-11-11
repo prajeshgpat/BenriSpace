@@ -284,6 +284,21 @@
   }
 }
 
+/* Touch: the zoom buttons are 44px tall (MapCanvas.module.css), so the locate
+   button moves below them and lines up with their column. */
+@media (pointer: coarse) {
+  .mapLocate {
+    top: 6.5rem;
+    right: 0.625rem;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 39.9375rem) {
+  .mapLocate {
+    top: calc(6.5rem + var(--menu-clearance));
+  }
+}
+
 /* The entry point to the chat, directly under the score card. */
 .ask {
   display: inline-flex;

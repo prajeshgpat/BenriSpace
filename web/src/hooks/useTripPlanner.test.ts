@@ -38,12 +38,13 @@ const iso = (cellCount = 4, method: "network" | "estimate" = "network") => ({
 function body(overrides: Partial<Triangulation> = {}): Triangulation {
   return {
     results: [
-      { lat: 40.71, lon: -73.99, score: 80, address: "40.7100,-73.9900" },
-      { lat: 40.7101, lon: -73.9901, score: 79, address: "near duplicate" },
-      { lat: 40.8, lon: -73.9, score: 70, address: "Some Street" },
+      { lat: 40.71, lon: -73.99, score: 80, address: "40.7100,-73.9900", travel: [] },
+      { lat: 40.7101, lon: -73.9901, score: 79, address: "near duplicate", travel: [] },
+      { lat: 40.8, lon: -73.9, score: 70, address: "Some Street", travel: [] },
     ],
     isochrones: [iso(), iso()],
     combined: iso(),
+    tunedMinutes: 20,
     ...overrides,
   };
 }
@@ -227,11 +228,13 @@ describe("useTripPlanner triangulation", () => {
     await flush();
     expect(triangulate).toHaveBeenCalledTimes(1);
     const sent = (triangulate.mock.calls[0] as unknown as [unknown[]])[0];
+    // Automatic fitting is the default: modes and how often, no minutes.
     expect(sent).toEqual([
-      { label: "Home", lat: 40.7, lon: -74, mode: "transit", minutes: 20 },
-      { label: "Park Ave, NY", lat: 40.75, lon: -73.97, mode: "transit", minutes: 20 },
-      { label: "Dock", lat: 40.6, lon: -74.02, mode: "transit", minutes: 20 },
+      { label: "Home", lat: 40.7, lon: -74, mode: "transit", tripsPerWeek: 5 },
+      { label: "Park Ave, NY", lat: 40.75, lon: -73.97, mode: "transit", tripsPerWeek: 2 },
+      { label: "Dock", lat: 40.6, lon: -74.02, mode: "transit", tripsPerWeek: 2 },
     ]);
+    expect((triangulate.mock.calls[0] as unknown[])[1]).toMatchObject({ tune: "auto" });
   });
 
   it("gives each point its own travel, falling back to the main one", async () => {
@@ -241,25 +244,18 @@ describe("useTripPlanner triangulation", () => {
     const [first, second] = hook.result.current.rows;
     act(() => hook.result.current.selectSuggestion(first.id, pick));
     act(() => hook.result.current.selectSuggestion(second.id, { label: "Dock", latitude: 40.6, longitude: -74.02 }));
-    act(() => hook.result.current.setTravel(second.id, "walk", 10));
+    act(() => hook.result.current.setMode(second.id, "walk"));
     await flush();
-    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string; minutes: number }[]];
+    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string }[]];
     // The searched place and the first point follow the main Travel time; the second is its own.
-    expect(sent[0].map((a) => [a.mode, a.minutes])).toEqual([
-      ["transit", 20],
-      ["transit", 20],
-      ["walk", 10],
-    ]);
+    expect(sent[0].map((a) => a.mode)).toEqual(["transit", "transit", "walk"]);
+    expect(hook.result.current.tune).toBe("auto");
 
     // Changing the main travel moves the followers, not the point that was set apart.
     hook.rerender({ p: PLACE, t: { mode: "drive", minutes: 30 } });
     await flush();
-    const again = triangulate.mock.calls.at(-1) as unknown as [{ mode: string; minutes: number }[]];
-    expect(again[0].map((a) => [a.mode, a.minutes])).toEqual([
-      ["drive", 30],
-      ["drive", 30],
-      ["walk", 10],
-    ]);
+    const again = triangulate.mock.calls.at(-1) as unknown as [{ mode: string }[]];
+    expect(again[0].map((a) => a.mode)).toEqual(["drive", "drive", "walk"]);
   });
 
   it("never lets a point's own travel change the searched place's", async () => {
@@ -267,13 +263,103 @@ describe("useTripPlanner triangulation", () => {
     act(() => hook.result.current.add());
     const [row] = hook.result.current.rows;
     act(() => hook.result.current.selectSuggestion(row.id, pick));
-    act(() => hook.result.current.setTravel(row.id, "drive", 45));
+    act(() => hook.result.current.setMode(row.id, "drive"));
     await flush();
-    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string; minutes: number }[]];
-    expect(sent[0].map((a) => [a.mode, a.minutes])).toEqual([
-      ["transit", 20],
-      ["drive", 45],
-    ]);
+    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string }[]];
+    expect(sent[0].map((a) => a.mode)).toEqual(["transit", "drive"]);
+  });
+
+  it("sends each point's frequency, daily for the searched place", async () => {
+    const { hook, triangulate } = setup();
+    act(() => hook.result.current.add());
+    const [row] = hook.result.current.rows;
+    act(() => hook.result.current.selectSuggestion(row.id, pick));
+    act(() => hook.result.current.setTripsPerWeek(row.id, 1));
+    await flush();
+    const sent = triangulate.mock.calls[0] as unknown as [{ tripsPerWeek: number }[]];
+    expect(sent[0].map((a) => a.tripsPerWeek)).toEqual([5, 1]);
+  });
+
+  describe("automatic and fixed fitting", () => {
+    async function placed() {
+      const triangulate = vi.fn(async (): Promise<Triangulation> => body());
+      const client = {
+        triangulate,
+        reverseGeocode: vi.fn(async () => ({ label: "x", latitude: 0, longitude: 0 })),
+        suggestAddresses: vi.fn(async () => []),
+      } as never;
+      const setMain = vi.fn();
+      const hook = renderHook(() => useTripPlanner(client, PLACE, TRAVEL, undefined, setMain));
+      act(() => hook.result.current.add());
+      act(() => hook.result.current.selectSuggestion(hook.result.current.rows[0].id, pick));
+      await flush();
+      triangulate.mockClear();
+      return { hook, setMain, triangulate };
+    }
+
+    it("shows the tuned minutes, clamped to the mode's range, while automatic", async () => {
+      const { hook } = await placed();
+      expect(hook.result.current.tunedMinutes).toBe(20);
+      expect(hook.result.current.badgeMinutes("transit", 10)).toBe(20);
+      expect(hook.result.current.badgeMinutes("walk", 10)).toBe(20);
+      // Past the walk stepper's 30 min limit it is held at 30.
+      expect(hook.result.current.badgeMinutes("walk", 10)).toBeLessThanOrEqual(30);
+    });
+
+    it("stepping a point's minutes freezes every place at the shown minutes and goes fixed", async () => {
+      const { hook, setMain, triangulate } = await placed();
+      const [row] = hook.result.current.rows;
+      act(() => hook.result.current.setMinutes(row.id, "transit", 20));
+      expect(hook.result.current.tune).toBe("fixed");
+      // The searched place froze at the 20 shown.
+      expect(setMain).toHaveBeenCalledWith("transit", 20);
+      await flush();
+      const call = triangulate.mock.calls.at(-1) as unknown as [{ minutes: number }[], { tune: string }];
+      expect(call[1].tune).toBe("fixed");
+      expect(call[0].map((a) => a.minutes)).toEqual([TRAVEL.minutes, 20]);
+      // (TRAVEL.minutes is 20 too; the mocked setMain does not change the prop.)
+    });
+
+    it("stepping the searched place's minutes freezes the points at the shown minutes", async () => {
+      const { hook, setMain } = await placed();
+      act(() => hook.result.current.setMainMinutes("transit", 25));
+      expect(setMain).toHaveBeenCalledWith("transit", 25);
+      expect(hook.result.current.tune).toBe("fixed");
+      expect(hook.result.current.rows[0].minutes).toBe(20);
+    });
+
+    it("keeps its place when a mode changes, and Fit automatically returns to automatic", async () => {
+      const { hook, setMain } = await placed();
+      act(() => hook.result.current.setMainMode("walk"));
+      expect(setMain).toHaveBeenCalledWith("walk", 10);
+      expect(hook.result.current.tune).toBe("auto");
+      act(() => hook.result.current.setMinutes(hook.result.current.rows[0].id, "transit", 25));
+      expect(hook.result.current.tune).toBe("fixed");
+      expect(hook.result.current.tunedMinutes).toBeNull();
+      act(() => hook.result.current.fitAutomatically());
+      expect(hook.result.current.tune).toBe("auto");
+    });
+  });
+
+  it("keeps the server's order in automatic and says too far when tunedMinutes is null", async () => {
+    const { hook, triangulate } = setup();
+    triangulate.mockResolvedValueOnce(
+      body({
+        results: [
+          { lat: 40.8, lon: -73.9, score: 50, address: "Near Work", travel: [] },
+          { lat: 40.71, lon: -73.99, score: 90, address: "Middle", travel: [] },
+        ],
+      }),
+    );
+    act(() => hook.result.current.add());
+    act(() => hook.result.current.selectSuggestion(hook.result.current.rows[0].id, pick));
+    await flush();
+
+    triangulate.mockResolvedValueOnce(body({ results: [], tunedMinutes: null }));
+    act(() => hook.result.current.retry());
+    await flush();
+    expect(hook.result.current.shownStatus).toBe("empty");
+    expect(hook.result.current.data?.tunedMinutes).toBeNull();
   });
 
   it("arms a new box, and disarms it when it is filled, removed or re-armed elsewhere", () => {
@@ -310,12 +396,9 @@ describe("useTripPlanner triangulation", () => {
     expect(triangulate).not.toHaveBeenCalled();
     await flush(100);
     expect(triangulate).toHaveBeenCalledTimes(1);
-    const sent = triangulate.mock.calls[0] as unknown as [{ minutes: number; mode: string }[]];
+    const sent = triangulate.mock.calls[0] as unknown as [{ mode: string }[]];
     expect(sent[0]).toHaveLength(2);
-    expect(sent[0].map((a) => [a.mode, a.minutes])).toEqual([
-      ["drive", 25],
-      ["drive", 25],
-    ]);
+    expect(sent[0].map((a) => a.mode)).toEqual(["drive", "drive"]);
   });
 
   it("aborts the older call and runs again when the travel time or the place changes", async () => {
@@ -472,6 +555,15 @@ describe("useTripPlanner URL", () => {
 });
 
 describe("pickSpreadResults", () => {
+  it("keeps the given order when asked, still dropping near duplicates", () => {
+    const given = [
+      { lat: 40, lon: -74, score: 1 },
+      { lat: 40.0001, lon: -74, score: 9 },
+      { lat: 40.1, lon: -74, score: 5 },
+    ];
+    expect(pickSpreadResults(given, { keepOrder: true }).map((r) => r.score)).toEqual([1, 5]);
+  });
+
   it("keeps the best five that are 0.25 mi apart", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ lat: 40 + i * 0.01, lon: -74, score: i }));
     const picked = pickSpreadResults(many);
@@ -531,7 +623,7 @@ describe("useTripPlanner selected-factor scores", () => {
     expect(triangulate.mock.calls[1][1]?.factors).toBeUndefined();
   });
 
-  it("scores each area as the score card does, then orders by that score", async () => {
+  it("scores each area as the score card does, and keeps the server's order", async () => {
     const { hook, getAreaByCoordinates } = setupPriorities({
       factors: ["grocery", "transit"] as FactorKey[],
       weights: { grocery: 1, transit: 1 },
@@ -544,8 +636,8 @@ describe("useTripPlanner selected-factor scores", () => {
     await flush();
     const results = hook.result.current.data!.results;
     expect(results.map((r) => [r.lat, r.score])).toEqual([
-      [40.8, 80],
       [40.71, 10],
+      [40.8, 80],
     ]);
   });
 
@@ -558,7 +650,7 @@ describe("useTripPlanner selected-factor scores", () => {
     expect(hook.result.current.status).toBe("loading");
     await flush();
     expect(triangulate).toHaveBeenCalledTimes(2);
-    expect(hook.result.current.data!.results[0]).toMatchObject({ lat: 40.8, score: 80 });
+    expect(hook.result.current.data!.results[1]).toMatchObject({ lat: 40.8, score: 80 });
   });
 
   it("falls back to the API score for an area that can't be looked up", async () => {

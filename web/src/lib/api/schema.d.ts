@@ -460,13 +460,16 @@ export interface components {
             latitude?: number;
             /** Format: double */
             longitude?: number;
-            /** @description Isochrone time budget from this anchor. Defaults to a server-side default if omitted. */
+            /** @description Isochrone time budget from this anchor. Defaults to a server-side default if omitted. Ignored when the request's `tune` is `auto`. */
             maxTravelMinutes?: number;
             /**
+             * @description How this place is reached. With `tune: auto` this is the fastest mode allowed: walking is always considered as well, and each area uses whichever of the two is better for that trip (a short walk beats a short train or drive).
              * @default drive
              * @enum {string}
              */
             mode: "drive" | "transit" | "walk";
+            /** @description How often the user goes to this place (one-way trips per week). Used only with `tune: auto` to rank places to live. Defaults: 5 for the first anchor (the main address, e.g. work), 2 for the others. */
+            tripsPerWeek?: number;
         };
         TriangulateRequest: {
             anchors: components["schemas"]["AnchorPoint"][];
@@ -482,6 +485,19 @@ export interface components {
             factors?: string | null;
             /** @description Optional `factor:number` pairs (as on the map endpoints) weighting the selected factors. */
             weights?: string | null;
+            /**
+             * @description `fixed` uses each anchor's `maxTravelMinutes` as given. `auto` finds the fewest minutes (in 5-minute steps, up to walk 30, train 45, drive 60) at which every anchor's travel-time area overlaps in at least a small neighborhood on land, returns that as `tunedMinutes`, and ranks places to live inside that overlap by how short the trips are (weighted by `tripsPerWeek`, so within the overlap the side nearer the main address wins) and then by score. `combineMode` is ignored (always intersect). In both modes every result lies inside the overlap and on land, never in water; when land cannot be checked the request fails with 503 `land_check_unavailable` rather than risk a pin in the water.
+             * @default fixed
+             * @enum {string}
+             */
+            tune: "fixed" | "auto";
+        };
+        /** @description One-way travel from a result to one anchor, by the mode that suits that trip best. */
+        AnchorTravel: {
+            label: string;
+            /** @enum {string} */
+            mode: "drive" | "transit" | "walk";
+            minutes: number;
         };
         RankedAddress: {
             /** Format: uuid */
@@ -492,6 +508,8 @@ export interface components {
             /** Format: double */
             longitude: number;
             compositeScore: number;
+            /** @description One-way travel to each anchor, in request order. Absent when routing data is missing. */
+            travel?: components["schemas"]["AnchorTravel"][];
         };
         /** @description A reachable area. `method` is `network` when computed from the precomputed road-network cell graph (resolution one 0.58 x 0.38 mi cell) and `estimate` when the area has no routing data yet and a straight-line circle was used. */
         IsochroneShape: {
@@ -518,6 +536,8 @@ export interface components {
             /** @description One reachable area per anchor, in request order. */
             isochrones?: components["schemas"]["IsochroneShape"][];
             combined?: components["schemas"]["IsochroneShape"];
+            /** @description With `tune: auto`, the minutes every anchor's area was drawn at (the fewest that overlap). Null when the anchors are too far apart for any allowed mode; results are then empty. */
+            tunedMinutes?: number | null;
         };
         OptimizeAnchor: {
             /** @enum {string} */
@@ -617,7 +637,8 @@ export interface components {
             latitude: number;
             longitude: number;
             score?: number;
-            weeklyMinutes?: number;
+            /** @description One-way minutes from this area to the main (work) address, copied from the optimizer's per-stop minutes. Absent when the request had no address anchor. */
+            commuteMinutes?: number;
             why: string;
         };
         ChatSource: {
@@ -642,6 +663,8 @@ export interface components {
             sources: components["schemas"]["ChatSource"][];
             /** @description True when the reply is a deterministic fallback or chat is paused. */
             limited?: boolean;
+            /** @description Follow-up questions to offer, chosen by code from the tools that ran. */
+            suggestions?: string[];
         };
         OptimizeResponse: {
             results: components["schemas"]["OptimizeResult"][];
@@ -1070,6 +1093,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             429: components["responses"]["TooManyRequests"];
+            /** @description Land could not be checked (code `land_check_unavailable`); no results are returned rather than risk one in the water. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     optimize: {

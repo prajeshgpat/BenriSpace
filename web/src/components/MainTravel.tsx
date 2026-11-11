@@ -11,7 +11,10 @@ import { MinutesStepper, TravelBadge, TravelModeIcon } from "./TravelModePicker"
 export interface MainTravelProps {
   mode: ReachMode;
   minutes: number;
+  /** The minutes stepper, and (without `onModeChange`) a mode pick too. */
   onChange: (mode: ReachMode, minutes: number) => void;
+  /** A mode was picked; lets the caller tell it from stepping the minutes. */
+  onModeChange?: (mode: ReachMode) => void;
   /** Whether the searched place's travel boundary is drawn on the map. */
   showOnMap: boolean;
   onShowOnMap: (on: boolean) => void;
@@ -22,7 +25,14 @@ export interface MainTravelProps {
  * point of interest's: the mode icon with its minutes, and a chevron that opens the modes, a
  * minutes stepper and the "Show on map" switch for the travel boundary.
  */
-export function MainTravel({ mode, minutes, onChange, showOnMap, onShowOnMap }: MainTravelProps) {
+export function MainTravel({
+  mode,
+  minutes,
+  onChange,
+  onModeChange,
+  showOnMap,
+  onShowOnMap,
+}: MainTravelProps) {
   const panelId = useId();
   const showId = useId();
   const [open, setOpen] = useState(false);
@@ -93,7 +103,7 @@ export function MainTravel({ mode, minutes, onChange, showOnMap, onShowOnMap }: 
                 aria-pressed={o.mode === mode}
                 aria-label={o.label}
                 title={o.label}
-                onClick={() => onChange(o.mode, o.initial)}
+                onClick={() => (onModeChange ? onModeChange(o.mode) : onChange(o.mode, o.initial))}
               >
                 <TravelModeIcon mode={o.mode} />
               </button>

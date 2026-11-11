@@ -175,3 +175,19 @@
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* Phone: sit above the collapsed bottom sheet instead of covering its search box. */
+@media not all and (min-width: 56.25rem) {
+  .bar {
+    right: 0.5rem;
+    bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100% - 1rem);
+  }
+}
+
+@media (pointer: coarse) {
+  .open,
+  .text {
+    min-height: 2.75rem;
+  }
+}

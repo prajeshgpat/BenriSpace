@@ -73,6 +73,7 @@ def client(monkeypatch):
             for i in range(14)
         ],
     )
+    monkeypatch.setattr(main.slim_areas, "land_points", lambda conn, pts: list(pts))
     return TestClient(main.app)
 
 
@@ -229,15 +230,15 @@ def test_candidates_sql_selects_every_factor_column():
 
 
 # --- results are moved onto land (Pier 26 sat in the Hudson cell next to it) -------------------
-def test_triangulate_moves_results_onto_land_and_drops_open_water(client, monkeypatch):
+def test_triangulate_fixed_keeps_land_cells_at_land_points_and_drops_water(client, monkeypatch):
     seen = {}
 
-    def fake_snap(conn, points):
+    def fake_land(conn, points):
         seen["points"] = list(points)
-        # The first result is in the water; the rest move a little onto land.
-        return [None] + [(lat + 0.001, lon) for lat, lon in points[1:]]
+        # The first cell is water; the rest have a land point a little to the north.
+        return [None] + [(lat + 0.0005, lon) for lat, lon in points[1:]]
 
-    monkeypatch.setattr(main.slim_areas, "snap_to_land", fake_snap)
+    monkeypatch.setattr(main.slim_areas, "land_points", fake_land)
     anchors = [
         {"label": "a", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
         {"label": "b", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
@@ -249,18 +250,22 @@ def test_triangulate_moves_results_onto_land_and_drops_open_water(client, monkey
     water = seen["points"][0]
     for result in body["results"]:
         assert (result["latitude"], result["longitude"]) != water
-    moved = {(round(lat + 0.001, 6), lon) for lat, lon in seen["points"][1:]}
+    moved = {(round(lat + 0.0005, 6), lon) for lat, lon in seen["points"][1:]}
     assert all((round(r["latitude"], 6), r["longitude"]) in moved for r in body["results"])
+    assert all("inOverlap" not in r for r in body["results"])
 
 
-def test_triangulate_keeps_results_when_the_areas_table_is_unavailable(client, monkeypatch):
-    monkeypatch.setattr(main.slim_areas, "snap_to_land", lambda conn, points: None)
+def test_triangulate_fixed_is_503_when_land_cannot_be_checked(client, monkeypatch):
+    def broken(conn, points):
+        raise main.slim_areas.LandCheckUnavailable("no table")
+
+    monkeypatch.setattr(main.slim_areas, "land_points", broken)
     anchors = [
         {"label": "a", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
         {"label": "b", "latitude": 40.7, "longitude": -74.0, "maxTravelMinutes": 13, "mode": "walk"},
     ]  # fmt: skip
-    body = client.post("/v1/triangulate", json={"anchors": anchors, "limit": 3}).json()
-    assert len(body["results"]) == 3
+    r = client.post("/v1/triangulate", json={"anchors": anchors, "limit": 3})
+    assert r.status_code == 503 and r.json()["code"] == "land_check_unavailable"
 
 
 def test_snap_to_land_distance_cutoff_and_failures():
@@ -305,3 +310,61 @@ def test_snap_to_land_distance_cutoff_and_failures():
             raise RuntimeError("no table")
 
     assert slim_areas.snap_to_land(Broken(), [(40.7, -74.0)]) is None
+
+
+class _LandConn:
+    """Fake connection whose KNN query returns the given rows (ord, lat, lon, dist_m)."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def transaction(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def cursor(self):
+        return self
+
+    def execute(self, sql, params):
+        self.params = params
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_land_points_treats_far_points_and_cell_changes_as_water():
+    from api import slim_areas
+
+    iy, ix = cellgrid.cell_index(40.7, -74.0)
+    c1 = cellgrid.cell_center(iy, ix)
+    c2 = cellgrid.cell_center(iy, ix + 1)
+    c3 = cellgrid.cell_center(iy, ix + 2)
+    c4 = cellgrid.cell_center(iy, ix + 3)
+    mi = 1609.344
+    rows = [
+        {"ord": 1, "lat": c1[0], "lon": c1[1], "dist_m": 0.0},  # inside an area
+        {"ord": 2, "lat": c2[0] + 0.001, "lon": c2[1], "dist_m": 0.1 * mi},  # close, same cell
+        {"ord": 3, "lat": c3[0], "lon": c3[1], "dist_m": 0.16 * mi},  # beyond 0.15 mi
+        {"ord": 4, "lat": c4[0] + 0.01, "lon": c4[1], "dist_m": 0.1 * mi},  # left its cell
+    ]
+    out = slim_areas.land_points(_LandConn(rows), [c1, c2, c3, c4])
+    assert out == [c1, (c2[0] + 0.001, c2[1]), None, None]
+    assert slim_areas.land_points(_LandConn(rows), []) == []
+
+
+def test_land_points_raises_when_the_query_fails():
+    import pytest as _pytest
+
+    from api import slim_areas
+
+    class Broken:
+        def transaction(self):
+            raise RuntimeError("no table")
+
+    with _pytest.raises(slim_areas.LandCheckUnavailable):
+        slim_areas.land_points(Broken(), [(40.7, -74.0)])

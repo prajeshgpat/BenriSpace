@@ -1,4 +1,5 @@
 .main {
+  overflow-x: clip;
   display: grid;
   gap: clamp(3.5rem, 9vw, 6rem);
   align-content: start;
@@ -100,11 +101,13 @@
 }
 
 .lead {
+  max-width: 34ch;
   color: var(--link);
-  font-size: clamp(1.25rem, 2vw + 0.9rem, 1.75rem);
+  font-size: clamp(1.125rem, 1.4vw + 0.85rem, 1.5rem);
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.3;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  text-wrap: pretty;
 }
 
 .cta:focus-visible,
@@ -470,6 +473,43 @@
   color: var(--text);
 }
 
+.coverage {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.coverageRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  color: var(--text);
+}
+
+.status {
+  flex: none;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.statusLive {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.coverageNote {
+  margin-top: 0.75rem;
+  font-size: 0.9375rem;
+}
+
 /* Closing */
 .closing {
   display: grid;
@@ -551,5 +591,30 @@
   .featureText {
     align-self: start;
     font-size: 0.9375rem;
+  }
+}
+
+/* Small phones (320 to 400px): stack the feature cards so the text keeps a readable width. */
+@media (max-width: 26rem) {
+  .feature {
+    grid-template-columns: 1fr;
+  }
+
+  .art {
+    grid-row: auto;
+    padding: 0.5rem 1rem;
+  }
+
+  .featureTitle {
+    align-self: auto;
+  }
+
+  .figure {
+    padding: 0.5rem 0.5rem 1.25rem;
+  }
+
+  .notes,
+  .closing {
+    padding: 1.25rem 1rem;
   }
 }

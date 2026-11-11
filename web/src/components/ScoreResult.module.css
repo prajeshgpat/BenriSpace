@@ -45,6 +45,7 @@
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 0.8125rem;
+  overflow-wrap: anywhere;
   /* Two lines fit in about the height one line had at the page's 1.5. */
   line-height: 1.25;
 }
@@ -163,4 +164,10 @@
   stroke: currentColor;
   stroke-width: 2;
   stroke-linejoin: round;
+}
+
+@media (pointer: coarse) {
+  .actions button {
+    min-height: 2.75rem;
+  }
 }

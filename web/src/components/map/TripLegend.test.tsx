@@ -29,6 +29,13 @@ describe("TripLegend", () => {
     expect(group).not.toHaveTextContent("Point of interest");
   });
 
+  it("says how many minutes the shaded overlap was fitted to", () => {
+    render(<TripLegend overlay={overlay()} status="ready" tunedMinutes={15} reach={null} />);
+    expect(screen.getByRole("group", { name: "Travel areas legend" })).toHaveTextContent(
+      "Shaded: everywhere all your places are within 15 min",
+    );
+  });
+
   it("shows the searched place when the areas do not overlap", () => {
     render(<TripLegend overlay={overlay()} status="empty" reach={null} />);
     const group = screen.getByRole("group", { name: "Travel areas legend" });

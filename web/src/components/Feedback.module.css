@@ -66,3 +66,25 @@
   color: var(--text-secondary);
   font-size: 0.8125rem;
 }
+
+@media (pointer: coarse) {
+  .button,
+  .form label {
+    min-height: 2.75rem;
+  }
+
+  .form label {
+    display: flex;
+    align-items: center;
+  }
+
+  .link {
+    min-height: 2.75rem;
+    padding: 0 0.5rem;
+  }
+
+  /* iOS zooms into text fields under 16px on focus. */
+  .form textarea {
+    font-size: 1rem;
+  }
+}

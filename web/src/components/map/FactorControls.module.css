@@ -329,3 +329,16 @@
     min-height: 2.75rem;
   }
 }
+
+@media (pointer: coarse) {
+  .linkButton,
+  .importance summary,
+  .select {
+    min-height: 2.75rem;
+  }
+
+  .select {
+    /* iOS zooms into controls under 16px on focus. */
+    font-size: 1rem;
+  }
+}

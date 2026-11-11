@@ -10,7 +10,7 @@ export const GEOLOCATION_OPTIONS: PositionOptions = {
 };
 
 export const OUTSIDE_COVERAGE_MESSAGE =
-  "You're outside the area BenriSpace covers — the NYC metro. Type an address in the metro area instead.";
+  "You're outside the area BenriSpace covers today, the New York metro. Type an address in the metro area instead.";
 
 /** Cells are about a kilometre across; ~11 m is far more than a score can use. */
 const COORDINATE_DECIMALS = 4;
